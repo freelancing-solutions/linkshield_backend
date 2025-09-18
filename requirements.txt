@@ -1,0 +1,80 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database & ORM
+sqlalchemy==2.0.23
+alembic==1.13.1
+psycopg2-binary==2.9.9
+redis==5.0.1
+
+# Authentication & Security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.6
+cryptography==41.0.8
+
+# HTTP Client & URL Analysis
+httpx==0.25.2
+requests==2.31.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
+user-agents==2.2.0
+
+# AI & ML
+openai==1.3.7
+tiktoken==0.5.2
+
+# Rate Limiting & Caching
+slowapi==0.1.9
+cachetools==5.3.2
+
+# Payment Processing
+stripe==7.8.0
+
+# Environment & Configuration
+python-dotenv==1.0.0
+
+# Utilities
+pydantic-extra-types==2.2.0
+email-validator==2.1.0
+validators==0.22.0
+python-dateutil==2.8.2
+
+# Logging & Monitoring
+loguru==0.7.2
+
+# Testing (Development)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2
+factory-boy==3.3.0
+
+# Development Tools
+black==23.11.0
+isort==5.12.0
+flake8==6.1.0
+mypy==1.7.1
+
+# CORS & Middleware
+fastapi-cors==0.0.6
+
+# File Processing
+pillow==10.1.0
+
+# URL Parsing & Validation
+furl==2.1.3
+tldextract==5.1.1
+
+# Security Scanning
+pyopenssl==23.3.0
+certifi==2023.11.17
+
+# Background Tasks
+celery==5.3.4
+kombu==5.3.4
+
+# API Documentation
+fastapi-users==12.1.2
