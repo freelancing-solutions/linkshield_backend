@@ -24,12 +24,12 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from werkzeug.security import check_password_hash, generate_password_hash
+from passlib.hash import bcrypt
 
 from src.config.database import Base
+import enum
 
-
-class UserRole(str, Enum):
+class UserRole(enum.Enum):
     """
     User role enumeration.
     """
@@ -38,7 +38,7 @@ class UserRole(str, Enum):
     MODERATOR = "moderator"
 
 
-class SubscriptionPlan(str, Enum):
+class SubscriptionPlan(enum.Enum):
     """
     Subscription plan enumeration.
     """
@@ -48,7 +48,7 @@ class SubscriptionPlan(str, Enum):
     ENTERPRISE = "enterprise"
 
 
-class UserStatus(str, Enum):
+class UserStatus(enum.Enum):
     """
     User account status enumeration.
     """
@@ -118,17 +118,13 @@ class User(Base):
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"
     
     def set_password(self, password: str) -> None:
-        """
-        Set user password with proper hashing.
-        """
-        self.password_hash = generate_password_hash(password)
-    
+        """Set user password with proper hashing."""
+        self.password_hash = bcrypt.hash(password)
+
     def check_password(self, password: str) -> bool:
-        """
-        Check if provided password matches the stored hash.
-        """
-        return check_password_hash(self.password_hash, password)
-    
+        """Check if provided password matches the stored hash."""
+        return bcrypt.verify(password, self.password_hash)
+
     def get_full_name(self) -> str:
         """
         Get user's full name or fallback to email.

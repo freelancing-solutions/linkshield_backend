@@ -27,9 +27,9 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from src.config.database import Base
+import enum
 
-
-class ReportType(str, Enum):
+class ReportType(enum.Enum):
     """
     Report type enumeration.
     """
@@ -43,7 +43,7 @@ class ReportType(str, Enum):
     OTHER = "other"
 
 
-class ReportStatus(str, Enum):
+class ReportStatus(enum.Enum):
     """
     Report status enumeration.
     """
@@ -55,7 +55,7 @@ class ReportStatus(str, Enum):
     DUPLICATE = "duplicate"
 
 
-class ReportPriority(str, Enum):
+class ReportPriority(enum.Enum):
     """
     Report priority enumeration.
     """

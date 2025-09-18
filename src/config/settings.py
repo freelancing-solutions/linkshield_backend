@@ -7,10 +7,12 @@ Handles all application configuration including database, security, and external
 """
 
 import os
+import json
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import BaseSettings, Field, validator
+from pydantic import Field, validator, field_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -39,10 +41,15 @@ class Settings(BaseSettings):
     )
     DATABASE_POOL_SIZE: int = Field(default=10, env="LINKSHIELD_DATABASE_POOL_SIZE")
     DATABASE_MAX_OVERFLOW: int = Field(default=20, env="LINKSHIELD_DATABASE_MAX_OVERFLOW")
+    DATABASE_POOL_TIMEOUT: int = Field(default=30, env="LINKSHIELD_DATABASE_POOL_TIMEOUT")
+    DATABASE_POOL_RECYCLE: int = Field(default=3600, env="LINKSHIELD_DATABASE_POOL_RECYCLE")
     
     # Redis Settings (for caching and rate limiting)
     REDIS_URL: str = Field(default="redis://localhost:6379/0", env="LINKSHIELD_REDIS_URL")
+    REDIS_PASSWORD: Optional[str] = Field(default=None, env="LINKSHIELD_REDIS_PASSWORD")
+    REDIS_DB: int = Field(default=0, env="LINKSHIELD_REDIS_DB")
     REDIS_POOL_SIZE: int = Field(default=10, env="LINKSHIELD_REDIS_POOL_SIZE")
+    REDIS_MAX_CONNECTIONS: int = Field(default=10, env="LINKSHIELD_REDIS_MAX_CONNECTIONS")
     
     # Security Settings
     SECRET_KEY: str = Field(
@@ -56,6 +63,8 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = Field(default="HS256", env="LINKSHIELD_JWT_ALGORITHM")
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, env="LINKSHIELD_JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, env="LINKSHIELD_JWT_REFRESH_TOKEN_EXPIRE_DAYS")
+    PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = Field(default=1, env="LINKSHIELD_PASSWORD_RESET_TOKEN_EXPIRE_HOURS")
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = Field(default=24, env="LINKSHIELD_EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS")
     
     # Password Settings
     PASSWORD_MIN_LENGTH: int = Field(default=8, env="LINKSHIELD_PASSWORD_MIN_LENGTH")
@@ -69,6 +78,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT: str = Field(default="100/hour", env="LINKSHIELD_RATE_LIMIT_DEFAULT")
     RATE_LIMIT_AUTH: str = Field(default="1000/hour", env="LINKSHIELD_RATE_LIMIT_AUTH")
     RATE_LIMIT_CHECK: str = Field(default="50/hour", env="LINKSHIELD_RATE_LIMIT_CHECK")
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = Field(default=60, env="LINKSHIELD_RATE_LIMIT_REQUESTS_PER_MINUTE")
+    RATE_LIMIT_BURST_SIZE: int = Field(default=10, env="LINKSHIELD_RATE_LIMIT_BURST_SIZE")
     
     # URL Analysis Settings
     URL_TIMEOUT: int = Field(default=10, env="LINKSHIELD_URL_TIMEOUT")
@@ -94,12 +105,18 @@ class Settings(BaseSettings):
     SMTP_USERNAME: Optional[str] = Field(default=None, env="LINKSHIELD_SMTP_USERNAME")
     SMTP_PASSWORD: Optional[str] = Field(default=None, env="LINKSHIELD_SMTP_PASSWORD")
     SMTP_USE_TLS: bool = Field(default=True, env="LINKSHIELD_SMTP_USE_TLS")
+    SMTP_SSL: bool = Field(default=False, env="LINKSHIELD_SMTP_SSL")
     FROM_EMAIL: str = Field(default="noreply@linkshield.com", env="LINKSHIELD_FROM_EMAIL")
+    EMAIL_FROM_NAME: str = Field(default="LinkShield", env="LINKSHIELD_EMAIL_FROM_NAME")
     
     # Stripe Settings (for billing)
     STRIPE_PUBLISHABLE_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_PUBLISHABLE_KEY")
     STRIPE_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_SECRET_KEY")
     STRIPE_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_WEBHOOK_SECRET")
+    
+    # Webhook Settings
+    WEBHOOK_SECRET: str = Field(default="your-webhook-secret-key", env="LINKSHIELD_WEBHOOK_SECRET")
+    WEBHOOK_TIMEOUT: int = Field(default=30, env="LINKSHIELD_WEBHOOK_TIMEOUT")
     
     # Subscription Plans
     FREE_PLAN_DAILY_LIMIT: int = Field(default=10, env="LINKSHIELD_FREE_PLAN_DAILY_LIMIT")
@@ -113,11 +130,59 @@ class Settings(BaseSettings):
         default=[".txt", ".csv", ".json"],
         env="LINKSHIELD_ALLOWED_FILE_TYPES"
     )
+    UPLOAD_DIR: str = Field(default="./uploads", env="LINKSHIELD_UPLOAD_DIR")
+    
+    # Logging Configuration
+    LOG_FORMAT: str = Field(default="json", env="LINKSHIELD_LOG_FORMAT")
+    LOG_FILE: str = Field(default="logs/linkshield.log", env="LINKSHIELD_LOG_FILE")
+    LOG_ROTATION: str = Field(default="1 day", env="LINKSHIELD_LOG_ROTATION")
+    LOG_RETENTION: str = Field(default="30 days", env="LINKSHIELD_LOG_RETENTION")
     
     # Monitoring and Analytics
     SENTRY_DSN: Optional[str] = Field(default=None, env="LINKSHIELD_SENTRY_DSN")
     ANALYTICS_ENABLED: bool = Field(default=True, env="LINKSHIELD_ANALYTICS_ENABLED")
+    METRICS_ENABLED: bool = Field(default=True, env="LINKSHIELD_METRICS_ENABLED")
+    METRICS_PORT: int = Field(default=9090, env="LINKSHIELD_METRICS_PORT")
+    HEALTH_CHECK_INTERVAL: int = Field(default=30, env="LINKSHIELD_HEALTH_CHECK_INTERVAL")
     
+    # CORS Configuration
+    CORS_ALLOW_CREDENTIALS: bool = Field(default=True)
+    CORS_ALLOW_METHODS: List[str] = Field(default=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+    CORS_ALLOW_HEADERS: List[str] = Field(default=["*"])
+    
+    # Celery Configuration
+    CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/1", env="LINKSHIELD_CELERY_BROKER_URL")
+    CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/2", env="LINKSHIELD_CELERY_RESULT_BACKEND")
+    CELERY_TASK_SERIALIZER: str = Field(default="json")
+    CELERY_RESULT_SERIALIZER: str = Field(default="json")
+    CELERY_ACCEPT_CONTENT: List[str] = Field(default=["json"])
+    CELERY_TIMEZONE: str = Field(default="UTC")
+    
+    # AI Analysis Configuration
+    AI_ANALYSIS_ENABLED: bool = Field(default=True, env="LINKSHIELD_AI_ANALYSIS_ENABLED")
+    AI_ANALYSIS_TIMEOUT: int = Field(default=30, env="LINKSHIELD_AI_ANALYSIS_TIMEOUT")
+    AI_BATCH_SIZE: int = Field(default=10, env="LINKSHIELD_AI_BATCH_SIZE")
+    AI_CONFIDENCE_THRESHOLD: float = Field(default=0.7, env="LINKSHIELD_AI_CONFIDENCE_THRESHOLD")
+    
+    # Security Scanning Configuration
+    SCAN_TIMEOUT: int = Field(default=60, env="LINKSHIELD_SCAN_TIMEOUT")
+    SCAN_MAX_RETRIES: int = Field(default=3, env="LINKSHIELD_SCAN_MAX_RETRIES")
+    SCAN_BATCH_SIZE: int = Field(default=5, env="LINKSHIELD_SCAN_BATCH_SIZE")
+    SCAN_PARALLEL_REQUESTS: int = Field(default=3, env="LINKSHIELD_SCAN_PARALLEL_REQUESTS")
+    
+    # Cache Configuration
+    CACHE_TTL: int = Field(default=3600, env="LINKSHIELD_CACHE_TTL")
+    CACHE_MAX_SIZE: int = Field(default=1000, env="LINKSHIELD_CACHE_MAX_SIZE")
+    CACHE_ENABLED: bool = Field(default=True, env="LINKSHIELD_CACHE_ENABLED")
+    
+    # Development/Testing
+    TEST_DATABASE_URL: str = Field(
+        default="postgresql://linkshield_user:password@localhost:5432/linkshield_test_db",
+        env="LINKSHIELD_TEST_DATABASE_URL"
+    )
+    TEST_MODE: bool = Field(default=False, env="LINKSHIELD_TEST_MODE")
+    MOCK_EXTERNAL_APIS: bool = Field(default=False, env="LINKSHIELD_MOCK_EXTERNAL_APIS")
+
     @validator("ENVIRONMENT")
     def validate_environment(cls, v):
         """Validate environment setting."""
@@ -134,7 +199,7 @@ class Settings(BaseSettings):
             raise ValueError(f"Log level must be one of: {allowed_levels}")
         return v.upper()
     
-    @validator("DATABASE_URL")
+    @validator("DATABASE_URL", "TEST_DATABASE_URL")
     def validate_database_url(cls, v):
         """Validate database URL format."""
         if not v.startswith(("postgresql://", "postgresql+asyncpg://")):
@@ -148,18 +213,12 @@ class Settings(BaseSettings):
             raise ValueError("Redis URL must be a valid Redis connection string")
         return v
     
-    @validator("ALLOWED_HOSTS", "ALLOWED_ORIGINS", "ALLOWED_FILE_TYPES", pre=True)
-    def parse_list_from_string(cls, v):
-        """Parse comma-separated string into list."""
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
-    
     class Config:
         """Pydantic configuration."""
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"  # Ignore extra fields in .env that aren't in the model
 
 
 @lru_cache()

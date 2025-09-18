@@ -212,33 +212,3 @@ async def check_database_health() -> bool:
         return False
 
 
-# Event listeners for connection management
-@event.listens_for(AsyncEngine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    """
-    Set database-specific settings on connection.
-    Currently handles PostgreSQL-specific settings.
-    """
-    # This is primarily for PostgreSQL connections
-    # Add any connection-level settings here if needed
-    pass
-
-
-@event.listens_for(AsyncEngine, "checkout")
-def receive_checkout(dbapi_connection, connection_record, connection_proxy):
-    """
-    Handle connection checkout events.
-    Can be used for connection-level logging or monitoring.
-    """
-    if settings.DEBUG:
-        logger.debug("Database connection checked out")
-
-
-@event.listens_for(AsyncEngine, "checkin")
-def receive_checkin(dbapi_connection, connection_record):
-    """
-    Handle connection checkin events.
-    Can be used for connection-level logging or monitoring.
-    """
-    if settings.DEBUG:
-        logger.debug("Database connection checked in")

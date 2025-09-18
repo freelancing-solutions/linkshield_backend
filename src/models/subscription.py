@@ -29,9 +29,9 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from src.config.database import Base
+import enum
 
-
-class PlanType(str, Enum):
+class PlanType(enum.Enum):
     """
     Subscription plan type enumeration.
     """
@@ -42,7 +42,7 @@ class PlanType(str, Enum):
     CUSTOM = "custom"
 
 
-class BillingInterval(str, Enum):
+class BillingInterval(enum.Enum):
     """
     Billing interval enumeration.
     """
@@ -51,7 +51,7 @@ class BillingInterval(str, Enum):
     LIFETIME = "lifetime"
 
 
-class SubscriptionStatus(str, Enum):
+class SubscriptionStatus(enum.Enum):
     """
     Subscription status enumeration.
     """
@@ -64,7 +64,7 @@ class SubscriptionStatus(str, Enum):
     PAST_DUE = "past_due"
 
 
-class PaymentStatus(str, Enum):
+class PaymentStatus(enum.Enum):
     """
     Payment status enumeration.
     """

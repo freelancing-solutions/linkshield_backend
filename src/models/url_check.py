@@ -28,9 +28,9 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from src.config.database import Base
+import enum
 
-
-class CheckStatus(str, Enum):
+class CheckStatus(enum.Enum):
     """
     URL check status enumeration.
     """
@@ -41,7 +41,7 @@ class CheckStatus(str, Enum):
     TIMEOUT = "timeout"
 
 
-class ThreatLevel(str, Enum):
+class ThreatLevel(enum.Enum):
     """
     Threat level enumeration.
     """
@@ -52,7 +52,7 @@ class ThreatLevel(str, Enum):
     CRITICAL = "critical"
 
 
-class ScanType(str, Enum):
+class ScanType(enum.Enum):
     """
     Scan type enumeration.
     """
