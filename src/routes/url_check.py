@@ -23,6 +23,7 @@ from src.services.url_analysis_service import URLAnalysisService, URLAnalysisErr
 from src.services.ai_service import AIService
 from src.services.security_service import SecurityService, AuthenticationError, RateLimitError
 from src.authentication.auth_service import AuthService
+from src.controllers.url_check_controller import URLCheckController
 
 
 # Initialize router
@@ -225,65 +226,11 @@ async def check_url(
     - `REPUTATION`: Historical reputation analysis
     - `CONTENT`: AI-powered content analysis
     - `TECHNICAL`: URL structure and hosting analysis
-    """
-    try:
-        # Check rate limits
-        await check_rate_limits(user, db)
-        
-        # Additional rate limit for URL checks
-        security_service = SecurityService(db)
-        identifier = str(user.id) if user else "anonymous"
-        is_allowed, limit_info = security_service.check_rate_limit(identifier, "url_checks", "127.0.0.1")
-        
-        if not is_allowed:
-            raise HTTPException(
-                status_code=429,
-                detail=f"URL check rate limit exceeded. Try again in {limit_info['retry_after']:.0f} seconds",
-                headers={"Retry-After": str(int(limit_info['retry_after']))}
-            )
-        
-        # Initialize services
-        ai_service = AIService()
-        url_analysis_service = URLAnalysisService(db, ai_service, security_service)
-        
-        # Perform URL analysis
-        url_check = await url_analysis_service.analyze_url(
-            url=request.url,
-            user_id=user.id if user else None,
-            scan_types=request.scan_types,
-            priority=request.priority
-        )
-        
-        # Log security event
-        security_service.log_security_event(
-            "url_check_requested",
-            {
-                "url": request.url,
-                "scan_types": [st.value for st in request.scan_types],
-                "threat_level": url_check.threat_level.value if url_check.threat_level else None
-            },
-            user_id=str(user.id) if user else None
-        )
-        
-        # Send webhook if callback URL provided
-        if request.callback_url and url_check.status == CheckStatus.COMPLETED:
-            background_tasks.add_task(
-                send_webhook_notification,
-                str(request.callback_url),
-                url_check
-            )
-        
-        return URLCheckResponse.from_orm(url_check)
     
-    except InvalidURLError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except URLAnalysisError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except RateLimitError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="URL analysis failed")
-
+    Delegates business logic to URLCheckController.
+    """
+    controller = URLCheckController()
+    return await controller.check_url(request, background_tasks, user, db)
 
 @router.post("/bulk-check", response_model=List[URLCheckResponse], summary="Analyze multiple URLs")
 async def bulk_check_urls(
@@ -299,63 +246,11 @@ async def bulk_check_urls(
     - Maximum 100 URLs per request
     - Requires authentication
     - Higher rate limits apply
-    """
-    try:
-        # Check rate limits (stricter for bulk operations)
-        security_service = SecurityService(db)
-        is_allowed, limit_info = security_service.check_rate_limit(str(user.id), "url_checks", "127.0.0.1")
-        
-        # Check if user has enough quota for bulk operation
-        remaining_quota = limit_info.get("remaining", 0)
-        if remaining_quota < len(request.urls):
-            raise HTTPException(
-                status_code=429,
-                detail=f"Insufficient quota. You have {remaining_quota} checks remaining, but requested {len(request.urls)}"
-            )
-        
-        # Initialize services
-        ai_service = AIService()
-        url_analysis_service = URLAnalysisService(db, ai_service, security_service)
-        
-        # Process URLs
-        results = []
-        for url in request.urls:
-            try:
-                url_check = await url_analysis_service.analyze_url(
-                    url=url,
-                    user_id=user.id,
-                    scan_types=request.scan_types,
-                    priority=False  # Bulk operations are not prioritized
-                )
-                results.append(URLCheckResponse.from_orm(url_check))
-            except Exception as e:
-                # Create failed check record
-                failed_check = URLCheck(
-                    user_id=user.id,
-                    original_url=url,
-                    normalized_url=url,
-                    domain="",
-                    status=CheckStatus.FAILED,
-                    error_message=str(e)
-                )
-                db.add(failed_check)
-                db.flush()
-                results.append(URLCheckResponse.from_orm(failed_check))
-        
-        db.commit()
-        
-        # Send webhook if callback URL provided
-        if request.callback_url:
-            background_tasks.add_task(
-                send_bulk_webhook_notification,
-                str(request.callback_url),
-                results
-            )
-        
-        return results
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Bulk URL analysis failed")
+    Delegates business logic to URLCheckController.
+    """
+    controller = URLCheckController()
+    return await controller.bulk_check_urls(request, background_tasks, user, db)
 
 
 @router.get("/check/{check_id}", response_model=URLCheckResponse, summary="Get URL check results")
@@ -366,17 +261,11 @@ async def get_url_check(
 ):
     """
     Retrieve results of a specific URL check.
+    
+    Delegates business logic to URLCheckController.
     """
-    url_check = db.query(URLCheck).filter(URLCheck.id == check_id).first()
-    
-    if not url_check:
-        raise HTTPException(status_code=404, detail="URL check not found")
-    
-    # Check if user has access to this check
-    if url_check.user_id and (not user or url_check.user_id != user.id):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    return URLCheckResponse.from_orm(url_check)
+    controller = URLCheckController()
+    return await controller.get_url_check(check_id, user, db)
 
 
 @router.get("/check/{check_id}/results", response_model=List[ScanResultResponse], summary="Get detailed scan results")
@@ -387,19 +276,11 @@ async def get_scan_results(
 ):
     """
     Get detailed scan results for a URL check.
+    
+    Delegates business logic to URLCheckController.
     """
-    url_check = db.query(URLCheck).filter(URLCheck.id == check_id).first()
-    
-    if not url_check:
-        raise HTTPException(status_code=404, detail="URL check not found")
-    
-    # Check access permissions
-    if url_check.user_id and (not user or url_check.user_id != user.id):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    scan_results = db.query(ScanResult).filter(ScanResult.url_check_id == check_id).all()
-    
-    return [ScanResultResponse.from_orm(result) for result in scan_results]
+    controller = URLCheckController()
+    return await controller.get_scan_results(check_id, user, db)
 
 
 @router.get("/history", response_model=URLHistoryResponse, summary="Get URL check history")
@@ -415,35 +296,11 @@ async def get_url_history(
 ):
     """
     Get URL check history for the authenticated user.
+    
+    Delegates business logic to URLCheckController.
     """
-    query = db.query(URLCheck).filter(URLCheck.user_id == user.id)
-    
-    # Apply filters
-    if url:
-        query = query.filter(URLCheck.original_url.ilike(f"%{url}%"))
-    
-    if domain:
-        query = query.filter(URLCheck.domain.ilike(f"%{domain}%"))
-    
-    if threat_level:
-        query = query.filter(URLCheck.threat_level == threat_level)
-    
-    if status:
-        query = query.filter(URLCheck.status == status)
-    
-    # Get total count
-    total_count = query.count()
-    
-    # Apply pagination
-    offset = (page - 1) * page_size
-    checks = query.order_by(desc(URLCheck.created_at)).offset(offset).limit(page_size).all()
-    
-    return URLHistoryResponse(
-        checks=[URLCheckResponse.from_orm(check) for check in checks],
-        total_count=total_count,
-        page=page,
-        page_size=page_size
-    )
+    controller = URLCheckController()
+    return await controller.get_url_history(url, domain, threat_level, status, page, page_size, user, db)
 
 
 @router.get("/reputation/{domain}", response_model=URLReputationResponse, summary="Get domain reputation")
@@ -454,26 +311,11 @@ async def get_domain_reputation(
 ):
     """
     Get reputation information for a specific domain.
-    """
-    try:
-        # Check rate limits
-        await check_rate_limits(user, db)
-        
-        # Initialize services
-        ai_service = AIService()
-        security_service = SecurityService(db)
-        url_analysis_service = URLAnalysisService(db, ai_service, security_service)
-        
-        # Get domain reputation
-        reputation = url_analysis_service.get_domain_reputation(domain.lower())
-        
-        if not reputation:
-            raise HTTPException(status_code=404, detail="Domain reputation not found")
-        
-        return URLReputationResponse.from_orm(reputation)
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to retrieve domain reputation")
+    Delegates business logic to URLCheckController.
+    """
+    controller = URLCheckController()
+    return await controller.get_domain_reputation(domain, user, db)
 
 
 @router.get("/stats", summary="Get URL check statistics")
@@ -484,52 +326,11 @@ async def get_url_check_stats(
 ):
     """
     Get URL check statistics for the authenticated user.
+    
+    Delegates business logic to URLCheckController.
     """
-    from datetime import timedelta
-    
-    start_date = datetime.now(timezone.utc) - timedelta(days=days)
-    
-    # Get statistics
-    total_checks = db.query(URLCheck).filter(
-        and_(
-            URLCheck.user_id == user.id,
-            URLCheck.created_at >= start_date
-        )
-    ).count()
-    
-    threat_checks = db.query(URLCheck).filter(
-        and_(
-            URLCheck.user_id == user.id,
-            URLCheck.created_at >= start_date,
-            URLCheck.threat_level.in_([ThreatLevel.MEDIUM, ThreatLevel.HIGH])
-        )
-    ).count()
-    
-    safe_checks = db.query(URLCheck).filter(
-        and_(
-            URLCheck.user_id == user.id,
-            URLCheck.created_at >= start_date,
-            URLCheck.threat_level == ThreatLevel.SAFE
-        )
-    ).count()
-    
-    failed_checks = db.query(URLCheck).filter(
-        and_(
-            URLCheck.user_id == user.id,
-            URLCheck.created_at >= start_date,
-            URLCheck.status == CheckStatus.FAILED
-        )
-    ).count()
-    
-    return {
-        "period_days": days,
-        "total_checks": total_checks,
-        "threat_checks": threat_checks,
-        "safe_checks": safe_checks,
-        "failed_checks": failed_checks,
-        "threat_detection_rate": (threat_checks / total_checks * 100) if total_checks > 0 else 0,
-        "success_rate": ((total_checks - failed_checks) / total_checks * 100) if total_checks > 0 else 0
-    }
+    controller = URLCheckController()
+    return await controller.get_url_check_stats(days, user, db)
 
 
 # Background task functions

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from src.config.database import check_database_health
 from src.config.settings import get_settings
+from src.controllers.health_controller import HealthController
 
 # Get settings instance
 settings = get_settings()
@@ -55,7 +56,11 @@ async def health_check() -> HealthResponse:
     """
     Basic health check endpoint.
     Returns overall API health status and basic information.
+    
+    Delegates business logic to HealthController.
     """
+    controller = HealthController()
+    return await controller.health_check()
     try:
         current_time = time.time()
         uptime = current_time - APP_START_TIME
@@ -91,7 +96,11 @@ async def detailed_health_check() -> HealthResponse:
     """
     Detailed health check endpoint.
     Checks database connectivity and external service availability.
+    
+    Delegates business logic to HealthController.
     """
+    controller = HealthController()
+    return await controller.detailed_health_check()
     try:
         current_time = time.time()
         uptime = current_time - APP_START_TIME
@@ -204,6 +213,13 @@ async def detailed_health_check() -> HealthResponse:
 @router.get("/health/ready")
 async def readiness_check() -> Dict[str, Any]:
     """
+    Readiness check endpoint.
+    
+    Delegates business logic to HealthController.
+    """
+    controller = HealthController()
+    return await controller.readiness_check()
+    """
     Kubernetes readiness probe endpoint.
     Returns 200 if the service is ready to accept traffic.
     """
@@ -236,6 +252,13 @@ async def readiness_check() -> Dict[str, Any]:
 @router.get("/health/live")
 async def liveness_check() -> Dict[str, Any]:
     """
+    Liveness check endpoint.
+    
+    Delegates business logic to HealthController.
+    """
+    controller = HealthController()
+    return await controller.liveness_check()
+    """
     Kubernetes liveness probe endpoint.
     Returns 200 if the service is alive (basic functionality works).
     """
@@ -261,6 +284,13 @@ async def liveness_check() -> Dict[str, Any]:
 @router.get("/version")
 async def version_info() -> Dict[str, Any]:
     """
+    Version information endpoint.
+    
+    Delegates business logic to HealthController.
+    """
+    controller = HealthController()
+    return await controller.version_info()
+    """
     Get API version and build information.
     """
     return {
@@ -276,6 +306,13 @@ async def version_info() -> Dict[str, Any]:
 
 @router.get("/metrics")
 async def metrics() -> Dict[str, Any]:
+    """
+    Metrics endpoint.
+    
+    Delegates business logic to HealthController.
+    """
+    controller = HealthController()
+    return await controller.metrics()
     """
     Basic metrics endpoint for monitoring.
     Returns simple application metrics.

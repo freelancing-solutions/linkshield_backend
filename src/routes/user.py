@@ -21,6 +21,7 @@ from src.models.user import User, UserSession, APIKey, PasswordResetToken, Email
 from src.models.subscription import UserSubscription, SubscriptionPlan
 from src.services.security_service import SecurityService, AuthenticationError, RateLimitError
 from src.authentication.auth_service import AuthService, UserRegistrationError, InvalidCredentialsError
+from src.controllers.user_controller import UserController
 
 
 # Initialize router
@@ -289,52 +290,10 @@ async def register_user(
     3. Creates user account
     4. Sends email verification
     5. Returns user profile
+
     """
-    try:
-        # Check rate limits
-        await check_rate_limits(req, db)
-        
-        # Initialize services
-        auth_service = AuthService(db)
-        security_service = SecurityService(db)
-        
-        # Register user
-        user = await auth_service.register_user(
-            email=request.email,
-            password=request.password,
-            full_name=request.full_name,
-            company=request.company,
-            marketing_consent=request.marketing_consent,
-            ip_address=req.client.host,
-            user_agent=req.headers.get("user-agent")
-        )
-        
-        # Send verification email
-        background_tasks.add_task(
-            send_verification_email,
-            user.email,
-            user.full_name,
-            str(user.id)
-        )
-        
-        # Log security event
-        security_service.log_security_event(
-            "user_registered",
-            {
-                "email": request.email,
-                "company": request.company,
-                "marketing_consent": request.marketing_consent
-            },
-            user_id=str(user.id),
-            ip_address=req.client.host
-        )
-        
-        return UserResponse.from_orm(user)
-    
-    except UserRegistrationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Registration failed")
+    controller = UserController()
+    return await controller.register_user(request, background_tasks, req, db)
 
 
 @router.post("/login", response_model=LoginResponse, summary="User login")
@@ -352,63 +311,8 @@ async def login_user(
     - Device tracking
     - Rate limiting protection
     """
-    try:
-        # Check rate limits
-        await check_rate_limits(req, db)
-        
-        # Initialize services
-        auth_service = AuthService(db)
-        security_service = SecurityService(db)
-        
-        # Authenticate user
-        user, session = await auth_service.authenticate_user(
-            email=request.email,
-            password=request.password,
-            ip_address=req.client.host,
-            user_agent=req.headers.get("user-agent"),
-            device_info=request.device_info,
-            remember_me=request.remember_me
-        )
-        
-        # Generate JWT token
-        token_data = {
-            "user_id": str(user.id),
-            "session_id": str(session.id),
-            "email": user.email,
-            "role": user.role.value
-        }
-        
-        expires_in = 86400 * 30 if request.remember_me else 86400  # 30 days or 1 day
-        access_token = security_service.create_jwt_token(token_data, expires_in)
-        
-        # Update last login
-        user.last_login_at = datetime.now(timezone.utc)
-        db.commit()
-        
-        # Log security event
-        security_service.log_security_event(
-            "user_login",
-            {
-                "session_id": str(session.id),
-                "remember_me": request.remember_me
-            },
-            user_id=str(user.id),
-            ip_address=req.client.host
-        )
-        
-        return LoginResponse(
-            access_token=access_token,
-            expires_in=expires_in,
-            user=UserResponse.from_orm(user),
-            session_id=str(session.id)
-        )
-    
-    except InvalidCredentialsError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-    except RateLimitError as e:
-        raise HTTPException(status_code=429, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Login failed")
+    controller = UserController()
+    return await controller.login_user(request, req, db)
 
 
 @router.post("/logout", summary="User logout")
@@ -419,40 +323,10 @@ async def logout_user(
 ):
     """
     Logout user and invalidate session.
-    """
-    try:
-        # Initialize services
-        security_service = SecurityService(db)
-        
-        # Get session ID from token
-        token_data = security_service.verify_jwt_token(credentials.credentials)
-        session_id = token_data.get("session_id")
-        
-        if session_id:
-            # Invalidate session
-            session = db.query(UserSession).filter(
-                and_(
-                    UserSession.id == session_id,
-                    UserSession.user_id == user.id
-                )
-            ).first()
-            
-            if session:
-                session.is_active = False
-                session.ended_at = datetime.now(timezone.utc)
-                db.commit()
-        
-        # Log security event
-        security_service.log_security_event(
-            "user_logout",
-            {"session_id": session_id},
-            user_id=str(user.id)
-        )
-        
-        return {"message": "Successfully logged out"}
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Logout failed")
+    """
+    controller = UserController()
+    return await controller.logout_user(user, credentials, db)
 
 
 # Profile Management Routes
@@ -461,9 +335,12 @@ async def get_user_profile(
     user: User = Depends(get_current_user)
 ):
     """
-    Get current user profile information.
+    Get current user profile.
+    
+    Delegates business logic to UserController.
     """
-    return UserResponse.from_orm(user)
+    controller = UserController()
+    return await controller.get_user_profile(user)
 
 
 @router.put("/profile", response_model=UserResponse, summary="Update user profile")
@@ -474,34 +351,11 @@ async def update_user_profile(
 ):
     """
     Update user profile information.
-    """
-    try:
-        # Update user fields
-        if request.full_name is not None:
-            user.full_name = request.full_name
-        
-        if request.company is not None:
-            user.company = request.company
-        
-        if request.profile_picture_url is not None:
-            user.profile_picture_url = request.profile_picture_url
-        
-        if request.marketing_consent is not None:
-            user.marketing_consent = request.marketing_consent
-        
-        if request.timezone is not None:
-            user.timezone = request.timezone
-        
-        if request.language is not None:
-            user.language = request.language
-        
-        user.updated_at = datetime.now(timezone.utc)
-        db.commit()
-        
-        return UserResponse.from_orm(user)
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Profile update failed")
+    Delegates business logic to UserController.
+    """
+    controller = UserController()
+    return await controller.update_user_profile(request, user, db)
 
 
 @router.post("/change-password", summary="Change user password")
@@ -512,42 +366,11 @@ async def change_password(
 ):
     """
     Change user password.
-    """
-    try:
-        # Initialize services
-        auth_service = AuthService(db)
-        security_service = SecurityService(db)
-        
-        # Change password
-        await auth_service.change_password(
-            user_id=user.id,
-            current_password=request.current_password,
-            new_password=request.new_password
-        )
-        
-        # Invalidate all other sessions
-        db.query(UserSession).filter(
-            and_(
-                UserSession.user_id == user.id,
-                UserSession.is_active == True
-            )
-        ).update({"is_active": False, "ended_at": datetime.now(timezone.utc)})
-        
-        db.commit()
-        
-        # Log security event
-        security_service.log_security_event(
-            "password_changed",
-            {},
-            user_id=str(user.id)
-        )
-        
-        return {"message": "Password changed successfully"}
     
-    except InvalidCredentialsError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Password change failed")
+    Delegates business logic to UserController.
+    """
+    controller = UserController()
+    return await controller.change_password(request, user, db)
 
 
 @router.post("/request-password-reset", summary="Request password reset")
@@ -558,35 +381,12 @@ async def request_password_reset(
     db: Session = Depends(get_db)
 ):
     """
-    Request password reset email.
-    """
-    try:
-        # Check rate limits
-        await check_rate_limits(req, db)
-        
-        # Initialize services
-        auth_service = AuthService(db)
-        
-        # Request password reset
-        reset_token = await auth_service.request_password_reset(
-            email=request.email,
-            ip_address=req.client.host
-        )
-        
-        if reset_token:
-            # Send reset email
-            background_tasks.add_task(
-                send_password_reset_email,
-                request.email,
-                reset_token.token
-            )
-        
-        # Always return success to prevent email enumeration
-        return {"message": "If the email exists, a password reset link has been sent"}
+    Request password reset.
     
-    except Exception as e:
-        # Don't reveal errors to prevent enumeration
-        return {"message": "If the email exists, a password reset link has been sent"}
+    Delegates business logic to UserController.
+    """
+    controller = UserController()
+    return await controller.request_password_reset(request, background_tasks, req, db)
 
 
 @router.post("/reset-password", summary="Reset password with token")
@@ -597,41 +397,10 @@ async def reset_password(
 ):
     """
     Reset password using reset token.
-    """
-    try:
-        # Initialize services
-        auth_service = AuthService(db)
-        security_service = SecurityService(db)
-        
-        # Reset password
-        user = await auth_service.reset_password(
-            token=request.token,
-            new_password=request.new_password,
-            ip_address=req.client.host
-        )
-        
-        # Invalidate all user sessions
-        db.query(UserSession).filter(
-            and_(
-                UserSession.user_id == user.id,
-                UserSession.is_active == True
-            )
-        ).update({"is_active": False, "ended_at": datetime.now(timezone.utc)})
-        
-        db.commit()
-        
-        # Log security event
-        security_service.log_security_event(
-            "password_reset_completed",
-            {},
-            user_id=str(user.id),
-            ip_address=req.client.host
-        )
-        
-        return {"message": "Password reset successfully"}
     
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    """
+    controller = UserController()
+    return await controller.reset_password(request, req, db)
 
 
 # API Key Management Routes
@@ -642,36 +411,12 @@ async def create_api_key(
     db: Session = Depends(get_db)
 ):
     """
-    Create a new API key for the user.
-    """
-    try:
-        # Initialize services
-        auth_service = AuthService(db)
-        
-        # Create API key
-        api_key, key_value = await auth_service.create_api_key(
-            user_id=user.id,
-            name=request.name,
-            description=request.description,
-            permissions=request.permissions,
-            expires_at=request.expires_at
-        )
-        
-        return {
-            "api_key": {
-                "id": str(api_key.id),
-                "name": api_key.name,
-                "description": api_key.description,
-                "permissions": api_key.permissions,
-                "expires_at": api_key.expires_at,
-                "created_at": api_key.created_at
-            },
-            "key": key_value,  # Only returned once
-            "message": "API key created successfully. Save this key securely - it won't be shown again."
-        }
+    Create new API key.
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="API key creation failed")
+    Delegates business logic to UserController.
+    """
+    controller = UserController()
+    return await controller.create_api_key(request, user, db)
 
 
 @router.get("/api-keys", response_model=List[APIKeyResponse], summary="List API keys")
@@ -680,24 +425,12 @@ async def list_api_keys(
     db: Session = Depends(get_db)
 ):
     """
-    List user's API keys.
-    """
-    api_keys = db.query(APIKey).filter(APIKey.user_id == user.id).order_by(desc(APIKey.created_at)).all()
+    List user API keys.
     
-    return [
-        APIKeyResponse(
-            id=key.id,
-            name=key.name,
-            description=key.description,
-            key_preview=key.key_hash[:8] + "...",
-            permissions=key.permissions,
-            is_active=key.is_active,
-            expires_at=key.expires_at,
-            last_used_at=key.last_used_at,
-            created_at=key.created_at
-        )
-        for key in api_keys
-    ]
+    Delegates business logic to UserController.
+    """
+    controller = UserController()
+    return await controller.list_api_keys(user, db)
 
 
 @router.delete("/api-keys/{key_id}", summary="Delete API key")
@@ -707,68 +440,42 @@ async def delete_api_key(
     db: Session = Depends(get_db)
 ):
     """
-    Delete an API key.
+    Delete API key.
+    
+    Delegates business logic to UserController.
     """
-    api_key = db.query(APIKey).filter(
-        and_(
-            APIKey.id == key_id,
-            APIKey.user_id == user.id
-        )
-    ).first()
-    
-    if not api_key:
-        raise HTTPException(status_code=404, detail="API key not found")
-    
-    db.delete(api_key)
-    db.commit()
-    
-    return {"message": "API key deleted successfully"}
+    controller = UserController()
+    return await controller.delete_api_key(key_id, user, db)
 
 
 # Session Management Routes
-@router.get("/sessions", response_model=List[UserSessionResponse], summary="List user sessions")
-async def list_user_sessions(
+@router.get("/sessions", response_model=List[SessionResponse], summary="Get user sessions")
+async def get_user_sessions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    List user's active sessions.
-    """
-    sessions = db.query(UserSession).filter(
-        and_(
-            UserSession.user_id == user.id,
-            UserSession.is_active == True
-        )
-    ).order_by(desc(UserSession.last_activity_at)).all()
+    Get user sessions.
     
-    return [UserSessionResponse.from_orm(session) for session in sessions]
+    Delegates business logic to UserController.
+    """
+    controller = UserController()
+    return await controller.get_user_sessions(user, db)
 
 
-@router.delete("/sessions/{session_id}", summary="Terminate session")
-async def terminate_session(
+@router.delete("/sessions/{session_id}", summary="Revoke session")
+async def revoke_session(
     session_id: uuid.UUID = Path(..., description="Session ID"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Terminate a specific session.
+    Revoke user session.
+    
+    Delegates business logic to UserController.
     """
-    session = db.query(UserSession).filter(
-        and_(
-            UserSession.id == session_id,
-            UserSession.user_id == user.id,
-            UserSession.is_active == True
-        )
-    ).first()
-    
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    session.is_active = False
-    session.ended_at = datetime.now(timezone.utc)
-    db.commit()
-    
-    return {"message": "Session terminated successfully"}
+    controller = UserController()
+    return await controller.revoke_session(session_id, user, db)
 
 
 @router.delete("/sessions", summary="Terminate all sessions")
@@ -804,18 +511,11 @@ async def verify_email(
 ):
     """
     Verify user email address.
-    """
-    try:
-        # Initialize services
-        auth_service = AuthService(db)
-        
-        # Verify email
-        user = await auth_service.verify_email(token)
-        
-        return {"message": "Email verified successfully"}
     
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+    Delegates business logic to UserController.
+    """
+    controller = UserController()
+    return await controller.verify_email(token, db)
 
 
 @router.post("/resend-verification", summary="Resend verification email")
@@ -826,29 +526,11 @@ async def resend_verification_email(
 ):
     """
     Resend email verification.
+    
+    Delegates business logic to UserController.
     """
-    if user.is_verified:
-        raise HTTPException(status_code=400, detail="Email already verified")
-    
-    try:
-        # Initialize services
-        auth_service = AuthService(db)
-        
-        # Create new verification token
-        token = await auth_service.create_email_verification_token(user.id)
-        
-        # Send verification email
-        background_tasks.add_task(
-            send_verification_email,
-            user.email,
-            user.full_name,
-            token.token
-        )
-        
-        return {"message": "Verification email sent"}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to send verification email")
+    controller = UserController()
+    return await controller.resend_verification_email(background_tasks, user, db)
 
 
 # Background task functions
