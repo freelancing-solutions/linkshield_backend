@@ -25,6 +25,7 @@ from src.models.user import (
     EmailVerificationToken, UserStatus, UserRole
 )
 from src.services.email_service import EmailService
+from src.services.background_tasks import BackgroundEmailService
 from src.services.security_service import SecurityService
 
 
@@ -68,9 +69,16 @@ class AuthService:
     Authentication service for user management and security.
     """
     
-    def __init__(self, db_session: Session, email_service: EmailService, security_service: SecurityService):
+    def __init__(
+        self, 
+        db_session: Session, 
+        email_service: EmailService, 
+        background_email_service: BackgroundEmailService,
+        security_service: SecurityService
+    ):
         self.db = db_session
         self.email_service = email_service
+        self.background_email_service = background_email_service
         self.security_service = security_service
         self.settings = get_settings()
         
@@ -141,8 +149,12 @@ class AuthService:
         # Create email verification token
         verification_token = self._create_email_verification_token(user.id)
         
-        # Send verification email
-        self.email_service.send_verification_email(user.email, user.first_name, verification_token)
+        # Queue verification email for background sending
+        self.background_email_service.queue_verification_email(
+            user.email, 
+            user.first_name, 
+            verification_token
+        )
         
         self.db.commit()
         
@@ -187,8 +199,24 @@ class AuthService:
         
         # Check for suspicious login patterns
         if ip_address and self.security_service.is_suspicious_login(user.id, ip_address):
-            # Send security alert email
-            self.email_service.send_security_alert(user.email, user.first_name, ip_address)
+            # Queue security alert email for background sending
+            from src.models.email import EmailRequest, EmailType
+            security_alert_request = EmailRequest(
+                to=user.email,
+                subject=f"Security Alert - New login to your {self.settings.APP_NAME} account",
+                email_type=EmailType.SECURITY_ALERT,
+                template_variables={
+                    "user_name": user.first_name,
+                    "login_ip": ip_address,
+                    "login_time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "current_year": datetime.now().year
+                }
+            )
+            self.background_email_service.queue_email(
+                security_alert_request, 
+                EmailType.SECURITY_ALERT.value,
+                priority=2  # High priority for security alerts
+            )
         
         # Update user login information
         user.last_login_at = datetime.now(timezone.utc)
@@ -315,8 +343,12 @@ class AuthService:
         # Create password reset token
         reset_token = self._create_password_reset_token(user.id)
         
-        # Send reset email
-        self.email_service.send_password_reset_email(user.email, user.first_name, reset_token)
+        # Queue password reset email for background sending
+        self.background_email_service.queue_password_reset_email(
+            user.email, 
+            user.first_name, 
+            reset_token
+        )
         
         self.db.commit()
         

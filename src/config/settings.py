@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     
     # Application Settings
     APP_NAME: str = "LinkShield API"
+    APP_URL: str  = "https://www.linkshield.site"
     APP_VERSION: str = "1.0.0"
     ENVIRONMENT: str = Field(default="development", env="LINKSHIELD_ENVIRONMENT")
     DEBUG: bool = Field(default=True, env="LINKSHIELD_DEBUG")
@@ -108,6 +109,11 @@ class Settings(BaseSettings):
     SMTP_SSL: bool = Field(default=False, env="LINKSHIELD_SMTP_SSL")
     FROM_EMAIL: str = Field(default="noreply@linkshield.com", env="LINKSHIELD_FROM_EMAIL")
     EMAIL_FROM_NAME: str = Field(default="LinkShield", env="LINKSHIELD_EMAIL_FROM_NAME")
+    
+    # Resend API Settings
+    RESEND_API_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_RESEND_API_KEY")
+    EMAIL_PROVIDER: str = Field(default="resend")
+    RESEND_FROM_DOMAIN: Optional[str] = Field(default="https://www.linkshield.site")
     
     # Stripe Settings (for billing)
     STRIPE_PUBLISHABLE_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_PUBLISHABLE_KEY")

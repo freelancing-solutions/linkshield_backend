@@ -17,17 +17,43 @@ from sqlalchemy import and_, or_, desc
 
 from src.config.database import get_db
 from src.config.settings import get_settings
-from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken, UserRole, SubscriptionTier
+from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken, UserRole, SubscriptionPlan
 from src.models.subscription import UserSubscription, SubscriptionPlan
 from src.services.security_service import SecurityService, AuthenticationError, RateLimitError
-from src.authentication.auth_service import AuthService, UserRegistrationError, InvalidCredentialsError
+from src.authentication.auth_service import AuthService,  InvalidCredentialsError
 from src.controllers.user_controller import UserController
+from src.services.email_service import EmailService
+from src.services.background_tasks import BackgroundEmailService
 
 
 # Initialize router
 router = APIRouter(prefix="/api/v1/user", tags=["User Management"])
 security = HTTPBearer()
 settings = get_settings()
+
+
+# Dependency injection functions
+def get_email_service() -> EmailService:
+    """Get EmailService instance."""
+    return EmailService()
+
+
+def get_background_email_service() -> BackgroundEmailService:
+    """Get BackgroundEmailService instance."""
+    return BackgroundEmailService()
+
+
+def get_user_controller(
+    db: Session = Depends(get_db),
+    email_service: EmailService = Depends(get_email_service),
+    background_email_service: BackgroundEmailService = Depends(get_background_email_service)
+) -> UserController:
+    """Get UserController instance with dependencies."""
+    return UserController(
+        db_session=db,
+        email_service=email_service,
+        background_email_service=background_email_service
+    )
 
 
 # Request/Response Models
@@ -75,22 +101,36 @@ class UserLoginRequest(BaseModel):
     device_info: Optional[Dict[str, str]] = Field(None, description="Device information")
 
 
+# Response models for ORM → Pydantic serialization
+class SubscriptionPlanResponse(BaseModel):
+    """
+    Serializable subscription plan model.
+    """
+    id: int
+    name: str
+    price: float
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
 class UserResponse(BaseModel):
     """
-    User response model.
+    User response model with serialized subscription plan.
     """
     id: uuid.UUID
     email: str
     full_name: str
     company: Optional[str]
     role: UserRole
-    subscription_tier: SubscriptionTier
+    subscription_plan: Optional[SubscriptionPlanResponse]  # Use serializable Pydantic model
     is_active: bool
     is_verified: bool
     profile_picture_url: Optional[str]
     created_at: datetime
     last_login_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 
@@ -292,7 +332,7 @@ async def register_user(
     5. Returns user profile
 
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.register_user(request, background_tasks, req, db)
 
 
@@ -311,7 +351,7 @@ async def login_user(
     - Device tracking
     - Rate limiting protection
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.login_user(request, req, db)
 
 
@@ -325,7 +365,7 @@ async def logout_user(
     Logout user and invalidate session.
     
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.logout_user(user, credentials, db)
 
 
@@ -339,7 +379,7 @@ async def get_user_profile(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.get_user_profile(user)
 
 
@@ -354,7 +394,7 @@ async def update_user_profile(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.update_user_profile(request, user, db)
 
 
@@ -369,7 +409,7 @@ async def change_password(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.change_password(request, user, db)
 
 
@@ -385,7 +425,7 @@ async def request_password_reset(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.request_password_reset(request, background_tasks, req, db)
 
 
@@ -399,7 +439,7 @@ async def reset_password(
     Reset password using reset token.
     
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.reset_password(request, req, db)
 
 
@@ -415,7 +455,7 @@ async def create_api_key(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.create_api_key(request, user, db)
 
 
@@ -429,7 +469,7 @@ async def list_api_keys(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.list_api_keys(user, db)
 
 
@@ -444,12 +484,12 @@ async def delete_api_key(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.delete_api_key(key_id, user, db)
 
 
 # Session Management Routes
-@router.get("/sessions", response_model=List[SessionResponse], summary="Get user sessions")
+@router.get("/sessions", response_model=List[UserSessionResponse], summary="Get user sessions")
 async def get_user_sessions(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -459,7 +499,7 @@ async def get_user_sessions(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.get_user_sessions(user, db)
 
 
@@ -474,7 +514,7 @@ async def revoke_session(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.revoke_session(session_id, user, db)
 
 
@@ -514,7 +554,7 @@ async def verify_email(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.verify_email(token, db)
 
 
@@ -529,7 +569,7 @@ async def resend_verification_email(
     
     Delegates business logic to UserController.
     """
-    controller = UserController()
+    controller = get_user_controller(db, get_email_service(), get_background_email_service())
     return await controller.resend_verification_email(background_tasks, user, db)
 
 

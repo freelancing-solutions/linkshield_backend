@@ -416,3 +416,18 @@ class ReportStatistics(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class VoteType(enum.Enum):
+    """
+    Enumeration for different types of votes that can be cast on reports.
+    
+    This enum defines the various voting options available to users when
+    evaluating the helpfulness and accuracy of reports.
+    """
+    HELPFUL = "helpful"
+    NOT_HELPFUL = "not_helpful"
+    ACCURATE = "accurate"
+    INACCURATE = "inaccurate"
+    SPAM = "spam"
+    DUPLICATE = "duplicate"

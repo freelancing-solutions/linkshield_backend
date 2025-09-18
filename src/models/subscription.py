@@ -503,7 +503,7 @@ class UsageRecord(Base):
     billing_period_end = Column(DateTime(timezone=True), nullable=False)
     
     # Additional metadata
-    metadata = Column(JSON, nullable=True)  # Additional usage details
+    subscription_metadata = Column(JSON, nullable=True)  # Additional usage details
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -535,6 +535,6 @@ class UsageRecord(Base):
             "usage_date": self.usage_date.isoformat() if self.usage_date else None,
             "billing_period_start": self.billing_period_start.isoformat() if self.billing_period_start else None,
             "billing_period_end": self.billing_period_end.isoformat() if self.billing_period_end else None,
-            "metadata": self.metadata,
+            "subscription_metadata": self.subscription_metadata,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

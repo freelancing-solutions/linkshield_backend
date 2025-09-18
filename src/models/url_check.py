@@ -61,6 +61,10 @@ class ScanType(enum.Enum):
     DEEP = "deep"
     CUSTOM = "custom"
 
+    SECURITY  = "Security"
+    REPUTATION = "Reputation"
+    CONTENT = "Content"
+
 
 class URLCheck(Base):
     """

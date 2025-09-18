@@ -38,6 +38,7 @@ python-dotenv
 # Utilities
 pydantic-extra-types
 email-validator
+resend
 validators
 python-dateutil
 
@@ -76,3 +77,9 @@ kombu
 
 # API Documentation
 fastapi-users
+
+resend
+jinja2
+aiohttp
+# torch transformers (GPU) / tensorflow transformers (TensorFlow backend:)
+transformers

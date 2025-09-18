@@ -19,15 +19,17 @@ from pydantic import ValidationError
 from src.controllers.base_controller import BaseController
 from src.models.user import (
     User, UserSession, APIKey, PasswordResetToken,
-    EmailVerificationToken, UserRole, SubscriptionTier
+    EmailVerificationToken, UserRole, SubscriptionPlan
 )
 from src.models.subscription import UserSubscription, SubscriptionPlan
 from src.services.security_service import (
     SecurityService, AuthenticationError, RateLimitError
 )
 from src.authentication.auth_service import (
-    AuthService, UserRegistrationError, InvalidCredentialsError
+    AuthService, InvalidCredentialsError
 )
+from src.services.email_service import EmailService
+from src.services.background_tasks import BackgroundEmailService
 
 
 class UserController(BaseController):
@@ -47,7 +49,9 @@ class UserController(BaseController):
         self,
         db_session: Session,
         security_service: SecurityService = None,
-        auth_service: AuthService = None
+        auth_service: AuthService = None,
+        email_service: EmailService = None,
+        background_email_service: BackgroundEmailService = None
     ):
         """Initialize user controller.
         
@@ -55,8 +59,12 @@ class UserController(BaseController):
             db_session: Database session for operations
             security_service: Security service for validation
             auth_service: Authentication service
+            email_service: Email service for sending emails
+            background_email_service: Background email service for async operations
         """
         super().__init__(db_session, security_service, auth_service)
+        self.email_service = email_service
+        self.background_email_service = background_email_service
         
         # Rate limits
         self.registration_rate_limit = 5  # per hour
@@ -137,8 +145,14 @@ class UserController(BaseController):
             # Create email verification token
             verification_token = await self._create_email_verification_token(user)
             
-            # Send verification email in background
-            if background_tasks:
+            # Queue verification email for background sending
+            if self.background_email_service:
+                self.background_email_service.queue_verification_email(
+                    email,
+                    full_name.split()[0] if full_name else "User",  # First name
+                    verification_token.token
+                )
+            elif background_tasks:
                 background_tasks.add_task(
                     self._send_verification_email,
                     email,
@@ -421,8 +435,8 @@ class UserController(BaseController):
             
             # Update password
             user.password_hash = await self.auth_service.hash_password(new_password)
-            user.password_changed_at = datetime.utcnow()
-            user.updated_at = datetime.utcnow()
+            user.password_changed_at = datetime.now(timezone.utc)
+            user.updated_at = datetime.now(timezone.utc)
             
             # Invalidate all existing sessions except current one
             # This forces re-authentication on other devices
@@ -433,7 +447,7 @@ class UserController(BaseController):
                 )
             ).update({
                 "is_active": False,
-                "ended_at": datetime.utcnow()
+                "ended_at": datetime.now(timezone.utc)
             })
             
             await self.db_session.commit()
@@ -490,8 +504,14 @@ class UserController(BaseController):
                 # Create password reset token
                 reset_token = await self._create_password_reset_token(user)
                 
-                # Send reset email in background
-                if background_tasks:
+                # Queue password reset email for background sending
+                if self.background_email_service:
+                    self.background_email_service.queue_password_reset_email(
+                        email,
+                        user.full_name.split()[0] if user.full_name else "User",  # First name
+                        reset_token.token
+                    )
+                elif background_tasks:
                     background_tasks.add_task(
                         self._send_password_reset_email,
                         email,
@@ -1006,8 +1026,14 @@ class UserController(BaseController):
             # Create new verification token
             verification_token = await self._create_email_verification_token(user)
             
-            # Send verification email in background
-            if background_tasks:
+            # Queue verification email for background sending
+            if self.background_email_service:
+                self.background_email_service.queue_verification_email(
+                    user.email,
+                    user.full_name.split()[0] if user.full_name else "User",  # First name
+                    verification_token.token
+                )
+            elif background_tasks:
                 background_tasks.add_task(
                     self._send_verification_email,
                     user.email,
@@ -1141,11 +1167,31 @@ class UserController(BaseController):
             full_name: User full name
             token: Verification token
         """
-        # This would implement actual email sending
-        # For now, just log the email
-        self.logger.info(
-            f"Sending verification email to {email} for {full_name} with token {token}"
-        )
+        if self.email_service:
+            from src.models.email import EmailRequest, EmailType
+            from src.config.settings import get_settings
+            
+            settings = get_settings()
+            verification_url = f"{settings.APP_URL}/verify-email?token={token}"
+            
+            email_request = EmailRequest(
+                to=email,
+                subject=f"Verify your {settings.APP_NAME} account",
+                email_type=EmailType.VERIFICATION,
+                template_variables={
+                    "user_name": full_name.split()[0] if full_name else "User",
+                    "verification_url": verification_url,
+                    "expiry_hours": 24,
+                    "current_year": datetime.now().year
+                }
+            )
+            
+            await self.email_service.send_email(email_request, EmailType.VERIFICATION.value)
+        else:
+            # Fallback: just log the email
+            self.logger.info(
+                f"Sending verification email to {email} for {full_name} with token {token}"
+            )
     
     async def _send_password_reset_email(
         self,
@@ -1158,8 +1204,32 @@ class UserController(BaseController):
             email: User email address
             token: Reset token
         """
-        # This would implement actual email sending
-        # For now, just log the email
-        self.logger.info(
-            f"Sending password reset email to {email} with token {token}"
-        )
+        if self.email_service:
+            from src.models.email import EmailRequest, EmailType
+            from src.config.settings import get_settings
+            
+            settings = get_settings()
+            reset_url = f"{settings.APP_URL}/reset-password?token={token}"
+            
+            # Get user name from database
+            user = self.db_session.query(User).filter(User.email == email).first()
+            user_name = user.full_name.split()[0] if user and user.full_name else "User"
+            
+            email_request = EmailRequest(
+                to=email,
+                subject=f"Reset your {settings.APP_NAME} password",
+                email_type=EmailType.PASSWORD_RESET,
+                template_variables={
+                    "user_name": user_name,
+                    "reset_url": reset_url,
+                    "expiry_hours": 1,
+                    "current_year": datetime.now().year
+                }
+            )
+            
+            await self.email_service.send_email(email_request, EmailType.PASSWORD_RESET.value)
+        else:
+            # Fallback: just log the email
+            self.logger.info(
+                f"Sending password reset email to {email} with token {token}"
+            )

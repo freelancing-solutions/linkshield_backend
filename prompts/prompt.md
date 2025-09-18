@@ -2,217 +2,281 @@ I have created the following plan after thorough exploration and analysis of the
 
 ### Observations
 
-The current codebase has all controller logic mixed within the route files, making them large and difficult to maintain. Each route file (`report.py`, `url_check.py`, `user.py`, `health.py`) contains extensive business logic, validation, database operations, and service integrations. The existing `src/controllers/` directory is empty, providing a clean slate for implementing a proper controller architecture. The models are well-structured with clear relationships, and there are dedicated service classes for authentication, security, and URL analysis that the controllers can leverage.
+I analyzed the LinkShield backend project and found it's a well-structured FastAPI application with existing email infrastructure partially in place. The project already has SMTP email settings configured in `src/config/settings.py`, email-related models (User with email verification, password reset tokens), and imports for an `EmailService` in `src/authentication/auth_service.py` that doesn't exist yet. The project uses Pydantic settings, has a services directory structure, and includes email validation. This is perfect for implementing Resend API integration to replace the current SMTP configuration.
 
 ### Approach
 
-I'll create a comprehensive controller architecture that extracts business logic from the route files into dedicated controller modules. Each controller will handle specific domain logic while keeping routes clean and focused on HTTP handling. The controllers will follow a consistent pattern with dependency injection, proper error handling, and separation of concerns. This will improve code maintainability, testability, and reusability across the application.
+I'll implement a comprehensive email service using the Resend API that integrates seamlessly with the existing codebase. The approach will:
+
+1. **Add Resend dependency** to requirements.txt
+2. **Update configuration** to include Resend API settings while maintaining backward compatibility with SMTP
+3. **Create EmailService class** in the services directory with methods for all email types (verification, password reset, notifications)
+4. **Implement email templates** as a separate module for maintainability
+5. **Add background task support** for async email sending using Celery
+6. **Update authentication service** to use the new email service
+7. **Create email models** for type safety and validation
+
+This maintains the existing architecture while providing a robust, scalable email solution.
 
 ### Reasoning
 
-I examined the project structure and found that the `src/controllers/` directory exists but is empty. I then read through all the route files to understand the current architecture and business logic distribution. I also reviewed the model files to understand the data structures and relationships. The analysis revealed that each route file contains substantial controller logic that should be extracted into dedicated controller classes for better organization and maintainability.
+I started by exploring the project structure to understand the codebase organization. I examined the requirements.txt to see current dependencies and found FastAPI, Celery, and email-validator already installed. I then reviewed the settings configuration and discovered existing SMTP email settings. Using grep search, I found multiple references to email functionality throughout the codebase, including imports for a non-existent EmailService. I also checked the services directory structure and confirmed the need to implement the missing email service that's already being imported by the authentication service.
 
 ## Mermaid Diagram
 
 sequenceDiagram
-    participant Route as Route Handler
-    participant Controller as Domain Controller
-    participant Service as Business Service
-    participant Model as Data Model
-    participant DB as Database
+    participant User as User/Client
+    participant Route as User Routes
+    participant Controller as User Controller
+    participant EmailService as Email Service
+    participant Templates as Email Templates
+    participant Resend as Resend API
+    participant BgTask as Background Tasks
 
-    Route->>Controller: Delegate business logic
-    Controller->>Service: Use domain services
-    Service->>Model: Query/manipulate data
-    Model->>DB: Database operations
-    DB-->>Model: Return data
-    Model-->>Service: Return results
-    Service-->>Controller: Return processed data
-    Controller-->>Route: Return formatted response
-    Route-->>Client: HTTP response
+    User->>Route: POST /register
+    Route->>Controller: register_user()
+    Controller->>EmailService: send_verification_email()
+    EmailService->>Templates: get_verification_email_template()
+    Templates-->>EmailService: HTML & Text content
+    EmailService->>BgTask: send_email_task.delay()
+    BgTask->>Resend: Send email via API
+    Resend-->>BgTask: Email sent confirmation
+    BgTask-->>EmailService: Task completion
+    EmailService-->>Controller: Email queued
+    Controller-->>Route: User created
+    Route-->>User: Registration successful
 
-    Note over Route: Handles HTTP concerns
-    Note over Controller: Manages business logic
-    Note over Service: Provides domain services
-    Note over Model: Data access layer
+    User->>Route: POST /forgot-password
+    Route->>Controller: request_password_reset()
+    Controller->>EmailService: send_password_reset_email()
+    EmailService->>Templates: get_password_reset_template()
+    Templates-->>EmailService: HTML & Text content
+    EmailService->>BgTask: send_email_task.delay()
+    BgTask->>Resend: Send reset email
+    Resend-->>BgTask: Email sent
+    BgTask-->>EmailService: Success
+    EmailService-->>Controller: Reset email sent
+    Controller-->>Route: Reset initiated
+    Route-->>User: Check your email
 
 ## Proposed File Changes
 
-### src\controllers\__init__.py(MODIFY)
+### requirements.txt(MODIFY)
 
-Create the main controllers module initialization file that exports all controller classes for easy importing. This file will serve as the central point for accessing all controllers and will include proper imports for `ReportController`, `URLCheckController`, `UserController`, and `HealthController`.
+Add the Resend Python SDK to the dependencies. Insert `resend` after the existing email-validator dependency in the Utilities section (around line 41) to keep related dependencies grouped together. This will enable the application to use Resend API for email services.
 
-### src\controllers\base_controller.py(NEW)
+### src\config\settings.py(MODIFY)
 
-References: 
+Add Resend API configuration settings to the existing Email Settings section (after line 110). Add the following fields:
 
-- src\config\database.py
-- src\config\settings.py
+- `RESEND_API_KEY`: Optional string field for Resend API key with environment variable `LINKSHIELD_RESEND_API_KEY`
+- `EMAIL_PROVIDER`: String field with default "smtp" and options ["smtp", "resend"] to allow switching between providers
+- `RESEND_FROM_DOMAIN`: Optional string field for verified Resend domain
 
-Create a base controller class that provides common functionality for all controllers. This will include:
+This maintains backward compatibility with existing SMTP settings while enabling Resend integration. The configuration follows the existing pattern used in `src/config/settings.py` for other API keys and settings.
 
-- Common dependency injection patterns for database sessions, services, and settings
-- Standard error handling and logging utilities
-- Common validation helpers
-- Response formatting utilities
-- Rate limiting and authentication helpers
-
-This base class will be inherited by all specific controllers to ensure consistency and reduce code duplication.
-
-### src\controllers\report_controller.py(NEW)
+### src\services\email_service.py(NEW)
 
 References: 
 
-- src\routes\report.py(MODIFY)
+- src\config\settings.py(MODIFY)
+- src\services\security_service.py
+
+Create a comprehensive EmailService class that provides email functionality using either Resend API or SMTP based on configuration. The service should include:
+
+**Class Structure:**
+- `EmailService` class with dependency injection for settings and database session
+- Support for both Resend and SMTP providers based on `EMAIL_PROVIDER` setting
+- Async methods for all email operations
+
+**Core Methods:**
+- `send_email()`: Generic email sending method
+- `send_verification_email()`: User email verification with token
+- `send_password_reset_email()`: Password reset with secure token
+- `send_welcome_email()`: Welcome message for new users
+- `send_notification_email()`: General notifications
+- `send_security_alert()`: Security-related alerts
+
+**Features:**
+- Template-based email content using the email templates from `src/services/email_templates.py`
+- Error handling and retry logic
+- Logging for email operations
+- Rate limiting protection
+- Support for HTML and text content
+- Attachment support for Resend
+
+**Integration:**
+- Use settings from `src/config/settings.py` for configuration
+- Follow the same patterns as other services in the services directory like `src/services/security_service.py`
+- Include proper exception handling and logging similar to existing services
+
+### src\services\email_templates.py(NEW)
+
+References: 
+
+- src\services\email_service.py(NEW)
+
+Create an email templates module that provides HTML and text templates for all email types. The module should include:
+
+**Template Functions:**
+- `get_verification_email_template()`: Email verification template with token link
+- `get_password_reset_template()`: Password reset template with secure reset link
+- `get_welcome_email_template()`: Welcome email for new users
+- `get_security_alert_template()`: Security alert notifications
+- `get_notification_template()`: General notification template
+
+**Features:**
+- HTML and plain text versions for each template
+- Dynamic content injection using template variables
+- Responsive HTML design
+- LinkShield branding and styling
+- Support for custom variables (user name, company, links, etc.)
+- Template validation and error handling
+
+**Template Structure:**
+- Each template function returns a dictionary with 'html' and 'text' keys
+- Templates include proper email headers and footers
+- Unsubscribe links where appropriate
+- Security best practices for email content
+
+This module will be used by `src/services/email_service.py` to generate email content, keeping templates separate from business logic for better maintainability.
+
+### src\models\email.py(NEW)
+
+References: 
+
+- src\models\user.py
 - src\models\report.py
-- src\models\user.py
-- src\services\security_service.py
 
-Extract all report-related business logic from `src/routes/report.py` into a dedicated ReportController class. This controller will handle:
+Create email-related Pydantic models for type safety and validation. The module should include:
 
-- Report creation with validation, duplicate checking, and priority assignment
-- Report listing with filtering, pagination, and access control
-- Report retrieval with permission checks
-- Report updates with ownership validation
-- Report voting functionality
-- Report assignment and resolution (admin functions)
-- Report statistics and analytics
-- Report template management
+**Models:**
+- `EmailRequest`: Base model for email sending requests with fields for recipient, subject, content
+- `EmailTemplate`: Model for email template data with template_type, variables, and metadata
+- `EmailLog`: Model for email logging and tracking with status, timestamps, and error details
+- `EmailAttachment`: Model for email attachments with file data, name, and content type
+- `BulkEmailRequest`: Model for sending emails to multiple recipients
 
-The controller will use dependency injection for services like SecurityService and will include proper error handling, logging, and background task coordination. All Pydantic models and dependency functions will remain in the routes file.
+**Enums:**
+- `EmailProvider`: Enum for email providers (SMTP, RESEND)
+- `EmailType`: Enum for email types (VERIFICATION, PASSWORD_RESET, WELCOME, NOTIFICATION, SECURITY_ALERT)
+- `EmailStatus`: Enum for email status (PENDING, SENT, FAILED, BOUNCED)
 
-### src\controllers\url_check_controller.py(NEW)
+**Features:**
+- Proper validation using Pydantic validators
+- Email address validation using EmailStr
+- File size limits for attachments
+- Template variable validation
+- Integration with existing models in the models directory
 
-References: 
+This follows the same patterns as other model files like `src/models/user.py` and `src/models/report.py` for consistency.
 
-- src\routes\url_check.py(MODIFY)
-- src\models\url_check.py
-- src\models\user.py
-- src\services\url_analysis_service.py
-- src\services\ai_service.py
-- src\services\security_service.py
-
-Extract all URL check-related business logic from `src/routes/url_check.py` into a dedicated URLCheckController class. This controller will handle:
-
-- Single URL analysis with rate limiting and validation
-- Bulk URL checking with quota management
-- URL check result retrieval with access control
-- Detailed scan results with permission validation
-- URL check history with filtering and pagination
-- Domain reputation lookup and caching
-- URL check statistics and metrics
-- Webhook notification coordination
-
-The controller will integrate with URLAnalysisService, AIService, and SecurityService through dependency injection. It will include proper error handling for various analysis failures and rate limiting scenarios.
-
-### src\controllers\user_controller.py(NEW)
+### src\services\background_tasks.py(NEW)
 
 References: 
 
-- src\routes\user.py(MODIFY)
-- src\models\user.py
-- src\authentication\auth_service.py
-- src\services\security_service.py
+- src\config\settings.py(MODIFY)
+- src\services\email_service.py(NEW)
 
-Extract all user management business logic from `src/routes/user.py` into a dedicated UserController class. This controller will handle:
+Create a background tasks module for handling asynchronous email operations using Celery. The module should include:
 
-- User registration with validation and email verification
-- User authentication and session management
-- User logout and session invalidation
-- Profile management and updates
-- Password change and reset functionality
-- API key creation, listing, and deletion
-- Session management and termination
-- Email verification and resending
-- User preferences and settings
+**Celery Tasks:**
+- `send_email_task()`: Background task for sending individual emails
+- `send_bulk_emails_task()`: Background task for sending multiple emails
+- `process_email_queue_task()`: Task for processing email queues
+- `cleanup_email_logs_task()`: Periodic task for cleaning up old email logs
 
-The controller will work with AuthService and SecurityService for authentication operations and will coordinate background tasks for email notifications. It will include comprehensive error handling for authentication failures and rate limiting.
+**Features:**
+- Integration with existing Celery configuration from `src/config/settings.py`
+- Retry logic for failed email sends
+- Error handling and logging
+- Task status tracking
+- Rate limiting to respect email provider limits
+- Dead letter queue for failed emails
 
-### src\controllers\health_controller.py(NEW)
+**Integration:**
+- Use the EmailService from `src/services/email_service.py` for actual email sending
+- Follow Celery best practices for task definition
+- Include proper error handling and monitoring
+- Support for scheduled email sending
 
-References: 
+This module will be used by controllers and services to send emails asynchronously without blocking the main application thread.
 
-- src\routes\health.py(MODIFY)
-- src\config\database.py
-- src\config\settings.py
-
-Extract health check logic from `src/routes/health.py` into a dedicated HealthController class. This controller will handle:
-
-- Basic health checks with API status verification
-- Detailed health checks including database and external service connectivity
-- Readiness probes for Kubernetes deployment
-- Liveness probes for container orchestration
-- Version information and build details
-- Application metrics collection and reporting
-
-The controller will include proper error handling for service unavailability and will integrate with database health check functions from `src/config/database.py`. It will provide structured health data for monitoring systems.
-
-### src\routes\report.py(MODIFY)
+### src\authentication\auth_service.py(MODIFY)
 
 References: 
 
-- src\controllers\report_controller.py(NEW)
+- src\services\email_service.py(NEW)
 
-Refactor the report routes to use the new ReportController. This involves:
+Update the existing import statement on line 27 to properly import the EmailService class that will now exist. The import `from src.services.email_service import EmailService` should work correctly once the new email service is implemented.
 
-- Importing the ReportController class from `src/controllers/report_controller.py`
-- Keeping all Pydantic models (request/response classes) in this file
-- Keeping dependency functions for authentication and permissions
-- Modifying all route handlers to delegate business logic to controller methods
-- Maintaining the same API interface and response formats
-- Keeping background task function definitions but moving logic to controller
-- Ensuring proper error handling and HTTP status code mapping
+Additionally, review the EmailService usage in the `__init__` method (line 71-73) and any other methods that call email service functions to ensure they use the new EmailService API methods like `send_verification_email()` and `send_password_reset_email()`.
 
-The routes will become thin wrappers that handle HTTP-specific concerns while delegating business logic to the controller.
+The existing dependency injection pattern should work seamlessly with the new EmailService implementation.
 
-### src\routes\url_check.py(MODIFY)
+### src\controllers\user_controller.py(MODIFY)
 
 References: 
 
-- src\controllers\url_check_controller.py(NEW)
+- src\services\email_service.py(NEW)
+- src\authentication\auth_service.py(MODIFY)
 
-Refactor the URL check routes to use the new URLCheckController. This involves:
+Update the user controller to properly integrate with the new EmailService. The controller already has email verification logic (around line 137) that needs to be connected to the new email service.
 
-- Importing the URLCheckController class from `src/controllers/url_check_controller.py`
-- Keeping all Pydantic models and validation logic in this file
-- Keeping dependency functions for authentication and rate limiting
-- Modifying all route handlers to delegate business logic to controller methods
-- Maintaining the same API interface and response formats
-- Keeping background task function definitions but moving logic to controller
-- Ensuring proper error handling and HTTP status code mapping
+**Updates needed:**
+- Import the EmailService from `src/services.email_service`
+- Add EmailService to the controller's dependency injection
+- Update email verification token creation to use the new `send_verification_email()` method
+- Update password reset functionality to use `send_password_reset_email()` method
+- Add proper error handling for email sending failures
+- Ensure background task integration for async email sending
 
-The routes will focus on HTTP request/response handling while the controller manages the URL analysis business logic.
+The controller should maintain its existing API interface while using the new email service backend. Follow the same dependency injection pattern used for other services in the controller.
 
 ### src\routes\user.py(MODIFY)
 
 References: 
 
-- src\controllers\user_controller.py(NEW)
+- src\controllers\user_controller.py(MODIFY)
+- src\services\email_service.py(NEW)
 
-Refactor the user routes to use the new UserController. This involves:
+Update the user routes to include proper email-related endpoints and integrate with the new email service functionality. The routes file already has email-related models and endpoints that need to be connected to the email service.
 
-- Importing the UserController class from `src/controllers/user_controller.py`
-- Keeping all Pydantic models and validation logic in this file
-- Keeping dependency functions for authentication and rate limiting
-- Modifying all route handlers to delegate business logic to controller methods
-- Maintaining the same API interface and response formats
-- Keeping background task function definitions but moving logic to controller
-- Ensuring proper error handling and HTTP status code mapping
+**Updates needed:**
+- Add endpoint for resending verification emails
+- Add endpoint for email preference management
+- Update existing registration and password reset endpoints to use background email tasks
+- Add proper response models for email operations
+- Include rate limiting for email-related endpoints
+- Add email status checking endpoints
 
-The routes will handle HTTP-specific concerns while the controller manages user authentication and profile management logic.
+**Integration points:**
+- Use the updated UserController from `src/controllers/user_controller.py` that now includes EmailService
+- Ensure proper error handling for email failures
+- Add appropriate HTTP status codes for email operations
+- Include email validation and sanitization
 
-### src\routes\health.py(MODIFY)
+The routes should maintain backward compatibility while adding new email management capabilities.
+
+### .env.example(MODIFY)
 
 References: 
 
-- src\controllers\health_controller.py(NEW)
+- src\config\settings.py(MODIFY)
 
-Refactor the health routes to use the new HealthController. This involves:
+Add the new Resend API configuration variables to the environment example file. Add the following variables in the Email Settings section:
 
-- Importing the HealthController class from `src/controllers/health_controller.py`
-- Keeping all Pydantic models in this file
-- Modifying all route handlers to delegate business logic to controller methods
-- Maintaining the same API interface and response formats
-- Ensuring proper error handling and HTTP status code mapping
+```
+# Email Provider Configuration
+LINKSHIELD_EMAIL_PROVIDER=resend
+LINKSHIELD_RESEND_API_KEY=re_your_resend_api_key_here
+LINKSHIELD_RESEND_FROM_DOMAIN=yourdomain.com
+```
 
-The routes will become simple HTTP handlers that delegate health check logic to the controller while maintaining the same monitoring and probe endpoints.
+Include comments explaining:
+- How to get a Resend API key
+- Domain verification requirements
+- Fallback to SMTP if Resend is not configured
+- Security best practices for API key management
+
+This provides clear guidance for developers setting up the email service in their environment.
