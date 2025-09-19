@@ -143,6 +143,7 @@ class URLCheck(Base):
     user = relationship("User", back_populates="url_checks")
     scan_results = relationship("ScanResult", back_populates="url_check", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="url_check")
+    ai_analysis = relationship("AIAnalysis", back_populates="url_check", uselist=False)
     
     # Indexes for performance
     __table_args__ = (

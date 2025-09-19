@@ -83,3 +83,6 @@ jinja2
 aiohttp
 # torch transformers (GPU) / tensorflow transformers (TensorFlow backend:)
 transformers
+
+#  asyncpdg for database
+asyncpg

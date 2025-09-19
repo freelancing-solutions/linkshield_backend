@@ -144,7 +144,7 @@ class ReportVoteRequest(BaseModel):
 
 class ReportVoteResponse(BaseModel):
     """
-    Report vote response model.
+    Response model for report vote operations.
     """
     id: uuid.UUID
     report_id: uuid.UUID
@@ -155,6 +155,20 @@ class ReportVoteResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class ReportResolveRequest(BaseModel):
+    """
+    Request model for resolving a report.
+    """
+    resolution_notes: str = Field(..., min_length=10, max_length=1000, description="Resolution notes")
+
+
+class ReportAssignRequest(BaseModel):
+    """
+    Request model for assigning a report to a user.
+    """
+    assignee_id: uuid.UUID = Field(..., description="ID of the user to assign the report to")
 
 
 class ReportStatsResponse(BaseModel):
@@ -369,8 +383,8 @@ async def remove_vote(
 # Admin Routes
 @router.put("/{report_id}/assign", summary="Assign report to user")
 async def assign_report(
+    request: ReportAssignRequest,
     report_id: uuid.UUID = Path(..., description="Report ID"),
-    assignee_id: uuid.UUID = ...,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -380,13 +394,13 @@ async def assign_report(
     Delegates business logic to ReportController.
     """
     controller = ReportController()
-    return await controller.assign_report(report_id, assignee_id, user, db)
+    return await controller.assign_report(report_id, request.assignee_id, user, db)
 
 
 @router.put("/{report_id}/resolve", summary="Resolve report")
-async def resolve_report(
+async def resolve_report(    
+    request: ReportResolveRequest,
     report_id: uuid.UUID = Path(..., description="Report ID"),
-    resolution_notes: str = Field(..., min_length=10, max_length=1000),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -396,7 +410,7 @@ async def resolve_report(
     Delegates business logic to ReportController.
     """
     controller = ReportController()
-    return await controller.resolve_report(report_id, resolution_notes, user, db)
+    return await controller.resolve_report(report_id, request.resolution_notes, user, db)
 
 
 @router.get("/stats/overview", response_model=ReportStatsResponse, summary="Get report statistics")
