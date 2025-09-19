@@ -5,32 +5,51 @@ LinkShield Backend Models
 Centralized imports for all SQLAlchemy models.
 """
 
-from .user import User
-from .url_check import URLCheck, URLCheckResult
-from .subscription import Subscription, SubscriptionPlan
-from .email import EmailVerification, PasswordReset
-from .report import Report, ReportStats
+# User models
+from .user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken
+
+# URL checking models  
+from .url_check import URLCheck, ScanResult, URLReputation
+
+# Subscription models
+from .subscription import SubscriptionPlan, UserSubscription, Payment, UsageRecord
+
+# Email models
+from .email import EmailLog
+
+# Report models
+from .report import Report, ReportVote, ReportTemplate, ReportStatistics
+
+# AI analysis models
 from .ai_analysis import AIAnalysis, ContentSimilarity, AIModelMetrics, ProcessingStatus, AnalysisType
 
 __all__ = [
     # User models
     "User",
+    "UserSession", 
+    "APIKey",
+    "PasswordResetToken",
+    "EmailVerificationToken",
     
     # URL checking models
     "URLCheck",
-    "URLCheckResult",
+    "ScanResult",
+    "URLReputation",
     
     # Subscription models
-    "Subscription",
     "SubscriptionPlan",
+    "UserSubscription",
+    "Payment", 
+    "UsageRecord",
     
     # Email models
-    "EmailVerification",
-    "PasswordReset",
+    "EmailLog",
     
     # Report models
     "Report",
-    "ReportStats",
+    "ReportVote",
+    "ReportTemplate", 
+    "ReportStatistics",
     
     # AI analysis models
     "AIAnalysis",
