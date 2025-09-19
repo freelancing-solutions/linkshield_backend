@@ -24,6 +24,7 @@ from slowapi.util import get_remote_address
 from src.config.settings import get_settings
 from src.config.database import init_db, close_db
 from src.security.middleware import SecurityMiddleware
+from src.middleware.admin_audit import AdminAuditMiddleware
 
 # Routers
 from src.routes.health import router as health_router
@@ -31,6 +32,7 @@ from src.routes.url_check import router as url_check_router
 from src.routes.user import router as user_router
 from src.routes.report import router as report_router
 from src.routes.ai_analysis import router as ai_analysis_router
+from src.routes.admin import router as admin_router
 
 # Initialize settings
 settings = get_settings()
@@ -78,6 +80,7 @@ app = FastAPI(
 # Middleware
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(SecurityMiddleware)
 
 if settings.ENVIRONMENT == "development":
@@ -115,6 +118,7 @@ app.include_router(url_check_router, prefix="/api", tags=["URL Check"])
 app.include_router(user_router, prefix="/api", tags=["User"])
 app.include_router(report_router, prefix="/api", tags=["Report"])
 app.include_router(ai_analysis_router, tags=["AI Analysis"])
+app.include_router(admin_router, prefix="/api", tags=["Admin"])
 
 
 # Root endpoint

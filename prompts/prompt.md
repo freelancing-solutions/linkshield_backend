@@ -2,507 +2,599 @@ I have created the following plan after thorough exploration and analysis of the
 
 ### Observations
 
-I have thoroughly explored the LinkShield backend codebase and discovered it's a comprehensive FastAPI-based URL security analysis platform. The system includes:
+Based on my exploration of the LinkShield backend project, I can see a comprehensive admin system has been implemented with:
 
-**Core Features:**
-- URL security analysis with multiple threat intelligence providers (VirusTotal, Google Safe Browsing, URLVoid)
-- AI-powered content analysis using OpenAI and local ML models
-- User authentication with JWT tokens and API keys
-- Subscription management with tiered plans (Free, Basic, Pro, Enterprise)
-- Community reporting system with voting and moderation
-- Real-time health monitoring and metrics
-- Rate limiting and security middleware
+- **Database Layer**: Migration `002_add_admin_models.py` with 4 new tables (global_config, admin_actions, system_health, admin_sessions) and updated UserRole enum
+- **Service Layer**: Complete `admin_service.py` with system statistics, configuration management, user management, and health monitoring
+- **Controller Layer**: Robust `admin_controller.py` with comprehensive error handling and input validation
+- **API Routes**: Well-structured `admin.py` with dashboard, configuration, user management, and system monitoring endpoints
+- **Security & Audit**: Advanced `admin_audit.py` middleware for automatic action logging with data sanitization
+- **Utility Functions**: Comprehensive `admin_helpers.py` with formatters, validators, exporters, and monitoring tools
+- **Models**: Complete `admin.py` models with proper enums and relationships
 
-**Architecture:**
-- FastAPI with SQLAlchemy ORM and PostgreSQL database
-- Redis for caching and rate limiting
-- Background task processing with Celery
-- Comprehensive security service with threat detection
-- Modular controller-service architecture
-
-**API Surface:**
-- 5 main routers: health, url_check, user, report, ai_analysis
-- 40+ endpoints covering all functionality
-- Comprehensive request/response models with validation
-- Proper error handling and status codes
-
-The existing documentation in the `docs/` folder appears to be outdated and describes a Next.js application rather than the actual FastAPI backend. A complete rewrite is needed to accurately document the current system.
+The existing `docs/admin_feature.md` appears outdated and focused on a different tech stack (Prisma/Next.js vs SQLAlchemy/FastAPI).
 
 ### Approach
 
-I will create comprehensive API documentation that covers every aspect of the LinkShield backend system. The documentation will be structured for both developers integrating with the API and AI agents that need to understand the complete system architecture.
+The plan will create comprehensive documentation for the LinkShield admin section by replacing the outdated documentation with detailed, accurate content that reflects the actual FastAPI/SQLAlchemy implementation. The documentation will be structured to serve as both a reference guide and implementation handbook, covering architecture, API endpoints, security features, database schema, and operational procedures.
 
-The approach will be:
-1. **Complete API Reference** - Document all 40+ endpoints with request/response schemas, authentication requirements, and error codes
-2. **Architecture Overview** - Explain the FastAPI-based system design, database models, and service integrations
-3. **Authentication Guide** - Cover JWT tokens, API keys, sessions, and security features
-4. **Feature Documentation** - Detail URL analysis, AI services, reporting system, and subscription management
-5. **Integration Examples** - Provide practical examples for frontend developers
-6. **Error Handling** - Comprehensive error taxonomy and troubleshooting guide
-
-This will replace the outdated Next.js documentation with accurate FastAPI backend documentation.
+The documentation will be organized into logical sections covering the complete admin ecosystem, from high-level architecture to specific implementation details, making it valuable for developers, system administrators, and stakeholders.
 
 ### Reasoning
 
-I systematically explored the LinkShield backend codebase by:
-
-1. **Initial Assessment** - Listed the project structure and identified it as a FastAPI Python backend, not the Next.js application described in existing docs
-2. **Core Analysis** - Examined the main application entry point (`app.py`), configuration (`settings.py`), and requirements to understand the tech stack
-3. **Route Exploration** - Read all 5 router files to understand the complete API surface area and endpoint structure
-4. **Model Investigation** - Analyzed all SQLAlchemy models to understand the data structure and relationships
-5. **Service Review** - Examined key services like URL analysis, AI analysis, and security to understand business logic
-6. **Controller Analysis** - Reviewed controllers to understand request handling and error patterns
-
-This comprehensive exploration revealed the complete scope of the system and identified the gap between existing documentation and actual implementation.
+I explored the LinkShield backend repository structure and examined the comprehensive admin implementation. I read through the existing admin documentation and discovered it was outdated and focused on a different technology stack. I then analyzed the actual implementation files including routes, controllers, services, models, middleware, utilities, and database migrations to understand the complete admin system architecture and functionality.
 
 ## Mermaid Diagram
 
 sequenceDiagram
-    participant Dev as Frontend Developer
-    participant API as LinkShield API
-    participant Auth as Authentication Service
-    participant Analysis as URL Analysis Service
-    participant AI as AI Service
+    participant Dev as Developer
+    participant Docs as Documentation
+    participant API as Admin API
     participant DB as Database
-    participant External as External APIs
-
-    Note over Dev,External: Complete LinkShield API Documentation Flow
-
-    Dev->>API: POST /api/v1/user/register
-    API->>Auth: Validate & Create User
-    Auth->>DB: Store User Data
-    API-->>Dev: User Created + JWT Token
-
-    Dev->>API: POST /api/v1/url-check/check (with JWT)
-    API->>Auth: Verify Token & Check Limits
-    Auth-->>API: User Validated
-    API->>Analysis: Analyze URL
-    Analysis->>External: Query VirusTotal, Safe Browsing
-    Analysis->>AI: AI Content Analysis
-    AI-->>Analysis: Quality Scores & Topics
-    External-->>Analysis: Threat Intelligence
-    Analysis->>DB: Store Results
-    Analysis-->>API: Analysis Complete
-    API-->>Dev: URL Check Results
-
-    Dev->>API: GET /api/v1/ai-analysis/history
-    API->>Auth: Verify Token
-    API->>DB: Query User's AI Analyses
-    DB-->>API: Analysis History
-    API-->>Dev: Paginated Results
-
-    Dev->>API: POST /api/v1/reports/
-    API->>Auth: Verify Token
-    API->>DB: Create Report
-    API-->>Dev: Report Created
-
-    Note over Dev,External: Documentation covers all endpoints, authentication, rate limits, and error handling
+    participant Audit as Audit System
+    
+    Dev->>+Docs: 1. Read admin documentation
+    Docs-->>-Dev: Complete implementation guide
+    
+    Dev->>+API: 2. Implement admin dashboard
+    API->>+DB: Query system statistics
+    DB-->>-API: Return metrics data
+    API->>+Audit: Log admin action
+    Audit->>DB: Store audit record
+    API-->>-Dev: Dashboard data response
+    
+    Dev->>+API: 3. Configure system settings
+    API->>+DB: Update configuration
+    DB-->>-API: Confirm update
+    API->>+Audit: Log config change
+    Audit->>DB: Store audit record
+    API-->>-Dev: Configuration updated
+    
+    Dev->>+API: 4. Manage users
+    API->>+DB: Update user status
+    DB-->>-API: User updated
+    API->>+Audit: Log user management
+    Audit->>DB: Store audit record
+    API-->>-Dev: User management response
+    
+    Dev->>+API: 5. Monitor system health
+    API->>+DB: Check component health
+    DB-->>-API: Health status
+    API-->>-Dev: System health report
 
 ## Proposed File Changes
 
-### docs\api\README.md(NEW)
+### docs\admin_section_documentation.md(NEW)
 
 References: 
 
-- app.py
-- src\config\settings.py
-- README.md
+- src\routes\admin.py
+- src\controllers\admin_controller.py
+- src\services\admin_service.py
+- src\models\admin.py
+- src\middleware\admin_audit.py
+- src\utils\admin_helpers.py
+- alembic\versions\002_add_admin_models.py
 
-Create the main API documentation index that provides an overview of the LinkShield Backend API. This will serve as the entry point for developers and AI agents.
+Create comprehensive admin section documentation covering the complete FastAPI-based admin system implementation. This documentation will include:
 
-Include:
-- Overview of LinkShield as a URL security analysis platform
-- FastAPI-based architecture summary
-- Quick start guide for developers
-- Authentication overview (JWT + API keys)
-- Base URLs for different environments
-- Link to detailed endpoint documentation
-- Rate limiting and usage quota information
-- Support and contact information
+## Structure Overview:
+1. **Executive Summary** - High-level overview of admin capabilities
+2. **Architecture Overview** - System design and component relationships
+3. **Database Schema** - Detailed schema documentation for admin tables
+4. **API Reference** - Complete endpoint documentation with examples
+5. **Security & Audit** - Security features and audit logging
+6. **Configuration Management** - Dynamic configuration system
+7. **User Management** - Admin user operations and role management
+8. **System Monitoring** - Health monitoring and system metrics
+9. **Data Export & Analytics** - Export capabilities and analytics features
+10. **Deployment & Operations** - Setup and operational procedures
+11. **Troubleshooting** - Common issues and solutions
+12. **Development Guide** - Extension and customization guidelines
 
-This replaces the outdated documentation that described a Next.js application with accurate FastAPI backend information.
+## Key Content Areas:
 
-### docs\api\authentication.md(NEW)
+**API Documentation**: Document all admin endpoints from `src/routes/admin.py` including:
+- Dashboard statistics endpoints (`/api/admin/dashboard/*`)
+- Configuration management (`/api/admin/config/*`)
+- User management (`/api/admin/users/*`)
+- System monitoring (`/api/admin/system/*`)
+- Request/response schemas, authentication requirements, and error handling
 
-References: 
+**Database Schema**: Document the 4 admin tables from migration `002_add_admin_models.py`:
+- `global_config` - System configuration management
+- `admin_actions` - Comprehensive audit trail
+- `system_health` - Component health monitoring
+- `admin_sessions` - Enhanced admin session tracking
+- Include relationships, constraints, and usage patterns
 
-- src\services\security_service.py
-- src\authentication\auth_service.py
-- src\routes\user.py
-- src\models\user.py
+**Security Features**: Document the comprehensive security implementation:
+- Role-based access control (ADMIN/SUPER_ADMIN)
+- Automatic audit logging via `admin_audit.py` middleware
+- Data sanitization and sensitive information redaction
+- Session management and timeout controls
+- Input validation and error handling
 
-Create comprehensive authentication documentation covering all authentication methods supported by the LinkShield backend.
+**Service Layer**: Document the `AdminService` class capabilities:
+- System statistics and analytics generation
+- Configuration management with validation
+- User management operations
+- System health monitoring
+- Error handling and data formatting
 
-Document:
-- JWT token authentication flow with session management
-- API key authentication for programmatic access
-- Session management and expiration policies
-- Rate limiting per authentication method
-- Security headers and CORS configuration
-- Authentication error codes and troubleshooting
-- Code examples for different authentication scenarios
+**Utility Functions**: Document helper utilities from `admin_helpers.py`:
+- Data formatting and validation
+- CSV/JSON export capabilities
+- System monitoring utilities
+- Security helpers and data sanitization
 
-Reference the SecurityService implementation in `src/services/security_service.py` for JWT handling, session validation, and API key verification. Include the authentication dependencies from route files.
+**Operational Procedures**: Include setup, configuration, monitoring, and maintenance procedures for the admin system.
 
-### docs\api\endpoints\url-analysis.md(NEW)
+The documentation will be written in clear, professional language with code examples, configuration snippets, and practical usage scenarios.
 
-References: 
+### docs\admin_feature.md(DELETE)
 
-- src\routes\url_check.py
-- src\controllers\url_check_controller.py
-- src\services\url_analysis_service.py
-- src\models\url_check.py
+Remove the outdated admin feature documentation that was focused on Prisma/Next.js implementation instead of the actual FastAPI/SQLAlchemy system. This file contains incorrect information about the technology stack and implementation approach that doesn't match the actual codebase.
 
-Document all URL analysis endpoints from the url_check router. This is the core functionality of LinkShield.
-
-Cover:
-- POST `/api/v1/url-check/check` - Single URL analysis with all scan types
-- POST `/api/v1/url-check/bulk-check` - Bulk URL analysis (authenticated users only)
-- GET `/api/v1/url-check/check/{check_id}` - Retrieve analysis results
-- GET `/api/v1/url-check/check/{check_id}/results` - Detailed scan results
-- GET `/api/v1/url-check/history` - User's analysis history with filtering
-- GET `/api/v1/url-check/reputation/{domain}` - Domain reputation data
-- GET `/api/v1/url-check/stats` - User statistics
-
-For each endpoint include: authentication requirements, request/response schemas, scan types (SECURITY, REPUTATION, CONTENT), threat levels, error codes, rate limits, and usage examples.
-
-Reference the URLCheckController and URLAnalysisService for business logic details.
-
-### docs\api\endpoints\user-management.md(NEW)
-
-References: 
-
-- src\routes\user.py
-- src\controllers\user_controller.py
-- src\models\user.py
-- src\models\subscription.py
-
-Document all user management endpoints from the user router covering authentication, profile management, and account features.
-
-Cover:
-- POST `/api/v1/user/register` - User registration with validation
-- POST `/api/v1/user/login` - User authentication
-- POST `/api/v1/user/logout` - Session termination
-- GET `/api/v1/user/profile` - User profile retrieval
-- PUT `/api/v1/user/profile` - Profile updates
-- POST `/api/v1/user/change-password` - Password changes
-- POST `/api/v1/user/request-password-reset` - Password reset flow
-- POST `/api/v1/user/reset-password` - Password reset confirmation
-- API key management endpoints (create, list, delete)
-- Session management endpoints
-- Email verification endpoints
-
-Include subscription plan information, usage limits, and user roles. Reference the User model and UserController for complete functionality.
-
-### docs\api\endpoints\reports.md(NEW)
+### docs\api\endpoints\admin-dashboard.md(NEW)
 
 References: 
 
-- src\routes\report.py
-- src\controllers\report_controller.py
-- src\models\report.py
+- src\routes\admin.py
+- src\controllers\admin_controller.py
+- src\services\admin_service.py
 
-Document the community reporting system endpoints from the report router.
+Create detailed API documentation specifically for admin dashboard endpoints. This will document all dashboard-related endpoints from `src/routes/admin.py`:
 
-Cover:
-- POST `/api/v1/reports/` - Create security reports
-- GET `/api/v1/reports/` - List reports with filtering
-- GET `/api/v1/reports/{report_id}` - Get report details
-- PUT `/api/v1/reports/{report_id}` - Update reports
-- POST `/api/v1/reports/{report_id}/vote` - Vote on reports
-- DELETE `/api/v1/reports/{report_id}/vote` - Remove votes
-- PUT `/api/v1/reports/{report_id}/assign` - Assign reports (admin)
-- PUT `/api/v1/reports/{report_id}/resolve` - Resolve reports (admin)
-- GET `/api/v1/reports/stats/overview` - Report statistics
-- GET `/api/v1/reports/templates/` - Report templates
+## Dashboard Endpoints:
+- `GET /api/admin/dashboard/statistics` - Comprehensive system statistics
+- `GET /api/admin/dashboard/traffic` - Traffic analytics with time-based filtering
+- `GET /api/admin/dashboard/threats` - Threat intelligence summary
+- `GET /api/admin/dashboard/users` - User analytics and behavior insights
 
-Include report types (PHISHING, MALWARE, SPAM, etc.), status workflow, voting system, and admin moderation features. Reference the Report model and ReportController.
+## Content Structure:
+1. **Endpoint Overview** - Purpose and functionality
+2. **Authentication Requirements** - Admin/Super Admin role requirements
+3. **Request Parameters** - Query parameters, path parameters, headers
+4. **Response Schema** - Detailed response structure with examples
+5. **Error Handling** - Common error responses and status codes
+6. **Usage Examples** - cURL examples and response samples
+7. **Rate Limiting** - Any applicable rate limits
+8. **Data Freshness** - Information about data update frequencies
 
-### docs\api\endpoints\ai-analysis.md(NEW)
+## Key Features to Document:
+- Real-time system metrics and performance data
+- Traffic analytics with configurable time periods (1-365 days)
+- Threat intelligence with recent detections and trends
+- User behavior analytics and subscription distribution
+- Comprehensive error handling with proper HTTP status codes
+- Automatic audit logging of all dashboard access
 
-References: 
+Include practical examples showing how to integrate these endpoints into admin dashboards and monitoring systems.
 
-- src\routes\ai_analysis.py
-- src\services\ai_service.py
-- src\models\ai_analysis.py
-
-Document the AI-powered content analysis endpoints from the ai_analysis router.
-
-Cover:
-- POST `/api/v1/ai-analysis/analyze` - Perform AI content analysis
-- GET `/api/v1/ai-analysis/analysis/{analysis_id}` - Get analysis results
-- GET `/api/v1/ai-analysis/analysis/{analysis_id}/similar` - Find similar content
-- GET `/api/v1/ai-analysis/history` - User's analysis history
-- GET `/api/v1/ai-analysis/domain/{domain}/stats` - Domain analysis statistics
-- POST `/api/v1/ai-analysis/analysis/{analysis_id}/retry` - Retry failed analysis
-- GET `/api/v1/ai-analysis/status` - Service status and model information
-
-Include analysis types (content summary, quality scoring, topic classification, sentiment analysis), processing status, similarity matching, and AI model details. Reference the AIAnalysis model and AIService.
-
-### docs\api\endpoints\health-monitoring.md(NEW)
+### docs\api\endpoints\admin-configuration.md(NEW)
 
 References: 
 
-- src\routes\health.py
-- src\controllers\health_controller.py
-- src\config\database.py
+- src\routes\admin.py
+- src\controllers\admin_controller.py
+- src\services\admin_service.py
+- src\models\admin.py
 
-Document the health check and monitoring endpoints from the health router.
+Create comprehensive API documentation for admin configuration management endpoints. Document the configuration system from `src/routes/admin.py` and `src/services/admin_service.py`:
 
-Cover:
-- GET `/api/health` - Basic health check
-- GET `/api/health/detailed` - Detailed system health
-- GET `/api/health/ready` - Kubernetes readiness probe
-- GET `/api/health/live` - Kubernetes liveness probe
-- GET `/api/version` - Version information
-- GET `/api/metrics` - Application metrics
+## Configuration Endpoints:
+- `GET /api/admin/config` - Retrieve system configuration settings
+- `PUT /api/admin/config` - Update configuration settings
 
-Include system status indicators, database connectivity checks, external service availability, uptime metrics, and monitoring integration details. Reference the HealthController and health check implementations.
+## Content Structure:
+1. **Configuration Categories** - Document the 6 configuration categories:
+   - `security` - Security-related settings
+   - `rate_limiting` - API rate limiting configuration
+   - `ai_services` - AI service integration settings
+   - `external_apis` - External API configurations
+   - `system` - System-level settings
+   - `notifications` - Notification preferences
 
-### docs\api\data-models.md(NEW)
+2. **Configuration Model** - Document the `GlobalConfig` model structure:
+   - Key-value storage with metadata
+   - Data type validation (string, integer, boolean, json)
+   - Sensitive value masking
+   - Validation constraints (regex, min/max values, allowed values)
+   - Audit trail with created_by/updated_by tracking
 
-References: 
+3. **Security Features**:
+   - Automatic masking of sensitive configuration values
+   - Comprehensive validation before updates
+   - Audit logging of all configuration changes
+   - Role-based access control
 
-- src\models\user.py
-- src\models\url_check.py
-- src\models\report.py
-- src\models\ai_analysis.py
-- src\models\subscription.py
+4. **Request/Response Examples**:
+   - Getting all configurations
+   - Filtering by category
+   - Updating specific configuration keys
+   - Error responses for validation failures
 
-Document all data models and schemas used throughout the API.
+5. **Validation Rules**:
+   - Data type validation
+   - Regex pattern matching
+   - Allowed values constraints
+   - Min/max value limits for numeric types
 
-Cover:
-- User models (User, UserSession, APIKey)
-- URL analysis models (URLCheck, ScanResult, URLReputation)
-- Report models (Report, ReportVote, ReportTemplate)
-- AI analysis models (AIAnalysis, ContentSimilarity)
-- Subscription models (SubscriptionPlan, UserSubscription, Payment)
-- Enumeration types (ThreatLevel, CheckStatus, ReportType, etc.)
-- Request/response schemas for all endpoints
-- Validation rules and constraints
-- Relationship mappings between models
+Include examples of common configuration scenarios and best practices for managing system settings.
 
-Include field descriptions, data types, constraints, and example JSON representations. This serves as a complete data dictionary for the API.
-
-### docs\api\error-handling.md(NEW)
-
-References: 
-
-- app.py
-- src\controllers\url_check_controller.py
-- src\controllers\user_controller.py
-- src\services\security_service.py
-
-Create comprehensive error handling documentation covering all error scenarios in the LinkShield API.
-
-Document:
-- Standard error response format used across all endpoints
-- HTTP status codes and their meanings (400, 401, 403, 404, 429, 500)
-- Specific error codes (LIMIT_EXCEEDED, AI_LIMIT_EXCEEDED, INVALID_URL, etc.)
-- Rate limiting errors with retry-after headers
-- Authentication and authorization errors
-- Validation errors with field-specific messages
-- Service unavailable errors for external dependencies
-- Error handling best practices for client applications
-- Troubleshooting guide for common issues
-
-Reference the error handling patterns from controllers and the global exception handler in `app.py`.
-
-### docs\api\rate-limiting.md(NEW)
+### docs\api\endpoints\admin-user-management.md(NEW)
 
 References: 
 
-- src\services\security_service.py
-- src\models\subscription.py
-- src\security\rate_limiting.py
-- src\config\settings.py
+- src\routes\admin.py
+- src\controllers\admin_controller.py
+- src\services\admin_service.py
 
-Document the comprehensive rate limiting system implemented in LinkShield.
+Create detailed API documentation for admin user management endpoints. Document the user administration capabilities from `src/routes/admin.py`:
 
-Cover:
-- Global rate limiting (10 requests per minute per IP)
-- User-based rate limiting by subscription tier
-- API endpoint specific limits (URL checks, AI analysis)
-- Rate limit headers in responses
-- Rate limit exceeded error handling
-- Subscription plan limits and quotas
-- Usage tracking and reset cycles
-- Best practices for handling rate limits in client applications
+## User Management Endpoints:
+- `GET /api/admin/users` - Paginated user listing with advanced filtering
+- `PUT /api/admin/users/{user_id}/status` - Update user status (activate/deactivate/suspend)
 
-Reference the SecurityService rate limiting implementation and subscription plan limits from the models.
+## Content Structure:
+1. **User Listing Features**:
+   - Pagination with configurable page size (1-100 items)
+   - Multi-criteria filtering:
+     - Role filtering (admin, super_admin, user, moderator)
+     - Status filtering (active, inactive, suspended, pending_verification)
+     - Subscription filtering (free, basic, pro, enterprise)
+     - Active status filtering (true/false)
+     - Search across email, username, first_name, last_name
+   - Comprehensive user data in responses
 
-### docs\api\subscription-system.md(NEW)
+2. **User Status Management**:
+   - Status update operations with validation
+   - Automatic audit logging of status changes
+   - Prevention of self-modification
+   - Proper error handling for invalid operations
 
-References: 
+3. **Response Data Structure**:
+   - Complete user profile information
+   - Activity metrics (total_check_count, last_login)
+   - Subscription and role information
+   - Account status and verification state
+   - Pagination metadata
 
-- src\models\subscription.py
-- src\models\user.py
-- src\config\settings.py
+4. **Security Features**:
+   - Role-based access control (Admin/Super Admin only)
+   - Comprehensive input validation
+   - Audit trail for all user management actions
+   - Protection against unauthorized modifications
 
-Document the subscription and billing system that controls access to LinkShield features.
+5. **Error Handling**:
+   - Invalid user ID format validation
+   - User not found scenarios
+   - Invalid status values
+   - Permission denied responses
+   - Self-modification prevention
 
-Cover:
-- Subscription plans (Free, Basic, Pro, Enterprise) with feature comparison
-- Usage limits and quotas per plan
-- Billing intervals (monthly, yearly)
-- Trial periods and cancellation policies
-- Payment processing integration (Stripe)
-- Usage tracking and billing cycles
-- Plan upgrade/downgrade workflows
-- Feature access control based on subscription
-- Webhook notifications for billing events
+6. **Usage Examples**:
+   - Searching for users by email
+   - Filtering users by subscription plan
+   - Paginating through large user lists
+   - Updating user status with proper error handling
 
-Reference the subscription models, payment processing, and usage limit enforcement throughout the codebase.
+Include practical examples for common user management scenarios and integration patterns.
 
-### docs\api\external-integrations.md(NEW)
-
-References: 
-
-- src\services\url_analysis_service.py
-- src\services\ai_service.py
-- src\services\email_service.py
-- src\config\settings.py
-
-Document all external service integrations used by LinkShield for threat detection and analysis.
-
-Cover:
-- VirusTotal API integration for malware detection
-- Google Safe Browsing API for phishing detection
-- URLVoid API for reputation checking
-- OpenAI API for AI-powered content analysis
-- Stripe integration for payment processing
-- Email service integration (SMTP/Resend)
-- Redis for caching and rate limiting
-- Configuration requirements and API keys
-- Service availability and fallback handling
-- Rate limits and quotas for external services
-
-Reference the URLAnalysisService, AIService, and configuration settings for external API integration details.
-
-### docs\api\security.md(NEW)
+### docs\api\endpoints\admin-system-monitoring.md(NEW)
 
 References: 
 
-- src\services\security_service.py
-- src\security\middleware.py
-- src\authentication\auth_service.py
-- app.py
+- src\routes\admin.py
+- src\controllers\admin_controller.py
+- src\services\admin_service.py
+- src\models\admin.py
 
-Document the comprehensive security features implemented in LinkShield.
+Create comprehensive API documentation for admin system monitoring endpoints. Document the system health and monitoring capabilities from `src/routes/admin.py`:
 
-Cover:
-- Authentication mechanisms (JWT, API keys, sessions)
-- Password security policies and validation
-- Session management and expiration
-- Rate limiting and abuse prevention
-- Input validation and sanitization
-- SQL injection and XSS protection
-- CORS configuration and security headers
-- IP reputation checking
-- Suspicious activity detection
-- Security event logging and monitoring
-- Data encryption for sensitive information
-- Security best practices for API consumers
+## System Monitoring Endpoints:
+- `GET /api/admin/system/health` - Current system health status
+- `GET /api/admin/system/logs` - Recent system logs with filtering
+- `GET /api/admin/health` - Admin routes health check
 
-Reference the SecurityService implementation and security middleware for comprehensive coverage.
+## Content Structure:
+1. **System Health Monitoring**:
+   - Component-based health checking
+   - Database connectivity monitoring
+   - External service status tracking
+   - Resource usage metrics (CPU, memory, disk)
+   - Response time measurements
+   - Overall health score calculation
 
-### docs\api\examples\integration-guide.md(NEW)
+2. **Health Status Model** - Document the `SystemHealth` model:
+   - Component identification and categorization
+   - Health status enumeration (healthy, warning, critical, unknown)
+   - Performance metrics (response_time_ms, cpu_usage_percent, etc.)
+   - Error message capture
+   - Timestamp tracking
 
-References: 
+3. **System Logs Access**:
+   - Log level filtering (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+   - Configurable result limits (1-1000 entries)
+   - Real-time log access for debugging
+   - Structured log data format
 
-- src\routes\url_check.py
-- src\routes\user.py
-- src\routes\ai_analysis.py
-- src\models\user.py
+4. **Health Check Features**:
+   - Database connectivity verification
+   - Component status aggregation
+   - Performance threshold monitoring
+   - Automatic issue detection
+   - Historical health data tracking
 
-Create practical integration examples for frontend developers and API consumers.
+5. **Response Formats**:
+   - Overall system status summary
+   - Individual component health details
+   - Performance metrics and trends
+   - Issue identification and error messages
+   - Timestamp information for all checks
 
-Include:
-- Complete authentication flow examples (registration, login, token refresh)
-- URL analysis workflow with error handling
-- Bulk URL checking implementation
-- AI analysis integration examples
-- Report creation and management
-- Subscription management integration
-- Rate limit handling and retry logic
-- WebSocket integration for real-time updates
-- TypeScript/JavaScript SDK examples
-- Python client library examples
-- cURL examples for testing
+6. **Monitoring Integration**:
+   - Integration with external monitoring systems
+   - Alert threshold configuration
+   - Health score calculation methodology
+   - Component dependency tracking
 
-Provide complete, working code examples that developers can copy and adapt for their applications.
+7. **Usage Examples**:
+   - Checking overall system health
+   - Monitoring specific components
+   - Retrieving recent error logs
+   - Setting up automated health monitoring
 
-### docs\api\examples\frontend-sdk.md(NEW)
+Include examples of how to integrate these endpoints into monitoring dashboards and alerting systems.
 
-References: 
-
-- src\routes\url_check.py
-- src\routes\user.py
-- src\models\user.py
-- src\models\url_check.py
-
-Create a comprehensive guide for frontend developers building Next.js applications that integrate with the LinkShield backend.
-
-Cover:
-- TypeScript interfaces for all API responses
-- React hooks for API integration
-- Authentication context and token management
-- Error boundary implementation for API errors
-- Loading states and user feedback patterns
-- Real-time updates with WebSocket integration
-- Form validation matching backend requirements
-- Subscription management UI components
-- Dashboard implementation examples
-- Best practices for API integration in Next.js
-
-This serves as the bridge between the FastAPI backend and Next.js frontend applications.
-
-### docs\api\deployment.md(NEW)
+### docs\security\admin-audit-system.md(NEW)
 
 References: 
 
-- Dockerfile
-- docker-compose.yml
-- alembic.ini
-- src\config\settings.py
-- src\config\database.py
+- src\middleware\admin_audit.py
+- src\models\admin.py
 
-Document deployment and operational aspects of the LinkShield backend.
+Create comprehensive documentation for the admin audit system. Document the sophisticated audit logging implementation from `src/middleware/admin_audit.py`:
 
-Cover:
-- Environment configuration and variables
-- Database setup and migrations with Alembic
-- Redis configuration for caching and rate limiting
-- Docker deployment with docker-compose
-- Production deployment considerations
-- Environment-specific settings (development, staging, production)
-- Health check endpoints for monitoring
-- Logging configuration and log management
-- Performance monitoring and metrics
-- Backup and disaster recovery procedures
-- Scaling considerations and load balancing
+## Audit System Overview:
+Document the comprehensive audit middleware that automatically logs all admin actions with full context and data sanitization.
 
-Reference the Docker configuration, Alembic migrations, and settings management.
+## Content Structure:
+1. **Audit Middleware Architecture**:
+   - Automatic interception of admin API calls
+   - Request/response data capture with sanitization
+   - User tracking and session management
+   - Performance impact measurement
+   - Error handling and resilience
 
-### docs\README.md(MODIFY)
+2. **Audit Data Model** - Document the `AdminAction` model:
+   - Action type enumeration (create, read, update, delete, login, logout, config_change, user_management, system_operation)
+   - Request information capture (endpoint, method, data, params)
+   - Response information logging (status, sanitized data)
+   - User and session tracking
+   - Network information (IP address, user agent)
+   - Timing and performance metrics
+   - Success/failure tracking with error messages
+
+3. **Data Sanitization Features**:
+   - Automatic removal of sensitive fields (passwords, tokens, secrets, keys)
+   - Header sanitization for security
+   - Request/response body sanitization
+   - Configurable sensitive field detection
+   - Recursive data structure cleaning
+
+4. **Security Features**:
+   - Role-based audit activation (Admin/Super Admin only)
+   - JWT token verification and user extraction
+   - Session tracking and correlation
+   - IP address and user agent logging
+   - Comprehensive error handling without breaking request flow
+
+5. **Audit Trail Capabilities**:
+   - Complete action history with context
+   - User behavior tracking
+   - Security incident investigation support
+   - Compliance and regulatory reporting
+   - Performance monitoring and optimization
+
+6. **Configuration and Customization**:
+   - Sensitive field configuration
+   - Audit path configuration
+   - Performance tuning options
+   - Storage and retention policies
+
+7. **Integration Examples**:
+   - Setting up audit middleware in FastAPI
+   - Configuring audit data retention
+   - Querying audit logs for investigation
+   - Generating compliance reports
+
+8. **Best Practices**:
+   - Audit log security and protection
+   - Performance considerations
+   - Data retention and archival
+   - Compliance requirements
+
+Include practical examples of audit log analysis and security investigation procedures.
+
+### docs\database\admin-schema.md(NEW)
 
 References: 
 
-- app.py
-- src\config\settings.py
-- requirements.txt
-- README.md
+- alembic\versions\002_add_admin_models.py
+- src\models\admin.py
 
-Update the main documentation README to accurately reflect the FastAPI backend architecture instead of the outdated Next.js application description.
+Create detailed database schema documentation for the admin system. Document the database structure from migration `002_add_admin_models.py` and models in `src/models/admin.py`:
 
-Replace the existing content with:
-- Accurate description of LinkShield as a FastAPI-based URL security analysis backend
-- Updated technology stack (FastAPI, PostgreSQL, Redis, SQLAlchemy)
-- Corrected architecture overview showing the actual backend components
-- Updated navigation links pointing to the new API documentation
-- Removal of frontend-specific documentation references
-- Addition of backend-specific sections (API endpoints, data models, external integrations)
-- Updated quick start guide for backend developers
-- Corrected feature descriptions matching the actual implementation
+## Admin Database Schema:
+Comprehensive documentation of the 4 admin tables and their relationships.
 
-This ensures the documentation accurately represents the current FastAPI backend system.
+## Content Structure:
+1. **Schema Overview**:
+   - Updated UserRole enum with SUPER_ADMIN
+   - 3 new enums: ConfigCategory, ActionType, HealthStatus
+   - 4 new tables with proper indexing and constraints
+   - Foreign key relationships and referential integrity
+
+2. **Table Documentation**:
+
+   **global_config Table**:
+   - Purpose: System-wide configuration management
+   - Key fields: id, key, value, category, description
+   - Metadata: is_active, is_sensitive, data_type
+   - Validation: validation_regex, min_value, max_value, allowed_values
+   - Audit: created_at, updated_at, created_by, updated_by
+   - Indexes: id, key, category
+   - Constraints: unique key constraint
+
+   **admin_actions Table**:
+   - Purpose: Comprehensive audit trail for admin operations
+   - Action details: action_type, endpoint, method
+   - Request data: request_data, query_params, path_params
+   - Response data: response_status, response_data
+   - User context: user_id, session_id
+   - Network info: ip_address, user_agent
+   - Timing: timestamp, duration_ms
+   - Status: success, error_message, additional_data
+   - Indexes: id, action_type, user_id, session_id, ip_address, timestamp, success
+
+   **system_health Table**:
+   - Purpose: System component health monitoring
+   - Component tracking: component, status
+   - Metrics: response_time_ms, cpu_usage_percent, memory_usage_percent, disk_usage_percent
+   - Details: details (JSON), error_message
+   - Timing: checked_at
+   - Indexes: id, component, status, checked_at
+   - Constraints: unique constraint on component + checked_at
+
+   **admin_sessions Table**:
+   - Purpose: Enhanced admin session tracking
+   - Session data: session_token, user_id
+   - Context: ip_address, user_agent, location
+   - State: is_active, last_activity
+   - Timing: created_at, expires_at, terminated_at
+   - Security: permissions (JSON), mfa_verified
+   - Indexes: id, session_token, user_id, ip_address, is_active
+   - Constraints: unique session_token
+
+3. **Enum Documentation**:
+   - ConfigCategory: security, rate_limiting, ai_services, external_apis, system, notifications
+   - ActionType: create, read, update, delete, login, logout, config_change, user_management, system_operation
+   - HealthStatus: healthy, warning, critical, unknown
+
+4. **Relationships and Foreign Keys**:
+   - global_config → users (created_by, updated_by)
+   - admin_actions → users (user_id)
+   - admin_sessions → users (user_id)
+   - Proper cascade behaviors and referential integrity
+
+5. **Indexing Strategy**:
+   - Primary key indexes on all tables
+   - Foreign key indexes for performance
+   - Query-specific indexes for common filtering patterns
+   - Composite indexes for complex queries
+
+6. **Migration Details**:
+   - Upgrade procedures from migration 002
+   - Enum creation and management
+   - Index creation strategy
+   - Downgrade considerations and limitations
+
+7. **Performance Considerations**:
+   - Query optimization strategies
+   - Index usage patterns
+   - Data retention and archival
+   - Partitioning recommendations for large datasets
+
+Include SQL examples for common queries and maintenance operations.
+
+### docs\utilities\admin-helpers.md(NEW)
+
+References: 
+
+- src\utils\admin_helpers.py
+
+Create comprehensive documentation for admin utility functions and helpers. Document the extensive utility library from `src/utils/admin_helpers.py`:
+
+## Admin Utilities Overview:
+Document the comprehensive set of helper classes and functions that support admin operations.
+
+## Content Structure:
+1. **AdminDataFormatter Class**:
+   - Purpose: Standardized data formatting for admin displays
+   - Methods:
+     - `format_user_data()` - User data formatting with all relevant fields
+     - `format_admin_action()` - Audit action formatting for display
+     - `format_system_health()` - Health data formatting
+     - `format_config_item()` - Configuration item formatting
+   - Usage examples and integration patterns
+
+2. **AdminValidator Class**:
+   - Purpose: Input validation and data integrity checks
+   - Methods:
+     - `validate_email()` - Email format validation with regex
+     - `validate_user_role()` - User role validation against enum
+     - `validate_config_key()` - Configuration key format validation
+     - `validate_json_value()` - JSON parsing and validation
+     - `validate_pagination_params()` - Pagination parameter normalization
+   - Validation rules and error handling
+
+3. **AdminExporter Class**:
+   - Purpose: Data export capabilities for admin reports
+   - Methods:
+     - `export_to_csv()` - CSV export with proper formatting
+     - `export_to_json()` - JSON export with pretty printing options
+   - Export format handling and data serialization
+   - Large dataset considerations
+
+4. **AdminSystemMonitor Class**:
+   - Purpose: System monitoring and health assessment
+   - Methods:
+     - `get_database_stats()` - Database statistics and table sizes
+     - `calculate_system_health_score()` - Health score calculation algorithm
+   - Performance metrics collection
+   - Health assessment criteria
+
+5. **AdminDateTimeHelper Class**:
+   - Purpose: Date/time operations for admin analytics
+   - Methods:
+     - `get_date_range_filter()` - Date range generation for filtering
+     - `format_duration()` - Human-readable duration formatting
+   - Time period handling (today, week, month, quarter, year)
+   - Timezone considerations
+
+6. **AdminSecurityHelper Class**:
+   - Purpose: Security operations and data sanitization
+   - Methods:
+     - `sanitize_log_data()` - Sensitive data removal from logs
+     - `generate_audit_id()` - Unique identifier generation
+     - `mask_sensitive_config_value()` - Configuration value masking
+   - Security best practices and data protection
+
+7. **Utility Functions**:
+   - `format_bytes()` - Human-readable byte formatting
+   - `truncate_string()` - String truncation with ellipsis
+   - `safe_divide()` - Division with zero-handling
+   - Common operations and edge case handling
+
+8. **Integration Examples**:
+   - Using formatters in API responses
+   - Implementing validation in controllers
+   - Setting up data export endpoints
+   - Integrating monitoring utilities
+   - Security helper usage patterns
+
+9. **Configuration and Customization**:
+   - Sensitive field configuration
+   - Export limits and performance tuning
+   - Validation rule customization
+   - Formatting preferences
+
+10. **Best Practices**:
+    - Performance considerations for large datasets
+    - Security guidelines for data handling
+    - Error handling and graceful degradation
+    - Testing and validation strategies
+
+Include practical code examples showing how to use each utility class and function in real admin scenarios.

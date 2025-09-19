@@ -34,6 +34,7 @@ class UserRole(enum.Enum):
     User role enumeration.
     """
     ADMIN = "admin"
+    SUPER_ADMIN = "super_admin"
     USER = "user"
     MODERATOR = "moderator"
 
