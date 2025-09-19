@@ -13,6 +13,7 @@ from src.models.user import Base as UserBase
 from src.models.url_check import Base as URLCheckBase
 from src.models.report import Base as ReportBase
 from src.models.subscription import Base as SubscriptionBase
+from src.models.ai_analysis import Base as AIAnalysisBase
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -27,7 +28,7 @@ if config.config_file_name is not None:
 target_metadata = UserBase.metadata
 
 # Add other model metadata
-for base in [URLCheckBase, ReportBase, SubscriptionBase]:
+for base in [URLCheckBase, ReportBase, SubscriptionBase, AIAnalysisBase]:
     for table in base.metadata.tables.values():
         table.tometadata(target_metadata)
 

@@ -30,6 +30,7 @@ from src.routes.health import router as health_router
 from src.routes.url_check import router as url_check_router
 from src.routes.user import router as user_router
 from src.routes.report import router as report_router
+from src.routes.ai_analysis import router as ai_analysis_router
 
 # Initialize settings
 settings = get_settings()
@@ -113,6 +114,7 @@ app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(url_check_router, prefix="/api", tags=["URL Check"])
 app.include_router(user_router, prefix="/api", tags=["User"])
 app.include_router(report_router, prefix="/api", tags=["Report"])
+app.include_router(ai_analysis_router, tags=["AI Analysis"])
 
 
 # Root endpoint
