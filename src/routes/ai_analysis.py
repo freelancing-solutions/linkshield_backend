@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config.database import get_db
+from src.config.database import get_db_session
 from src.models.ai_analysis import AIAnalysis, ProcessingStatus, AnalysisType
 from src.models.user import User
 from src.services.ai_analysis_service import AIAnalysisService
@@ -126,7 +126,7 @@ class AnalysisHistoryResponse(BaseModel):
 async def analyze_content(
     request: Request,
     analysis_request: AIAnalysisRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
     current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
@@ -170,7 +170,7 @@ async def analyze_content(
 )
 async def get_analysis(
     analysis_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
     current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
@@ -214,7 +214,7 @@ async def find_similar_content(
     analysis_id: str,
     similarity_threshold: float = Query(0.8, ge=0.0, le=1.0, description="Minimum similarity score"),
     limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
     current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
@@ -283,7 +283,7 @@ async def find_similar_content(
 async def get_analysis_history(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -336,7 +336,7 @@ async def get_analysis_history(
 async def get_domain_stats(
     request: Request,
     domain: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db_session)
 ):
     """
     Get analysis statistics for a domain.
@@ -364,7 +364,7 @@ async def get_domain_stats(
 )
 async def retry_analysis(
     analysis_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user)
 ):
     """

@@ -15,7 +15,7 @@ from pydantic import BaseModel, HttpUrl, Field, validator
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
 
-from src.config.database import get_db
+from src.config.database import get_db_session
 from src.config.settings import get_settings
 from src.models.url_check import URLCheck, ScanResult, URLReputation, CheckStatus, ThreatLevel, ScanType
 from src.models.user import User
@@ -135,7 +135,7 @@ class URLHistoryResponse(BaseModel):
 
 
 # Dependency functions
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> Optional[User]:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db_session)) -> Optional[User]:
     """
     Get current authenticated user.
     """
@@ -169,7 +169,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=500, detail="Authentication failed")
 
 
-async def get_optional_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), db: Session = Depends(get_db)) -> Optional[User]:
+async def get_optional_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), db: Session = Depends(get_db_session)) -> Optional[User]:
     """
     Get current user if authenticated, otherwise None.
     """
@@ -182,7 +182,7 @@ async def get_optional_user(credentials: Optional[HTTPAuthorizationCredentials] 
         return None
 
 
-async def check_rate_limits(user: Optional[User], db: Session = Depends(get_db)) -> None:
+async def check_rate_limits(user: Optional[User], db: Session = Depends(get_db_session)) -> None:
     """
     Check rate limits for user.
     """
@@ -206,7 +206,7 @@ async def check_url(
     request: URLCheckRequest,
     background_tasks: BackgroundTasks,
     user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Analyze a URL for security threats, malware, phishing, and other risks.
@@ -237,7 +237,7 @@ async def bulk_check_urls(
     request: BulkURLCheckRequest,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Analyze multiple URLs in a single request.
@@ -257,7 +257,7 @@ async def bulk_check_urls(
 async def get_url_check(
     check_id: uuid.UUID = Path(..., description="URL check ID"),
     user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Retrieve results of a specific URL check.
@@ -272,7 +272,7 @@ async def get_url_check(
 async def get_scan_results(
     check_id: uuid.UUID = Path(..., description="URL check ID"),
     user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Get detailed scan results for a URL check.
@@ -292,7 +292,7 @@ async def get_url_history(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Get URL check history for the authenticated user.
@@ -307,7 +307,7 @@ async def get_url_history(
 async def get_domain_reputation(
     domain: str = Path(..., description="Domain to check"),
     user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Get reputation information for a specific domain.
@@ -322,7 +322,7 @@ async def get_domain_reputation(
 async def get_url_check_stats(
     days: int = Query(30, ge=1, le=365, description="Number of days to include in stats"),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Get URL check statistics for the authenticated user.

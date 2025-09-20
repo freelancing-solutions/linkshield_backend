@@ -15,7 +15,7 @@ from pydantic import BaseModel, EmailStr, Field, validator
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
 
-from src.config.database import get_db
+from src.config.database import get_db_session
 from src.config.settings import get_settings
 from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken, UserRole, SubscriptionPlan
 from src.models.subscription import UserSubscription, SubscriptionPlan
@@ -44,7 +44,7 @@ def get_background_email_service() -> BackgroundEmailService:
 
 
 def get_user_controller(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db_session),
     email_service: EmailService = Depends(get_email_service),
     background_email_service: BackgroundEmailService = Depends(get_background_email_service)
 ) -> UserController:
@@ -257,7 +257,7 @@ class UserSessionResponse(BaseModel):
 
 
 # Dependency functions
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> User:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db_session)) -> User:
     """
     Get current authenticated user.
     """
@@ -291,7 +291,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=500, detail="Authentication failed")
 
 
-async def check_rate_limits(request: Request, db: Session = Depends(get_db)) -> None:
+async def check_rate_limits(request: Request, db: Session = Depends(get_db_session)) -> None:
     """
     Check rate limits for authentication endpoints.
     """
@@ -314,7 +314,7 @@ async def register_user(
     request: UserRegistrationRequest,
     background_tasks: BackgroundTasks,
     req: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Register a new user account.
@@ -340,7 +340,7 @@ async def register_user(
 async def login_user(
     request: UserLoginRequest,
     req: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Authenticate user and create session.
@@ -359,7 +359,7 @@ async def login_user(
 async def logout_user(
     user: User = Depends(get_current_user),
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Logout user and invalidate session.
@@ -387,7 +387,7 @@ async def get_user_profile(
 async def update_user_profile(
     request: ProfileUpdateRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Update user profile information.
@@ -402,7 +402,7 @@ async def update_user_profile(
 async def change_password(
     request: PasswordChangeRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Change user password.
@@ -418,7 +418,7 @@ async def request_password_reset(
     request: PasswordResetRequest,
     background_tasks: BackgroundTasks,
     req: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Request password reset.
@@ -433,7 +433,7 @@ async def request_password_reset(
 async def reset_password(
     request: PasswordResetConfirmRequest,
     req: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Reset password using reset token.
@@ -448,7 +448,7 @@ async def reset_password(
 async def create_api_key(
     request: APIKeyRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Create new API key.
@@ -462,7 +462,7 @@ async def create_api_key(
 @router.get("/api-keys", response_model=List[APIKeyResponse], summary="List API keys")
 async def list_api_keys(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     List user API keys.
@@ -477,7 +477,7 @@ async def list_api_keys(
 async def delete_api_key(
     key_id: uuid.UUID = Path(..., description="API key ID"),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Delete API key.
@@ -492,7 +492,7 @@ async def delete_api_key(
 @router.get("/sessions", response_model=List[UserSessionResponse], summary="Get user sessions")
 async def get_user_sessions(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Get user sessions.
@@ -507,7 +507,7 @@ async def get_user_sessions(
 async def revoke_session(
     session_id: uuid.UUID = Path(..., description="Session ID"),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Revoke user session.
@@ -521,7 +521,7 @@ async def revoke_session(
 @router.delete("/sessions", summary="Terminate all sessions")
 async def terminate_all_sessions(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Terminate all user sessions except current one.
@@ -547,7 +547,7 @@ async def terminate_all_sessions(
 @router.post("/verify-email/{token}", summary="Verify email address")
 async def verify_email(
     token: str = Path(..., description="Verification token"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Verify user email address.
@@ -562,7 +562,7 @@ async def verify_email(
 async def resend_verification_email(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_session)
 ):
     """
     Resend email verification.

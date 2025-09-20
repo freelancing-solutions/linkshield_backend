@@ -16,7 +16,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config.database import get_db
+from src.config.database import get_db_session
 from src.controllers.admin_controller import AdminController
 from src.services.admin_service import AdminService
 from src.authentication.dependencies import get_admin_user
@@ -66,7 +66,7 @@ class AdminResponse(BaseModel):
 
 
 # Dependency to get admin controller
-async def get_admin_controller(db: AsyncSession = Depends(get_db)) -> AdminController:
+async def get_admin_controller(db: AsyncSession = Depends(get_db_session)) -> AdminController:
     """Get admin controller instance."""
     admin_service = AdminService(db)
     return AdminController(admin_service)

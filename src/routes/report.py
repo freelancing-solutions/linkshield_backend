@@ -15,7 +15,7 @@ from pydantic import BaseModel, HttpUrl, Field, validator
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, func
 
-from src.config.database import get_db
+from src.config.database import get_db, get_db_session
 from src.config.settings import get_settings
 from src.models.report import Report, ReportVote, ReportTemplate, ReportStatistics, ReportType, ReportStatus, ReportPriority, VoteType
 from src.models.user import User, UserRole
@@ -203,7 +203,7 @@ class ReportTemplateResponse(BaseModel):
 
 
 # Dependency functions
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)) -> User:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db_session)) -> User:
     """
     Get current authenticated user.
     """

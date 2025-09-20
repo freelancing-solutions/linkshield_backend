@@ -63,7 +63,7 @@ class SecurityService:
         self.settings = get_settings()
         
         # Initialize encryption
-        self.fernet = Fernet(self.settings.ENCRYPTION_KEY.encode() if self.settings.ENCRYPTION_KEY else Fernet.generate_key())
+        self.fernet = Fernet(self.settings.SECURE_LOG_ENCRYPTION_KEY.encode() if self.settings.SECURE_LOG_ENCRYPTION_KEY else Fernet.generate_key())
         
         # Security configurations
         self.password_config = {

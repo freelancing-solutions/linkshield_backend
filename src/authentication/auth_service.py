@@ -72,13 +72,11 @@ class AuthService:
     def __init__(
         self, 
         db_session: Session, 
-        email_service: EmailService, 
-        background_email_service: BackgroundEmailService,
+        email_service: EmailService,
         security_service: SecurityService
     ):
         self.db = db_session
         self.email_service = email_service
-        self.background_email_service = background_email_service
         self.security_service = security_service
         self.settings = get_settings()
         
@@ -150,7 +148,7 @@ class AuthService:
         verification_token = self._create_email_verification_token(user.id)
         
         # Queue verification email for background sending
-        self.background_email_service.queue_verification_email(
+        self.email_service.queue_verification_email(
             user.email, 
             user.first_name, 
             verification_token
@@ -212,7 +210,7 @@ class AuthService:
                     "current_year": datetime.now().year
                 }
             )
-            self.background_email_service.queue_email(
+            self.email_service.queue_email(
                 security_alert_request, 
                 EmailType.SECURITY_ALERT.value,
                 priority=2  # High priority for security alerts
@@ -344,7 +342,7 @@ class AuthService:
         reset_token = self._create_password_reset_token(user.id)
         
         # Queue password reset email for background sending
-        self.background_email_service.queue_password_reset_email(
+        self.email_service.queue_password_reset_email(
             user.email, 
             user.first_name, 
             reset_token

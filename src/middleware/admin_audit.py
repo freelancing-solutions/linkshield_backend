@@ -18,7 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config.database import get_db
+from src.config.database import get_db_session
 from src.models.admin import AdminAction, ActionType
 from src.models.user import User, UserRole
 from src.services.security_service import SecurityService
@@ -146,12 +146,12 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
             token = auth_header.split(" ")[1]
             
             # Get database session
-            db_gen = get_db()
+            db_gen = get_db_session()
             db: AsyncSession = await db_gen.__anext__()
             
             try:
                 # Verify token and get user
-                security_service = SecurityService(db)
+                security_service = SecurityService(db_session=db)
                 token_data = security_service.verify_jwt_token(token)
                 
                 if not token_data:
@@ -388,7 +388,7 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
         """
         try:
             # Get database session
-            db_gen = get_db()
+            db_gen = get_db_session()
             db: AsyncSession = await db_gen.__anext__()
             
             try:

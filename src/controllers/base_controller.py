@@ -18,6 +18,7 @@ from src.config.database import get_db_session
 from src.config.settings import get_settings
 from src.services.security_service import SecurityService
 from src.authentication.auth_service import AuthService
+from src.services.email_service import EmailService
 
 
 class BaseController(ABC):
@@ -33,9 +34,10 @@ class BaseController(ABC):
     
     def __init__(
         self,
-        db_session: Optional[AsyncSession] = None,
+        get_db_session: Optional[AsyncSession] = None,
         security_service: Optional[SecurityService] = None,
-        auth_service: Optional[AuthService] = None
+        auth_service: Optional[AuthService] = None,
+        email_service: Optional[EmailService] = None
     ):
         """Initialize base controller with common dependencies.
         
@@ -44,9 +46,10 @@ class BaseController(ABC):
             security_service: Security service for validation and checks
             auth_service: Authentication service for user operations
         """
-        self.db_session = db_session
-        self.security_service = security_service or SecurityService()
-        self.auth_service = auth_service or AuthService()
+        self.db_session = get_db_session if get_db_session else get_db_session
+        self.email_service = email_service or EmailService(db_session=get_db_session)
+        self.security_service = security_service or SecurityService(db_session=get_db_session)
+        self.auth_service = auth_service or AuthService(db_session=get_db_session, email_service=self.email_service, security_service=self.security_service)
         self.settings = get_settings()
         self.logger = logging.getLogger(self.__class__.__name__)
     
