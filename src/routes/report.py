@@ -6,22 +6,31 @@ API routes for user reports, community feedback, and threat intelligence.
 """
 
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, HttpUrl, Field, validator
+from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks
+from fastapi.security import HTTPBearer
+from pydantic import BaseModel,  Field, validator
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, func
 
-from src.config.database import get_db, get_db_session
+
 from src.config.settings import get_settings
-from src.models.report import Report, ReportVote, ReportTemplate, ReportStatistics, ReportType, ReportStatus, ReportPriority, VoteType
+from src.models.report import (
+    Report, 
+    ReportVote, 
+    ReportTemplate, 
+    ReportStatistics, 
+    ReportType, 
+    ReportStatus, 
+    ReportPriority, 
+    VoteType)
 from src.models.user import User, UserRole
-from src.models.url_check import URLCheck, ThreatLevel
-from src.services.security_service import SecurityService
-from src.authentication.auth_service import AuthService
+
+from src.controllers.depends import get_report_controller
+
+from src.authentication.dependencies import get_current_user,get_optional_user
 from src.controllers.report_controller import ReportController
 
 
@@ -202,65 +211,13 @@ class ReportTemplateResponse(BaseModel):
         from_attributes = True
 
 
-# Dependency functions
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db_session)) -> User:
-    """
-    Get current authenticated user.
-    """
-    try:
-        auth_service = AuthService(db)
-        security_service = SecurityService(db)
-        
-        # Verify JWT token
-        token_data = security_service.verify_jwt_token(credentials.credentials)
-        user_id = token_data.get("user_id")
-        session_id = token_data.get("session_id")
-        
-        if not user_id or not session_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        
-        # Validate session
-        is_valid, session = security_service.validate_session(session_id, user_id)
-        if not is_valid:
-            raise HTTPException(status_code=401, detail="Session expired")
-        
-        # Get user
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="User not found or inactive")
-        
-        return user
-    
-    except Exception as e:
-        raise HTTPException(status_code=401, detail="Authentication failed")
-
-
-async def get_optional_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), db: Session = Depends(get_db)) -> Optional[User]:
-    """
-    Get current user if authenticated, otherwise None.
-    """
-    if not credentials:
-        return None
-    
-    try:
-        return await get_current_user(credentials, db)
-    except HTTPException:
-        return None
-
-
-async def check_admin_permissions(user: User) -> None:
-    """
-    Check if user has admin permissions.
-    """
-    if user.role not in [UserRole.ADMIN, UserRole.MODERATOR]:
-        raise HTTPException(status_code=403, detail="Admin permissions required")
-
 
 # Report Management Routes
 @router.post("/", response_model=ReportResponse, summary="Create new report")
 async def create_report(
     request: ReportCreateRequest,
     background_tasks: BackgroundTasks,
+    controller: ReportController = Depends(get_report_controller),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -284,7 +241,7 @@ async def create_report(
     5. Notifies moderation team if high priority
 
     """
-    controller = ReportController()
+
     return await controller.create_report(request, background_tasks, user, db)
 
 
@@ -303,6 +260,7 @@ async def list_reports(
     sort_order: str = Query("desc", description="Sort order (asc/desc)"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    controller:ReportController = Depends(get_report_controller),
     user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
@@ -311,7 +269,6 @@ async def list_reports(
     
     Delegates business logic to ReportController.
     """
-    controller = ReportController()
     return await controller.list_reports(
         report_type, status, priority, domain, tag, reporter_id, assignee_id,
         created_after, created_before, sort_by, sort_order, page, page_size, user, db
@@ -321,22 +278,21 @@ async def list_reports(
 @router.get("/{report_id}", response_model=ReportResponse, summary="Get report details")
 async def get_report(
     report_id: uuid.UUID = Path(..., description="Report ID"),
-    user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db)
-):
+    controller: ReportController = Depends(get_report_controller),
+    user: Optional[User] = Depends(get_optional_user)):
     """
     Get detailed information about a specific report.
     
     Delegates business logic to ReportController.
-    """
-    controller = ReportController()
-    return await controller.get_report(report_id, user, db)
+    """    
+    return await controller.get_report_by_id(report_id=report_id, user=user)
 
 
 @router.put("/{report_id}", response_model=ReportResponse, summary="Update report")
 async def update_report(
     report_id: uuid.UUID = Path(..., description="Report ID"),
     request: ReportUpdateRequest = ...,
+    controller: ReportController = Depends(get_report_controller),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -345,39 +301,44 @@ async def update_report(
     
     Delegates business logic to ReportController.
     """
-    controller = ReportController()
-    return await controller.update_report(report_id, request, user, db)
+
+    return await controller.update_report(report_id=report_id,user=user,
+    title=request.title,
+    description=request.description,
+    evidence_urls=request.evidence_urls,
+    severity=request.severity,
+    tags=request.tags)
 
 
 @router.post("/{report_id}/vote", response_model=ReportVoteResponse, summary="Vote on report")
 async def vote_on_report(
     report_id: uuid.UUID = Path(..., description="Report ID"),
     request: ReportVoteRequest = ...,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    controller: ReportController = Depends(get_report_controller),
+    user: User = Depends(get_current_user)
+    
 ):
     """
     Vote on a report.
     
     Delegates business logic to ReportController.
     """
-    controller = ReportController()
-    return await controller.vote_on_report(report_id, request, user, db)
+    return await controller.vote_on_report(report_id=report_id, user=user, vote_type=request.vote_type, comment=request.comment)
+    
 
 
 @router.delete("/{report_id}/vote", summary="Remove vote")
 async def remove_vote(
     report_id: uuid.UUID = Path(..., description="Report ID"),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+    controller: ReportController = Depends(get_report_controller),
+    user: User = Depends(get_current_user)):
     """
     Remove vote from a report.
     
     Delegates business logic to ReportController.
     """
-    controller = ReportController()
-    return await controller.remove_vote(report_id, user, db)
+
+    return await controller.remove_vote(report_id=report_id, user=user)
 
 
 # Admin Routes
@@ -385,59 +346,61 @@ async def remove_vote(
 async def assign_report(
     request: ReportAssignRequest,
     report_id: uuid.UUID = Path(..., description="Report ID"),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    controller: ReportController = Depends(get_report_controller),
+    user: User = Depends(get_current_user)
+    
 ):
     """
     Assign report to a user.
     
     Delegates business logic to ReportController.
     """
-    controller = ReportController()
-    return await controller.assign_report(report_id, request.assignee_id, user, db)
+
+    return await controller.assign_report(report_id=report_id, 
+    assignee_id=request.assignee_id, user=user)
 
 
 @router.put("/{report_id}/resolve", summary="Resolve report")
 async def resolve_report(    
     request: ReportResolveRequest,
     report_id: uuid.UUID = Path(..., description="Report ID"),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+    controller: ReportController = Depends(get_report_controller),
+    user: User = Depends(get_current_user)):
     """
     Resolve a report.
     
     Delegates business logic to ReportController.
     """
-    controller = ReportController()
-    return await controller.resolve_report(report_id, request.resolution_notes, user, db)
+
+    return await controller.resolve_report(report_id=report_id, resolution_notes=request.resolution_notes, user=user)
 
 
 @router.get("/stats/overview", response_model=ReportStatsResponse, summary="Get report statistics")
 async def get_report_stats(
     days: int = Query(30, ge=1, le=365, description="Number of days to include"),
-    user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db)
+    controller: ReportController = Depends(get_report_controller),
+    user: Optional[User] = Depends(get_optional_user)
 ):
     """
     Get report statistics.
     
     Delegates business logic to ReportController.
     """
-    controller = ReportController()
-    return await controller.get_report_stats(days, user, db)
+
+    return await controller.get_report_stats(days=days, user=user)
 
 
 @router.get("/templates/", response_model=List[ReportTemplateResponse], summary="Get report templates")
 async def get_report_templates(
     report_type: Optional[ReportType] = Query(None, description="Filter by report type"),
-    db: Session = Depends(get_db)
+    controller: ReportController = Depends(get_report_controller)
+    
 ):
     """
     Get available report templates to help users create better reports.
     """
-    controller = ReportController()
-    return await controller.get_report_templates(report_type, db)
+
+    return await controller.get_report_templates(report_type=report_type)
 
 
 # Background task functions

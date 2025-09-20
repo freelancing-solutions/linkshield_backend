@@ -7,7 +7,7 @@ configuration management, and monitoring.
 """
 
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,7 +16,8 @@ from loguru import logger
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config.database import get_db_session
+
+from src.config.database import get_db_session, AsyncSession
 from src.controllers.admin_controller import AdminController
 from src.services.admin_service import AdminService
 from src.authentication.dependencies import get_admin_user

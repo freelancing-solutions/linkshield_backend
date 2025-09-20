@@ -7,14 +7,12 @@ and external service availability.
 """
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, Any
 
-from fastapi import APIRouter, HTTPException, status
-from loguru import logger
+from fastapi import APIRouter
 from pydantic import BaseModel
 
-from src.config.database import check_database_health
 from src.config.settings import get_settings
 from src.controllers.health_controller import HealthController
 
@@ -50,33 +48,33 @@ class ServiceStatus(BaseModel):
 # Store application start time
 APP_START_TIME = time.time()
 
+async def get_health_controller() -> HealthController:
+    return HealthController()
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
+async def health_check(controller:HealthController = Depends(get_health_controller)) -> HealthResponse:
     """
     Basic health check endpoint.
     Returns overall API health status and basic information.
     
     Delegates business logic to HealthController.
     """
-    controller = HealthController()
     return await controller.get_basic_health()
 
 
 @router.get("/health/detailed", response_model=HealthResponse)
-async def detailed_health_check() -> HealthResponse:
+async def detailed_health_check(controller:HealthController = Depends(get_health_controller)) -> HealthResponse:
     """
     Detailed health check endpoint.
     Checks database connectivity and external service availability.
     
     Delegates business logic to HealthController.
     """
-    controller = HealthController()
     return await controller.get_detailed_health()
 
 
 @router.get("/health/ready")
-async def readiness_check() -> Dict[str, Any]:
+async def readiness_check(controller:HealthController = Depends(get_health_controller)) -> Dict[str, Any]:
     """
     Readiness check endpoint.
     
@@ -84,12 +82,11 @@ async def readiness_check() -> Dict[str, Any]:
     Returns 200 if the service is ready to accept traffic.
 
     """
-    controller = HealthController()
     return await controller.check_readiness()
 
 
 @router.get("/health/live")
-async def liveness_check() -> Dict[str, Any]:
+async def liveness_check(controller:HealthController = Depends(get_health_controller)) -> Dict[str, Any]:
     """
     Liveness check endpoint.
     
@@ -98,24 +95,22 @@ async def liveness_check() -> Dict[str, Any]:
     Returns 200 if the service is alive (basic functionality works).
 
     """
-    controller = HealthController()
     return await controller.check_liveness()
 
 
 @router.get("/version")
-async def version_info() -> Dict[str, Any]:
+async def version_info(controller:HealthController = Depends(get_health_controller)) -> Dict[str, Any]:
     """
     Version information endpoint.
     Get API version and build information.
     
     Delegates business logic to HealthController.
     """
-    controller = HealthController()
     return await controller.get_version_info()
 
 
 @router.get("/metrics")
-async def metrics() -> Dict[str, Any]:
+async def metrics(controller:HealthController = Depends(get_health_controller)) -> Dict[str, Any]:
     """
     Metrics endpoint.
     Basic metrics endpoint for monitoring.
@@ -123,5 +118,4 @@ async def metrics() -> Dict[str, Any]:
     
     Delegates business logic to HealthController.
     """
-    controller = HealthController()
     return await controller.get_metrics()

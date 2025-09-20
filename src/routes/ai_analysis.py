@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config.database import get_db_session
+from src.config.database import get_db_session, AsyncSession
 from src.models.ai_analysis import AIAnalysis, ProcessingStatus, AnalysisType
 from src.models.user import User
 from src.services.ai_analysis_service import AIAnalysisService

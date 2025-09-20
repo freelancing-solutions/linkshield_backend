@@ -15,7 +15,7 @@ from pydantic import BaseModel, EmailStr, Field, validator
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
 
-from src.config.database import get_db_session
+from src.config.database import get_db_session, AsyncSession
 from src.config.settings import get_settings
 from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken, UserRole, SubscriptionPlan
 from src.models.subscription import UserSubscription, SubscriptionPlan

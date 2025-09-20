@@ -46,23 +46,14 @@ class BaseController(ABC):
             security_service: Security service for validation and checks
             auth_service: Authentication service for user operations
         """
-        self.db_session = get_db_session if get_db_session else get_db_session
-        self.email_service = email_service or EmailService(db_session=get_db_session)
-        self.security_service = security_service or SecurityService(db_session=get_db_session)
-        self.auth_service = auth_service or AuthService(db_session=get_db_session, email_service=self.email_service, security_service=self.security_service)
+        self.get_db_session = get_db_session if get_db_session else get_db_session
+        self.email_service = email_service or EmailService(db_session=self.get_db_session)
+        self.security_service = security_service or SecurityService(db_session=self.get_db_session)
+        self.auth_service = auth_service or AuthService(db_session=self.get_db_session, email_service=self.email_service, security_service=self.security_service)
         self.settings = get_settings()
         self.logger = logging.getLogger(self.__class__.__name__)
     
-    async def get_db_session(self) -> AsyncSession:
-        """Get database session with lazy initialization.
-        
-        Returns:
-            AsyncSession: Database session for operations
-        """
-        if not self.db_session:
-            self.db_session = await get_db_session()
-        return self.db_session
-    
+   
     def log_operation(
         self,
         operation: str,
@@ -81,7 +72,7 @@ class BaseController(ABC):
         log_data = {
             "operation": operation,
             "controller": self.__class__.__name__,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_id": user_id,
             "details": details or {}
         }

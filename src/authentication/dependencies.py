@@ -20,33 +20,13 @@ from src.services.security_service import SecurityService
 security = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db)
-) -> User:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: AsyncSession = Depends(get_db_session)) -> User:
     """
     Get current authenticated user.
-    
-    Args:
-        credentials: JWT token from Authorization header
-        db: Database session
-        
-    Returns:
-        User: Authenticated user
-        
-    Raises:
-        HTTPException: If authentication fails
     """
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
     try:
-        auth_service = AuthService(db)
-        security_service = SecurityService(db)
+        auth_service = AuthService(db_session=db)
+        security_service = SecurityService(dbdb)
         
         # Verify JWT token
         token_data = security_service.verify_jwt_token(credentials.credentials)
@@ -54,46 +34,26 @@ async def get_current_user(
         session_id = token_data.get("session_id")
         
         if not user_id or not session_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
+            raise HTTPException(status_code=401, detail="Invalid token")
         
         # Validate session
         is_valid, session = security_service.validate_session(session_id, user_id)
         if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session expired"
-            )
+            raise HTTPException(status_code=401, detail="Session expired")
         
         # Get user
-        user = await db.get(User, user_id)
+        user = db.query(User).filter(User.id == user_id).first()
         if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or inactive"
-            )
+            raise HTTPException(status_code=401, detail="User not found or inactive")
         
         return user
     
-    except AuthenticationError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e)
-        )
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication failed"
-        )
-
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 async def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db_session)
 ) -> Optional[User]:
     """
     Get current user if authenticated, otherwise None.
@@ -138,6 +98,13 @@ async def get_admin_user(
         )
     
     return current_user
+
+async def check_admin_permissions(user: User) -> None:
+    """
+    Check if user has admin permissions.
+    """
+    if user.role not in [UserRole.ADMIN, UserRole.MODERATOR]:
+        raise HTTPException(status_code=403, detail="Admin permissions required")
 
 
 async def get_super_admin_user(

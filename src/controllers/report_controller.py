@@ -277,15 +277,12 @@ class ReportController(BaseController):
         report_id: uuid.UUID,
         user: Optional[User] = None
     ) -> Report:
-        """Get a specific report by ID.
-        
+        """Get a specific report by ID.        
         Args:
             report_id: Report ID
-            user: Current user (for vote information)
-            
+            user: Current user (for vote information)            
         Returns:
-            Report: Report instance
-            
+            Report: Report instance            
         Raises:
             HTTPException: If report not found
         """

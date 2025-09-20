@@ -58,7 +58,7 @@ class SecurityService:
     Security service for authentication, authorization, and threat detection.
     """
     
-    def __init__(self, db_session: Session):
+    def __init__(self, db_session: AsyncSession):
         self.db = db_session
         self.settings = get_settings()
         

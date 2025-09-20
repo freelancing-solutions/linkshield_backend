@@ -24,6 +24,7 @@ from src.models.user import (
     User, UserSession, APIKey, PasswordResetToken, 
     EmailVerificationToken, UserStatus, UserRole
 )
+
 from src.services.email_service import EmailService
 from src.services.background_tasks import BackgroundEmailService
 from src.services.security_service import SecurityService
@@ -71,11 +72,11 @@ class AuthService:
     
     def __init__(
         self, 
-        db_session: Session, 
+        get_db_session: AsyncSession, 
         email_service: EmailService,
         security_service: SecurityService
     ):
-        self.db = db_session
+        self.db = get_db_session
         self.email_service = email_service
         self.security_service = security_service
         self.settings = get_settings()

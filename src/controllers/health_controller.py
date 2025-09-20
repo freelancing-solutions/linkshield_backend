@@ -9,7 +9,7 @@ database connectivity checks, and external service availability validation.
 import time
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
-
+from fastapi import HTTPException
 from loguru import logger
 
 from src.controllers.base_controller import BaseController
@@ -32,7 +32,11 @@ class HealthController(BaseController):
         super().__init__()
         self.settings = get_settings()
         self.app_start_time = time.time()
-    
+
+    def _create_http_exception(self, status_code: int, detail: str) -> Exception:
+        """Create the HTTP """
+        return HTTPException(status_code=status_code, detail=detail)
+        
     async def get_basic_health(self) -> Dict[str, Any]:
         """
         Get basic health status.
