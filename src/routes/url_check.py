@@ -22,8 +22,10 @@ from src.models.user import User
 from src.services.url_analysis_service import URLAnalysisService, URLAnalysisError, InvalidURLError
 from src.services.ai_service import AIService
 from src.services.security_service import SecurityService, AuthenticationError, RateLimitError
-from src.authentication.auth_service import AuthService
+from src.services.depends import get_auth_service, get_security_service, get_email_service, get_rate_limits
+from src.authentication.dependencies import get_admin_user,get_current_user, get_optional_user
 from src.controllers.url_check_controller import URLCheckController
+from src.controllers.depends import get_url_check_controller
 
 
 # Initialize router
@@ -134,70 +136,6 @@ class URLHistoryResponse(BaseModel):
     page_size: int
 
 
-# Dependency functions
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db_session)) -> Optional[User]:
-    """
-    Get current authenticated user.
-    """
-    try:
-        auth_service = AuthService(db)
-        security_service = SecurityService(db)
-        
-        # Verify JWT token
-        token_data = security_service.verify_jwt_token(credentials.credentials)
-        user_id = token_data.get("user_id")
-        session_id = token_data.get("session_id")
-        
-        if not user_id or not session_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        
-        # Validate session
-        is_valid, session = security_service.validate_session(session_id, user_id)
-        if not is_valid:
-            raise HTTPException(status_code=401, detail="Session expired")
-        
-        # Get user
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="User not found or inactive")
-        
-        return user
-    
-    except AuthenticationError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Authentication failed")
-
-
-async def get_optional_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), db: Session = Depends(get_db_session)) -> Optional[User]:
-    """
-    Get current user if authenticated, otherwise None.
-    """
-    if not credentials:
-        return None
-    
-    try:
-        return await get_current_user(credentials, db)
-    except HTTPException:
-        return None
-
-
-async def check_rate_limits(user: Optional[User], db: Session = Depends(get_db_session)) -> None:
-    """
-    Check rate limits for user.
-    """
-    security_service = SecurityService(db)
-    
-    identifier = str(user.id) if user else "anonymous"
-    
-    # Check API request rate limit
-    is_allowed, limit_info = security_service.check_rate_limit(identifier, "api_requests", "127.0.0.1")
-    if not is_allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded. Try again in {limit_info['retry_after']:.0f} seconds",
-            headers={"Retry-After": str(int(limit_info['retry_after']))}
-        )
 
 
 # API Routes
@@ -205,8 +143,9 @@ async def check_rate_limits(user: Optional[User], db: Session = Depends(get_db_s
 async def check_url(
     request: URLCheckRequest,
     background_tasks: BackgroundTasks,
-    user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db_session)
+    controller: URLCheckController = Depends(get_url_check_controller),
+    user: Optional[User] = Depends(get_optional_user)
+    
 ):
     """
     Analyze a URL for security threats, malware, phishing, and other risks.
@@ -229,15 +168,16 @@ async def check_url(
     
     Delegates business logic to URLCheckController.
     """
-    controller = URLCheckController()
+    
     return await controller.check_url(request, background_tasks, user, db)
 
 @router.post("/bulk-check", response_model=List[URLCheckResponse], summary="Analyze multiple URLs")
 async def bulk_check_urls(
     request: BulkURLCheckRequest,
     background_tasks: BackgroundTasks,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session)
+    controller: URLCheckController = Depends(get_url_check_controller),
+    user: User = Depends(get_current_user)
+    
 ):
     """
     Analyze multiple URLs in a single request.
@@ -256,30 +196,32 @@ async def bulk_check_urls(
 @router.get("/check/{check_id}", response_model=URLCheckResponse, summary="Get URL check results")
 async def get_url_check(
     check_id: uuid.UUID = Path(..., description="URL check ID"),
-    user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db_session)
+    controller: URLCheckController = Depends(get_url_check_controller),
+    user: Optional[User] = Depends(get_optional_user)
+  
 ):
     """
     Retrieve results of a specific URL check.
     
     Delegates business logic to URLCheckController.
     """
-    controller = URLCheckController()
+    
     return await controller.get_url_check(check_id, user, db)
 
 
 @router.get("/check/{check_id}/results", response_model=List[ScanResultResponse], summary="Get detailed scan results")
 async def get_scan_results(
     check_id: uuid.UUID = Path(..., description="URL check ID"),
-    user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db_session)
+    controller: URLCheckController = Depends(get_url_check_controller),
+    user: Optional[User] = Depends(get_optional_user)
+    
 ):
     """
     Get detailed scan results for a URL check.
     
     Delegates business logic to URLCheckController.
     """
-    controller = URLCheckController()
+    
     return await controller.get_scan_results(check_id, user, db)
 
 
@@ -291,30 +233,32 @@ async def get_url_history(
     status: Optional[CheckStatus] = Query(None, description="Filter by status"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session)
+    controller: URLCheckController = Depends(get_url_check_controller),
+    user: User = Depends(get_current_user)
+  
 ):
     """
     Get URL check history for the authenticated user.
     
     Delegates business logic to URLCheckController.
     """
-    controller = URLCheckController()
+    
     return await controller.get_url_history(url, domain, threat_level, status, page, page_size, user, db)
 
 
 @router.get("/reputation/{domain}", response_model=URLReputationResponse, summary="Get domain reputation")
 async def get_domain_reputation(
     domain: str = Path(..., description="Domain to check"),
-    user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db_session)
+    controller: URLCheckController = Depends(get_url_check_controller),
+    user: Optional[User] = Depends(get_optional_user)
+    
 ):
     """
     Get reputation information for a specific domain.
     
     Delegates business logic to URLCheckController.
     """
-    controller = URLCheckController()
+    
     return await controller.get_domain_reputation(domain, user, db)
 
 
@@ -322,14 +266,15 @@ async def get_domain_reputation(
 async def get_url_check_stats(
     days: int = Query(30, ge=1, le=365, description="Number of days to include in stats"),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session)
+    controller: URLCheckController = Depends(get_url_check_controller)
+    
 ):
     """
     Get URL check statistics for the authenticated user.
     
     Delegates business logic to URLCheckController.
     """
-    controller = URLCheckController()
+    
     return await controller.get_url_check_stats(days, user, db)
 
 

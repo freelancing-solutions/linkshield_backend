@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTa
 from src.authentication import auth_service
 from src.authentication.auth_service import AuthService
 from src.config.database import AsyncSession, get_db_session
+from src.controllers.url_check_controller import URLCheckController
+from src.services import ai_service, url_analysis_service
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 
-from src.services.depends import get_security_service, get_auth_service
+from src.services.depends import get_security_service, get_auth_service, get_url_analysis_service
 
 
 
@@ -19,3 +21,11 @@ async def get_report_controller(
     """
     return ReportController(db_session=db_session,security_service=security_service, auth_service=auth_service)
 
+
+async def get_url_check_controller(db_session: AsyncSession = Depends(get_db_session), security_service: SecurityService = Depends(get_security_service), 
+auth_service: AuthService = Depends(get_auth_service), url_analysis_service:URLAnalysisService = Depemds(get_url_analysis_service)) -> URLCheckController:
+
+    """
+
+    """
+    return URLCheckController(db_session=db_session, security_service=security_service, auth_service=auth_service, url_analysis_service=url_analysis_service, ai_service=ai_service)
