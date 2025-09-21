@@ -33,6 +33,7 @@ from src.routes.user import router as user_router
 from src.routes.report import router as report_router
 from src.routes.ai_analysis import router as ai_analysis_router
 from src.routes.admin import router as admin_router
+from src.routes.tasks import router as tasks_router
 
 # Initialize settings
 settings = get_settings()
@@ -119,6 +120,7 @@ app.include_router(user_router, prefix="/api", tags=["User"])
 app.include_router(report_router, prefix="/api", tags=["Report"])
 app.include_router(ai_analysis_router, tags=["AI Analysis"])
 app.include_router(admin_router, prefix="/api", tags=["Admin"])
+app.include_router(tasks_router, tags=["Task Management"])
 
 
 # Root endpoint

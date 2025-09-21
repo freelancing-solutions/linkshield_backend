@@ -339,6 +339,25 @@ class Settings(BaseSettings):
     CACHE_MAX_SIZE: int = Field(default=1000, env="LINKSHIELD_CACHE_MAX_SIZE")
     CACHE_ENABLED: bool = Field(default=True, env="LINKSHIELD_CACHE_ENABLED")
     
+    # Background Task Configuration
+    BACKGROUND_TASKS_ENABLED: bool = Field(default=True, env="LINKSHIELD_BACKGROUND_TASKS_ENABLED")
+    BACKGROUND_TASK_TIMEOUT: int = Field(default=3600, env="LINKSHIELD_BACKGROUND_TASK_TIMEOUT")
+    BACKGROUND_TASK_MAX_RETRIES: int = Field(default=3, env="LINKSHIELD_BACKGROUND_TASK_MAX_RETRIES")
+    BACKGROUND_TASK_RETRY_DELAY: int = Field(default=60, env="LINKSHIELD_BACKGROUND_TASK_RETRY_DELAY")
+    BACKGROUND_TASK_CLEANUP_DAYS: int = Field(default=30, env="LINKSHIELD_BACKGROUND_TASK_CLEANUP_DAYS")
+    
+    # Webhook Configuration
+    WEBHOOK_ENABLED: bool = Field(default=True, env="LINKSHIELD_WEBHOOK_ENABLED")
+    WEBHOOK_TIMEOUT: int = Field(default=30, env="LINKSHIELD_WEBHOOK_TIMEOUT")
+    WEBHOOK_MAX_RETRIES: int = Field(default=3, env="LINKSHIELD_WEBHOOK_MAX_RETRIES")
+    WEBHOOK_RETRY_DELAY: int = Field(default=60, env="LINKSHIELD_WEBHOOK_RETRY_DELAY")
+    WEBHOOK_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_WEBHOOK_SECRET_KEY")
+    
+    # Task Processing Configuration
+    TASK_ASYNC_THRESHOLD: int = Field(default=1000, env="LINKSHIELD_TASK_ASYNC_THRESHOLD")
+    TASK_BATCH_SIZE: int = Field(default=100, env="LINKSHIELD_TASK_BATCH_SIZE")
+    TASK_PROGRESS_UPDATE_INTERVAL: int = Field(default=10, env="LINKSHIELD_TASK_PROGRESS_UPDATE_INTERVAL")
+    
     # Development/Testing
     TEST_DATABASE_URL: str = Field(
         default="postgresql://linkshield_user:password@localhost:5432/linkshield_test_db",

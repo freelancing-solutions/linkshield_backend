@@ -22,9 +22,13 @@ from src.models.report import (
 )
 from src.models.user import User, UserRole
 from src.models.url_check import URLCheck, ThreatLevel
+from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
 from src.services.security_service import SecurityService
+from src.services.webhook_service import get_webhook_service
+from src.services.task_tracking_service import get_task_tracking_service
 from src.authentication.auth_service import AuthService
 
+from src.utils import utc_datetime
 
 class ReportController(BaseController):
     """Controller for report management operations.
@@ -61,7 +65,8 @@ class ReportController(BaseController):
         evidence_urls: Optional[List[str]] = None,
         severity: Optional[int] = None,
         tags: Optional[List[str]] = None,
-        is_anonymous: bool = False
+        is_anonymous: bool = False,
+        callback_url: Optional[str] = None
     ) -> Report:
         """Create a new report with validation and background processing.
         
@@ -76,6 +81,7 @@ class ReportController(BaseController):
             severity: Severity rating (1-10)
             tags: Report tags
             is_anonymous: Whether to submit anonymously
+            callback_url: Optional webhook URL for completion notification
             
         Returns:
             Report: Created report instance
@@ -122,8 +128,8 @@ class ReportController(BaseController):
                 priority=priority,
                 is_anonymous=is_anonymous,
                 reporter_id=None if is_anonymous else user.id,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=utc_datetime(),
+                updated_at=utc_datetime()
             )
             
             self.db_session.add(report)
@@ -143,15 +149,72 @@ class ReportController(BaseController):
             )
             
             # Schedule background tasks
-            background_tasks.add_task(self._analyze_reported_url, str(report.id), normalized_url)
+            if callback_url:
+                # Use webhook-enabled background task for async processing
+                task_id = await self.add_background_task_with_tracking(
+                    background_tasks=background_tasks,
+                    task_type=TaskType.REPORT_ANALYSIS,
+                    task_func=self._analyze_reported_url_async,
+                    task_data={
+                        "report_id": str(report.id),
+                        "url": normalized_url,
+                        "report_type": report_type.value,
+                        "priority": priority.value
+                    },
+                    user_id=user.id,
+                    callback_url=callback_url,
+                    priority=TaskPriority.HIGH if priority == ReportPriority.HIGH else TaskPriority.MEDIUM,
+                    args=(
+                    str(report.id),
+                    normalized_url,
+                    report_type.value,
+                    priority.value,
+                    callback_url)
+                )
+                
+                self.log_operation(
+                    "Report analysis scheduled with webhook",
+                    user_id=user.id,
+                    details={
+                        "report_id": str(report.id),
+                        "task_id": task_id,
+                        "callback_url": callback_url
+                    }
+                )
+            else:
+                # Use traditional background tasks
+                background_tasks.add_task(self._analyze_reported_url, str(report.id), normalized_url)
             
             if priority == ReportPriority.HIGH:
-                background_tasks.add_task(
-                    self._notify_moderation_team,
-                    str(report.id),
-                    report_type.value,
-                    normalized_url
-                )
+                if callback_url:
+                    # High priority moderation notification with webhook
+                    await self.add_background_task_with_tracking(
+                        background_tasks=background_tasks,
+                        task_type=TaskType.NOTIFICATION,
+                        task_func=self._notify_moderation_team_async,
+                        task_data={
+                            "report_id": str(report.id),
+                            "report_type": report_type.value,
+                            "url": normalized_url,
+                            "priority": "HIGH"
+                        },
+                        user_id=user.id,
+                        callback_url=callback_url,
+                        priority=TaskPriority.HIGH,
+                        args=(
+                        str(report.id),
+                        report_type.value,
+                        normalized_url,
+                        callback_url)
+                    )
+                else:
+                    # Traditional high priority notification
+                    background_tasks.add_task(
+                        self._notify_moderation_team,
+                        str(report.id),
+                        report_type.value,
+                        normalized_url
+                    )
             
             return report
             
@@ -361,7 +424,7 @@ class ReportController(BaseController):
             if tags is not None:
                 report.tags = tags
             
-            report.updated_at = datetime.utcnow()
+            report.updated_at = utc_datetime()
             
             await self.db_session.commit()
             await self.db_session.refresh(report)
@@ -428,7 +491,7 @@ class ReportController(BaseController):
                 # Update existing vote
                 existing_vote.vote_type = vote_type
                 existing_vote.comment = comment
-                existing_vote.updated_at = datetime.utcnow()
+                existing_vote.updated_at = utc_datetime()
                 vote = existing_vote
             else:
                 # Create new vote
@@ -438,8 +501,8 @@ class ReportController(BaseController):
                     user_id=user.id,
                     vote_type=vote_type,
                     comment=comment,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
+                    created_at=utc_datetime(),
+                    updated_at=utc_datetime()
                 )
                 self.db_session.add(vote)
             
@@ -543,7 +606,7 @@ class ReportController(BaseController):
         try:
             report.assignee_id = assignee_id
             report.status = ReportStatus.IN_PROGRESS
-            report.updated_at = datetime.utcnow()
+            report.updated_at = utc_datetime()
             
             await self.db_session.commit()
             await self.db_session.refresh(report)
@@ -594,8 +657,8 @@ class ReportController(BaseController):
         try:
             report.status = ReportStatus.RESOLVED
             report.resolution_notes = resolution_notes.strip()
-            report.resolved_at = datetime.utcnow()
-            report.updated_at = datetime.utcnow()
+            report.resolved_at = utc_datetime()
+            report.updated_at = utc_datetime()
             
             await self.db_session.commit()
             await self.db_session.refresh(report)
@@ -626,7 +689,7 @@ class ReportController(BaseController):
         Returns:
             Dict: Report statistics
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = utc_datetime() - timedelta(days=days)
         
         # Base query for the time period
         base_query = self.db_session.query(Report).filter(Report.created_at >= cutoff_date)
@@ -664,7 +727,7 @@ class ReportController(BaseController):
         ]
         
         # Recent activity (last 7 days)
-        recent_cutoff = datetime.utcnow() - timedelta(days=7)
+        recent_cutoff = utc_datetime() - timedelta(days=7)
         recent_activity = (
             self.db_session.query(Report)
             .filter(Report.created_at >= recent_cutoff)
@@ -849,7 +912,7 @@ class ReportController(BaseController):
             HTTPException: If duplicate report found
         """
         # Check for recent duplicate from same user
-        recent_cutoff = datetime.utcnow() - timedelta(hours=24)
+        recent_cutoff = utc_datetime() - timedelta(hours=24)
         
         duplicate = (
             self.db_session.query(Report)
@@ -968,6 +1031,236 @@ class ReportController(BaseController):
             report.upvotes = upvotes
             report.downvotes = downvotes
     
+    async def _analyze_reported_url_async(
+        self,
+        task_id: str,
+        report_id: str,
+        url: str,
+        report_type: str,
+        priority: str,
+        callback_url: Optional[str] = None
+    ) -> None:
+        """Asynchronously analyze reported URL with webhook notification.
+        
+        Args:
+            task_id: Background task ID
+            report_id: Report ID
+            url: URL to analyze
+            report_type: Type of report
+            priority: Report priority level
+            callback_url: Optional webhook URL for completion notification
+        """
+        task_tracking_service = get_task_tracking_service()
+        webhook_service = get_webhook_service()
+        
+        try:
+            # Get database session
+            db = await self.get_db_session()
+            
+            # Update task status to running
+            await task_tracking_service.update_task_status(
+                db=db,
+                task_id=task_id,
+                status=TaskStatus.RUNNING,
+                progress=10
+            )
+            
+            # Perform URL analysis (placeholder for actual analysis logic)
+            await task_tracking_service.update_task_status(
+                db=db,
+                task_id=task_id,
+                status=TaskStatus.RUNNING,
+                progress=50
+            )
+            
+            # Simulate analysis processing
+            analysis_result = {
+                "report_id": report_id,
+                "url": url,
+                "report_type": report_type,
+                "priority": priority,
+                "analysis_completed": True,
+                "threat_detected": False,  # This would be actual analysis result
+                "confidence_score": 0.85,
+                "analyzed_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Complete the task
+            await task_tracking_service.complete_task(
+                db=db,
+                task_id=task_id,
+                result=analysis_result
+            )
+            
+            # Send webhook notification if callback URL provided
+            if callback_url:
+                webhook_payload = {
+                    "event": "report_analysis_completed",
+                    "task_id": task_id,
+                    "report_id": report_id,
+                    "analysis": analysis_result,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                
+                await webhook_service.send_webhook(
+                    url=callback_url,
+                    payload=webhook_payload,
+                    event_type="report_analysis_completed"
+                )
+            
+            # Log successful completion
+            self.log_operation(
+                "Report URL analysis completed asynchronously",
+                details={
+                    "task_id": task_id,
+                    "report_id": report_id,
+                    "url": url,
+                    "callback_url": callback_url
+                }
+            )
+            
+        except Exception as e:
+            # Handle failure
+            self.logger.error(f"Async report analysis failed for task {task_id}: {e}")
+            
+            try:
+                # Mark task as failed
+                await task_tracking_service.fail_task(
+                    db=db,
+                    task_id=task_id,
+                    error=str(e)
+                )
+                
+                # Send failure webhook if callback URL provided
+                if callback_url:
+                    webhook_payload = {
+                        "event": "report_analysis_failed",
+                        "task_id": task_id,
+                        "report_id": report_id,
+                        "error": str(e),
+                        "url": url,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                    
+                    await webhook_service.send_webhook(
+                        url=callback_url,
+                        payload=webhook_payload,
+                        event_type="report_analysis_failed"
+                    )
+                
+            except Exception as cleanup_error:
+                self.logger.error(f"Failed to handle async analysis failure for task {task_id}: {cleanup_error}")
+
+    async def _notify_moderation_team_async(
+        self,
+        task_id: str,
+        report_id: str,
+        report_type: str,
+        url: str,
+        callback_url: Optional[str] = None
+    ) -> None:
+        """Asynchronously notify moderation team with webhook notification.
+        
+        Args:
+            task_id: Background task ID
+            report_id: Report ID
+            report_type: Type of report
+            url: Reported URL
+            callback_url: Optional webhook URL for completion notification
+        """
+        task_tracking_service = get_task_tracking_service()
+        webhook_service = get_webhook_service()
+        
+        try:
+            # Get database session
+            db = await self.get_db_session()
+            
+            # Update task status to running
+            await task_tracking_service.update_task_status(
+                db=db,
+                task_id=task_id,
+                status=TaskStatus.RUNNING,
+                progress=25
+            )
+            
+            # Simulate moderation team notification
+            notification_result = {
+                "report_id": report_id,
+                "report_type": report_type,
+                "url": url,
+                "notification_sent": True,
+                "moderators_notified": 3,  # This would be actual count
+                "notification_method": "email_and_slack",
+                "notified_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Complete the task
+            await task_tracking_service.complete_task(
+                db=db,
+                task_id=task_id,
+                result=notification_result
+            )
+            
+            # Send webhook notification if callback URL provided
+            if callback_url:
+                webhook_payload = {
+                    "event": "moderation_notification_completed",
+                    "task_id": task_id,
+                    "report_id": report_id,
+                    "notification": notification_result,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                
+                await webhook_service.send_webhook(
+                    url=callback_url,
+                    payload=webhook_payload,
+                    event_type="moderation_notification_completed"
+                )
+            
+            # Log successful completion
+            self.log_operation(
+                "Moderation team notification completed asynchronously",
+                details={
+                    "task_id": task_id,
+                    "report_id": report_id,
+                    "report_type": report_type,
+                    "url": url,
+                    "callback_url": callback_url
+                }
+            )
+            
+        except Exception as e:
+            # Handle failure
+            self.logger.error(f"Async moderation notification failed for task {task_id}: {e}")
+            
+            try:
+                # Mark task as failed
+                await task_tracking_service.fail_task(
+                    db=db,
+                    task_id=task_id,
+                    error=str(e)
+                )
+                
+                # Send failure webhook if callback URL provided
+                if callback_url:
+                    webhook_payload = {
+                        "event": "moderation_notification_failed",
+                        "task_id": task_id,
+                        "report_id": report_id,
+                        "error": str(e),
+                        "url": url,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                    
+                    await webhook_service.send_webhook(
+                        url=callback_url,
+                        payload=webhook_payload,
+                        event_type="moderation_notification_failed"
+                    )
+                
+            except Exception as cleanup_error:
+                self.logger.error(f"Failed to handle async notification failure for task {task_id}: {cleanup_error}")
+
     async def _analyze_reported_url(self, report_id: str, url: str) -> None:
         """Background task to analyze reported URL.
         

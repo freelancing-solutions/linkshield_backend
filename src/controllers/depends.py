@@ -10,6 +10,8 @@ from src.services.url_analysis_service import URLAnalysisService
 from src.services.ai_analysis_service import AIAnalysisService
 
 from src.services.depends import get_security_service, get_auth_service, get_url_analysis_service, get_ai_analysis_service
+from src.services.task_tracking_service import TaskTrackingService
+from src.services.webhook_service import WebhookService
 
 
 async def get_health_controller() -> HealthController:
@@ -61,3 +63,21 @@ async def get_ai_analysis_controller(
         security_service=security_service,
         auth_service=auth_service
     )
+
+
+async def get_task_tracking_service(
+    db_session: AsyncSession = Depends(get_db_session)
+) -> TaskTrackingService:
+    """
+    Get task tracking service instance.
+    """
+    return TaskTrackingService(db_session=db_session)
+
+
+async def get_webhook_service(
+    db_session: AsyncSession = Depends(get_db_session)
+) -> WebhookService:
+    """
+    Get webhook service instance.
+    """
+    return WebhookService(db_session=db_session)
