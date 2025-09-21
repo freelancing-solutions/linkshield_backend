@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, desc, func
-from sqlalchemy.orm import selectinload
+
 
 from src.models.ai_analysis import (
     AIAnalysis, 
@@ -28,6 +28,7 @@ from src.models.url_check import URLCheck
 from src.models.user import User
 from src.services.ai_service import AIService, AIServiceError
 from src.config.settings import get_settings
+from src.config.database import get_db_session
 
 
 class AIAnalysisService:
@@ -35,7 +36,8 @@ class AIAnalysisService:
     Service for AI-powered content analysis with database integration.
     """
     
-    def __init__(self):
+    def __init__(self, db_session: Optional[AsyncSession] = None):
+        self.db_session = db_session if db_session else anext(get_db_session)
         self.settings = get_settings()
         self.ai_service = AIService()
         self._initialized = False
@@ -56,7 +58,6 @@ class AIAnalysisService:
     
     async def analyze_content(
         self,
-        db: AsyncSession,
         url: str,
         content: str,
         user_id: Optional[str] = None,
@@ -85,14 +86,14 @@ class AIAnalysisService:
         domain = urlparse(url).netloc
         
         # Check if analysis already exists
-        existing_analysis = await self._get_existing_analysis(db, content_hash)
+        existing_analysis = await self._get_existing_analysis(content_hash)
         if existing_analysis and existing_analysis.processing_status == ProcessingStatus.COMPLETED:
             # Update associations if needed
             if check_id and not existing_analysis.check_id:
                 existing_analysis.check_id = check_id
             if user_id and not existing_analysis.user_id:
                 existing_analysis.user_id = user_id
-            await db.commit()
+            await self.db_session.commit()
             return existing_analysis
         
         # Create new analysis record
@@ -107,9 +108,9 @@ class AIAnalysisService:
             analysis_types=[at.value for at in analysis_types] if analysis_types else None
         )
         
-        db.add(analysis)
-        await db.commit()
-        await db.refresh(analysis)
+        self.db_session.add(analysis)
+        await self.db_session.commit()
+        await self.db_session.refresh(analysis)
         
         try:
             # Perform AI analysis
@@ -124,8 +125,8 @@ class AIAnalysisService:
             analysis.processing_status = ProcessingStatus.COMPLETED
             analysis.processed_at = datetime.now(timezone.utc)
             
-            await db.commit()
-            await db.refresh(analysis)
+            await self.db_session.commit()
+            await self.db_session.refresh(analysis)
             
             # Update model metrics
             await self._update_model_metrics(db, ai_results, processing_time, success=True)
@@ -138,16 +139,16 @@ class AIAnalysisService:
             analysis.error_message = str(e)
             analysis.retry_count += 1
             
-            await db.commit()
+            await self.db_session.commit()
             await self._update_model_metrics(db, {}, 0, success=False)
             
             raise AIServiceError(f"AI analysis failed: {str(e)}")
     
-    async def _get_existing_analysis(self, db: AsyncSession, content_hash: str) -> Optional[AIAnalysis]:
+    async def _get_existing_analysis(self,content_hash: str) -> Optional[AIAnalysis]:
         """
         Get existing analysis by content hash.
         """
-        result = await db.execute(
+        result = await self.db_session.execute(
             select(AIAnalysis).where(AIAnalysis.content_hash == content_hash)
         )
         return result.scalar_one_or_none()
@@ -190,7 +191,6 @@ class AIAnalysisService:
     
     async def find_similar_content(
         self,
-        db: AsyncSession,
         analysis_id: str,
         similarity_threshold: float = 0.8,
         limit: int = 10
@@ -208,12 +208,12 @@ class AIAnalysisService:
             List of similar content matches
         """
         # Get source analysis
-        source_analysis = await db.get(AIAnalysis, analysis_id)
+        source_analysis = await self.db_session.get(AIAnalysis, analysis_id)
         if not source_analysis:
             return []
         
         # Find potential matches based on domain, topic, or quality score
-        similar_analyses = await db.execute(
+        similar_analyses = await self.db_session.execute(
             select(AIAnalysis)
             .where(
                 and_(
@@ -248,10 +248,10 @@ class AIAnalysisService:
                     algorithm_version="1.0"
                 )
                 
-                db.add(similarity)
+                self.db_session.add(similarity)
                 similarities.append(similarity)
         
-        await db.commit()
+        await self.db_session.commit()
         return similarities[:limit]
     
     async def _calculate_similarity(self, analysis1: AIAnalysis, analysis2: AIAnalysis) -> float:
@@ -291,7 +291,6 @@ class AIAnalysisService:
     
     async def get_user_analysis_history(
         self,
-        db: AsyncSession,
         user_id: str,
         limit: int = 50,
         offset: int = 0
@@ -299,7 +298,7 @@ class AIAnalysisService:
         """
         Get user's AI analysis history.
         """
-        result = await db.execute(
+        result = await self.db_session.execute(
             select(AIAnalysis)
             .where(AIAnalysis.user_id == user_id)
             .order_by(desc(AIAnalysis.created_at))
@@ -316,7 +315,7 @@ class AIAnalysisService:
         """
         Get analysis statistics for a domain.
         """
-        result = await db.execute(
+        result = await self.db_session.execute(
             select(
                 func.count(AIAnalysis.id).label('total_analyses'),
                 func.avg(AIAnalysis.overall_quality_score).label('avg_quality'),
@@ -341,7 +340,6 @@ class AIAnalysisService:
     
     async def _update_model_metrics(
         self,
-        db: AsyncSession,
         ai_results: Dict[str, Any],
         processing_time: int,
         success: bool
@@ -355,13 +353,12 @@ class AIAnalysisService:
     
     async def retry_failed_analysis(
         self,
-        db: AsyncSession,
         analysis_id: str
     ) -> AIAnalysis:
         """
         Retry a failed AI analysis.
         """
-        analysis = await db.get(AIAnalysis, analysis_id)
+        analysis = await self.db_session.get(AIAnalysis, analysis_id)
         if not analysis or analysis.processing_status != ProcessingStatus.FAILED:
             raise ValueError("Analysis not found or not in failed state")
         
@@ -372,7 +369,7 @@ class AIAnalysisService:
         analysis.processing_status = ProcessingStatus.PENDING
         analysis.error_message = None
         
-        await db.commit()
+        await self.db_session.commit()
         
         # Re-analyze (this would need the original content)
         # For now, just update the status

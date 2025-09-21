@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException
 from src.authentication.auth_service import AuthService
 from src.config.database import AsyncSession, get_db_session
 from src.services.ai_service import AIService
+from src.services.ai_analysis_service import AIAnalysisService
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 from src.services.url_analysis_service import URLAnalysisService
@@ -52,6 +53,12 @@ async def get_ai_service() -> AIService:
     """
     """
     return AIService()
+
+async def get_ai_analysis_service(db_session: AsyncSession = Depends(get_db_session)) -> AIAnalysisService:
+    """
+    Get AI analysis service instance.
+    """
+    return AIAnalysisService(db_session=db_session)
 
 async def get_url_analysis_service(db_session: AsyncSession = Depends(get_db_session), ai_service:AIService = Depends(get_ai_service)) -> URLAnalysisService:
     return URLAnalysisService(db_session=db_session, ai_service=ai_service)
