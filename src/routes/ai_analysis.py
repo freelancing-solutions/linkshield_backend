@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, Depends, status, Request, Query, Path
+from fastapi import APIRouter, Depends, status, Request, Query, Path, BackgroundTasks
 from pydantic import BaseModel, field_validator, Field
 
 from src.authentication.dependencies import get_current_user, get_optional_user
@@ -37,11 +37,21 @@ class AIAnalysisRequest(BaseModel):
         default=None,
         description="Specific analysis types to perform"
     )
+    callback_url: Optional[str] = Field(
+        default=None,
+        description="Optional webhook URL for async processing completion notification"
+    )
     
     @field_validator('url')
     def validate_url(cls, v):
         if not v.startswith(('http://', 'https://')):
             raise ValueError('URL must start with http:// or https://')
+        return v
+    
+    @field_validator('callback_url')
+    def validate_callback_url(cls, v):
+        if v is not None and not v.startswith(('http://', 'https://')):
+            raise ValueError('Callback URL must start with http:// or https://')
         return v
 
 
@@ -123,6 +133,7 @@ class AnalysisHistoryResponse(BaseModel):
 async def analyze_content(
     request: Request,
     analysis_request: AIAnalysisRequest,
+    background_tasks: BackgroundTasks,
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
     current_user: Optional[User] = Depends(get_optional_user)
 ):
@@ -136,13 +147,17 @@ async def analyze_content(
     - SEO analysis
     - Language detection
     - Readability assessment
+    
+    For large content or when callback_url is provided, processing will be done asynchronously.
     """
     return await controller.analyze_content(
         request=request,
         url=analysis_request.url,
         content=analysis_request.content,
         analysis_types=analysis_request.analysis_types,
-        current_user=current_user
+        current_user=current_user,
+        background_tasks=background_tasks,
+        callback_url=analysis_request.callback_url
     )
 
 
@@ -240,15 +255,22 @@ async def get_domain_stats(
 @limiter.limit("10/minute", key_func=ai_analysis_key_func)
 async def retry_analysis(
     analysis_id: str,
+    background_tasks: BackgroundTasks,
+    callback_url: Optional[str] = Query(None, description="Optional webhook URL for completion notification"),
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
     current_user: User = Depends(get_current_user)
 ):
     """
     Retry a failed analysis.
+    
+    Supports both synchronous and asynchronous processing based on content size
+    and callback_url parameter.
     """
     return await controller.retry_analysis(
         analysis_id=analysis_id,
-        current_user=current_user
+        current_user=current_user,
+        background_tasks=background_tasks,
+        callback_url=callback_url
     )
 
 

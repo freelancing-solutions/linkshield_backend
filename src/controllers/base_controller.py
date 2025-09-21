@@ -5,20 +5,26 @@ controller classes in the application. It provides common dependency injection p
 error handling utilities, logging, validation helpers, and response formatting.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, Optional, List, Union
 from abc import ABC
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
+import uuid
+
+from fastapi import HTTPException, status, Request, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
-from fastapi import HTTPException, status
 from pydantic import ValidationError
 
-from src.config.database import get_db_session
+from src.database.session import get_db_session
 from src.config.settings import get_settings
 from src.services.security_service import SecurityService
-from src.authentication.auth_service import AuthService
+from src.services.auth_service import AuthService
 from src.services.email_service import EmailService
+from src.services.webhook_service import get_webhook_service
+from src.services.task_tracking_service import get_task_tracking_service
+from src.models.user import User
+from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
 
 
 class BaseController(ABC):
@@ -341,3 +347,278 @@ class BaseController(ABC):
                 self.logger.error(f"Error closing database session: {str(e)}")
             finally:
                 self.db_session = None
+
+    # Background Task and Webhook Methods
+    
+    async def create_background_task(
+        self,
+        task_type: TaskType,
+        task_data: Dict[str, Any],
+        user_id: Optional[int] = None,
+        priority: TaskPriority = TaskPriority.MEDIUM,
+        callback_url: Optional[str] = None,
+        depends_on: Optional[List[str]] = None
+    ) -> str:
+        """Create a new background task for tracking.
+        
+        Args:
+            task_type: Type of the task
+            task_data: Task-specific data
+            user_id: ID of the user who initiated the task
+            priority: Task priority level
+            callback_url: Optional webhook URL for completion notification
+            depends_on: List of task IDs this task depends on
+            
+        Returns:
+            str: Task ID
+            
+        Raises:
+            HTTPException: If task creation fails
+        """
+        try:
+            task_tracking_service = get_task_tracking_service()
+            db = await self.get_db_session()
+            
+            task_id = str(uuid.uuid4())
+            
+            task = BackgroundTask(
+                id=task_id,
+                task_type=task_type,
+                status=TaskStatus.PENDING,
+                priority=priority,
+                user_id=user_id,
+                task_data=task_data,
+                callback_url=callback_url,
+                depends_on=depends_on or [],
+                created_at=datetime.utcnow()
+            )
+            
+            await task_tracking_service.create_task(db=db, task=task)
+            
+            self.logger.info(f"Created background task {task_id} of type {task_type.value}")
+            return task_id
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create background task: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create background task"
+            )
+    
+    async def update_task_progress(
+        self,
+        task_id: str,
+        progress: int,
+        status: Optional[TaskStatus] = None,
+        result_data: Optional[Dict[str, Any]] = None,
+        error_message: Optional[str] = None
+    ) -> None:
+        """Update background task progress and status.
+        
+        Args:
+            task_id: ID of the task to update
+            progress: Progress percentage (0-100)
+            status: New task status
+            result_data: Task result data
+            error_message: Error message if task failed
+            
+        Raises:
+            HTTPException: If task update fails
+        """
+        try:
+            task_tracking_service = get_task_tracking_service()
+            db = await self.get_db_session()
+            
+            await task_tracking_service.update_task_status(
+                db=db,
+                task_id=task_id,
+                status=status or TaskStatus.RUNNING,
+                progress=progress,
+                result_data=result_data,
+                error_message=error_message
+            )
+            
+            self.logger.info(f"Updated task {task_id} progress to {progress}%")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update task progress: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update task progress"
+            )
+    
+    async def complete_task_with_webhook(
+        self,
+        task_id: str,
+        result_data: Dict[str, Any],
+        callback_url: Optional[str] = None
+    ) -> None:
+        """Complete a background task and send webhook notification.
+        
+        Args:
+            task_id: ID of the task to complete
+            result_data: Task result data
+            callback_url: Optional webhook URL override
+            
+        Raises:
+            HTTPException: If task completion fails
+        """
+        try:
+            task_tracking_service = get_task_tracking_service()
+            webhook_service = get_webhook_service()
+            db = await self.get_db_session()
+            
+            # Update task status to completed
+            await task_tracking_service.update_task_status(
+                db=db,
+                task_id=task_id,
+                status=TaskStatus.COMPLETED,
+                progress=100,
+                result_data=result_data
+            )
+            
+            # Get task details for webhook
+            task = await task_tracking_service.get_task(db=db, task_id=task_id)
+            if not task:
+                self.logger.error(f"Task {task_id} not found for webhook notification")
+                return
+            
+            # Send webhook notification if callback URL is provided
+            webhook_url = callback_url or task.callback_url
+            if webhook_url:
+                webhook_payload = {
+                    "task_id": task_id,
+                    "task_type": task.task_type.value,
+                    "status": "completed",
+                    "result": result_data,
+                    "completed_at": datetime.utcnow().isoformat()
+                }
+                
+                await webhook_service.send_webhook(
+                    url=webhook_url,
+                    payload=webhook_payload,
+                    event_type="task.completed"
+                )
+            
+            self.logger.info(f"Completed task {task_id} with webhook notification")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to complete task with webhook: {str(e)}")
+            # Don't raise exception here to avoid breaking the main process
+    
+    async def fail_task_with_webhook(
+        self,
+        task_id: str,
+        error_message: str,
+        callback_url: Optional[str] = None
+    ) -> None:
+        """Mark a background task as failed and send webhook notification.
+        
+        Args:
+            task_id: ID of the task to fail
+            error_message: Error message describing the failure
+            callback_url: Optional webhook URL override
+            
+        Raises:
+            HTTPException: If task failure handling fails
+        """
+        try:
+            task_tracking_service = get_task_tracking_service()
+            webhook_service = get_webhook_service()
+            db = await self.get_db_session()
+            
+            # Update task status to failed
+            await task_tracking_service.update_task_status(
+                db=db,
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                error_message=error_message
+            )
+            
+            # Get task details for webhook
+            task = await task_tracking_service.get_task(db=db, task_id=task_id)
+            if not task:
+                self.logger.error(f"Task {task_id} not found for webhook notification")
+                return
+            
+            # Send webhook notification if callback URL is provided
+            webhook_url = callback_url or task.callback_url
+            if webhook_url:
+                webhook_payload = {
+                    "task_id": task_id,
+                    "task_type": task.task_type.value,
+                    "status": "failed",
+                    "error": error_message,
+                    "failed_at": datetime.utcnow().isoformat()
+                }
+                
+                await webhook_service.send_webhook(
+                    url=webhook_url,
+                    payload=webhook_payload,
+                    event_type="task.failed"
+                )
+            
+            self.logger.info(f"Failed task {task_id} with webhook notification")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to handle task failure with webhook: {str(e)}")
+            # Don't raise exception here to avoid breaking the main process
+    
+    async def add_background_task_with_tracking(
+        self,
+        background_tasks: BackgroundTasks,
+        task_func: callable,
+        task_type: TaskType,
+        task_data: Dict[str, Any],
+        user_id: Optional[int] = None,
+        priority: TaskPriority = TaskPriority.MEDIUM,
+        callback_url: Optional[str] = None,
+        *args,
+        **kwargs
+    ) -> str:
+        """Add a background task with automatic tracking and webhook support.
+        
+        Args:
+            background_tasks: FastAPI BackgroundTasks instance
+            task_func: Function to execute in background
+            task_type: Type of the task
+            task_data: Task-specific data
+            user_id: ID of the user who initiated the task
+            priority: Task priority level
+            callback_url: Optional webhook URL for completion notification
+            *args: Additional positional arguments for task_func
+            **kwargs: Additional keyword arguments for task_func
+            
+        Returns:
+            str: Task ID
+            
+        Raises:
+            HTTPException: If task creation fails
+        """
+        try:
+            # Create task record
+            task_id = await self.create_background_task(
+                task_type=task_type,
+                task_data=task_data,
+                user_id=user_id,
+                priority=priority,
+                callback_url=callback_url
+            )
+            
+            # Add to FastAPI background tasks
+            background_tasks.add_task(
+                task_func,
+                task_id,
+                *args,
+                **kwargs
+            )
+            
+            self.logger.info(f"Added background task {task_id} to execution queue")
+            return task_id
+            
+        except Exception as e:
+            self.logger.error(f"Failed to add background task with tracking: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to add background task"
+            )
