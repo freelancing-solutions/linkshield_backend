@@ -78,14 +78,11 @@ async def get_admin_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
     """
-    Get current user and verify admin permissions.
-    
+    Get current user and verify admin permissions.    
     Args:
-        current_user: Current authenticated user
-        
+        current_user: Current authenticated user        
     Returns:
-        User: Admin user
-        
+        User: Admin user        
     Raises:
         HTTPException: If user is not an admin
     """
@@ -111,14 +108,11 @@ async def get_super_admin_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
     """
-    Get current user and verify super admin permissions.
-    
+    Get current user and verify super admin permissions.    
     Args:
-        current_user: Current authenticated user
-        
+        current_user: Current authenticated user        
     Returns:
-        User: Super admin user
-        
+        User: Super admin user        
     Raises:
         HTTPException: If user is not a super admin
     """
