@@ -47,23 +47,23 @@ class URLCheckController(BaseController):
     
     def __init__(
         self,
-        db_session: AsyncSession,
-        security_service: SecurityService = None,
-        auth_service: AuthService = None,
-        url_analysis_service: URLAnalysisService = None,
+        security_service: SecurityService,
+        auth_service: AuthService,
+        email_service: EmailService,
+        url_analysis_service: URLAnalysisService,
         ai_service: AIService = None
     ):
         """Initialize URL check controller.
         
         Args:
-            db_session: Database session for operations
             security_service: Security service for validation
             auth_service: Authentication service
+            email_service: Email service for notifications
             url_analysis_service: URL analysis service
             ai_service: AI service for advanced analysis
         """
-        super().__init__(db_session, security_service, auth_service)
-        self.url_analysis_service = url_analysis_service or URLAnalysisService()
+        super().__init__(security_service, auth_service, email_service)
+        self.url_analysis_service = url_analysis_service
         self.ai_service = ai_service or AIService()
         
         # Rate limits
@@ -131,59 +131,58 @@ class URLCheckController(BaseController):
             return recent_check
         
         try:
-            # Create URL check record
-            url_check = URLCheck(
-                id=uuid.uuid4(),
-                original_url=url,
-                normalized_url=normalized_url,
-                domain=domain,
-                status=CheckStatus.PENDING,
-                user_id=user.id if user else None,
-                scan_types=scan_types,
-                priority=priority,
-                callback_url=callback_url,
-                created_at=utc_datetime(),
-                scan_started_at=utc_datetime()
-            )
-            
-            self.db_session.add(url_check)
-            await self.db_session.commit()
-            await self.db_session.refresh(url_check)
-            
-            # Log the operation
-            self.log_operation(
-                "URL check initiated",
-                user_id=user.id if user else None,
-                details={
-                    "check_id": str(url_check.id),
-                    "url": normalized_url,
-                    "scan_types": [st.value for st in scan_types],
-                    "priority": priority
-                }
-            )
-            
-            # Start analysis in background if background_tasks provided
-            if background_tasks:
-                background_tasks.add_task(
-                    self._perform_url_analysis,
-                    url_check.id,
-                    normalized_url,
-                    scan_types,
-                    callback_url
+            async with self.get_db_session() as session:
+                # Create URL check record
+                url_check = URLCheck(
+                    id=uuid.uuid4(),
+                    original_url=url,
+                    normalized_url=normalized_url,
+                    domain=domain,
+                    status=CheckStatus.PENDING,
+                    user_id=user.id if user else None,
+                    scan_types=scan_types,
+                    priority=priority,
+                    callback_url=callback_url,
+                    created_at=utc_datetime(),
+                    scan_started_at=utc_datetime()
                 )
-            else:
-                # Perform synchronous analysis for immediate results
-                await self._perform_url_analysis(
-                    url_check.id,
-                    normalized_url,
-                    scan_types,
-                    callback_url
+                
+                session.add(url_check)
+                await session.refresh(url_check)
+                
+                # Log the operation
+                self.log_operation(
+                    "URL check initiated",
+                    user_id=user.id if user else None,
+                    details={
+                        "check_id": str(url_check.id),
+                        "url": normalized_url,
+                        "scan_types": [st.value for st in scan_types],
+                        "priority": priority
+                    }
                 )
-            
-            return url_check
+                
+                # Start analysis in background if background_tasks provided
+                if background_tasks:
+                    background_tasks.add_task(
+                        self._perform_url_analysis,
+                        url_check.id,
+                        normalized_url,
+                        scan_types,
+                        callback_url
+                    )
+                else:
+                    # Perform synchronous analysis for immediate results
+                    await self._perform_url_analysis(
+                        url_check.id,
+                        normalized_url,
+                        scan_types,
+                        callback_url
+                    )
+                
+                return url_check
             
         except Exception as e:
-            await self.db_session.rollback()
             raise self.handle_database_error(e, "URL check creation")
     
     async def bulk_check_urls(
@@ -238,74 +237,72 @@ class URLCheckController(BaseController):
         url_checks = []
         
         try:
-            for url in urls:
-                try:
-                    # Validate and normalize each URL
-                    normalized_url = await self._validate_and_normalize_url(url)
-                    domain = self._extract_domain(normalized_url)
-                    
-                    # Create URL check record
-                    url_check = URLCheck(
-                        id=uuid.uuid4(),
-                        original_url=url,
-                        normalized_url=normalized_url,
-                        domain=domain,
-                        status=CheckStatus.PENDING,
-                        user_id=user.id,
-                        scan_types=scan_types,
-                        priority=False,  # Bulk requests are not prioritized
-                        callback_url=callback_url,
-                        created_at=utc_datetime(),
-                        scan_started_at=utc_datetime()
+            async with self.get_db_session() as session:
+                for url in urls:
+                    try:
+                        # Validate and normalize each URL
+                        normalized_url = await self._validate_and_normalize_url(url)
+                        domain = self._extract_domain(normalized_url)
+                        
+                        # Create URL check record
+                        url_check = URLCheck(
+                            id=uuid.uuid4(),
+                            original_url=url,
+                            normalized_url=normalized_url,
+                            domain=domain,
+                            status=CheckStatus.PENDING,
+                            user_id=user.id,
+                            scan_types=scan_types,
+                            priority=False,  # Bulk requests are not prioritized
+                            callback_url=callback_url,
+                            created_at=utc_datetime(),
+                            scan_started_at=utc_datetime()
+                        )
+                        
+                        session.add(url_check)
+                        url_checks.append(url_check)
+                        
+                    except Exception as e:
+                        # Log invalid URL but continue with others
+                        self.logger.warning(
+                            f"Invalid URL in bulk request: {url}",
+                            extra={"error": str(e), "user_id": user.id}
+                        )
+                        continue
+                
+                if not url_checks:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="No valid URLs found in bulk request"
                     )
-                    
-                    self.db_session.add(url_check)
-                    url_checks.append(url_check)
-                    
-                except Exception as e:
-                    # Log invalid URL but continue with others
-                    self.logger.warning(
-                        f"Invalid URL in bulk request: {url}",
-                        extra={"error": str(e), "user_id": user.id}
+                
+                # Refresh all URL checks
+                for url_check in url_checks:
+                    await session.refresh(url_check)
+                
+                # Log the operation
+                self.log_operation(
+                    "Bulk URL check initiated",
+                    user_id=user.id,
+                    details={
+                        "total_urls": len(urls),
+                        "valid_urls": len(url_checks),
+                        "scan_types": [st.value for st in scan_types]
+                    }
+                )
+                
+                # Start bulk analysis in background
+                if background_tasks:
+                    background_tasks.add_task(
+                        self._perform_bulk_analysis,
+                        [uc.id for uc in url_checks],
+                        scan_types,
+                        callback_url
                     )
-                    continue
-            
-            if not url_checks:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No valid URLs found in bulk request"
-                )
-            
-            await self.db_session.commit()
-            
-            # Refresh all URL checks
-            for url_check in url_checks:
-                await self.db_session.refresh(url_check)
-            
-            # Log the operation
-            self.log_operation(
-                "Bulk URL check initiated",
-                user_id=user.id,
-                details={
-                    "total_urls": len(urls),
-                    "valid_urls": len(url_checks),
-                    "scan_types": [st.value for st in scan_types]
-                }
-            )
-            
-            # Start bulk analysis in background
-            if background_tasks:
-                background_tasks.add_task(
-                    self._perform_bulk_analysis,
-                    [uc.id for uc in url_checks],
-                    scan_types,
-                    callback_url
-                )
-            
-            return url_checks
+                
+                return url_checks
             
         except Exception as e:
-            await self.db_session.rollback()
             raise self.handle_database_error(e, "bulk URL check creation")
     
     async def get_url_check(
@@ -325,33 +322,34 @@ class URLCheckController(BaseController):
         Raises:
             HTTPException: If check not found or access denied
         """
-        url_check = (
-            self.db_session.query(URLCheck)
-            .filter(URLCheck.id == check_id)
-            .first()
-        )
-        
-        if not url_check:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="URL check not found"
+        async with self.get_db_session() as session:
+            url_check = (
+                session.query(URLCheck)
+                .filter(URLCheck.id == check_id)
+                .first()
             )
-        
-        # Check access permissions
-        if user and url_check.user_id and url_check.user_id != user.id:
-            if user.role != UserRole.ADMIN:
+            
+            if not url_check:
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this URL check"
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="URL check not found"
                 )
-        
-        self.log_operation(
-            "URL check retrieved",
-            user_id=user.id if user else None,
-            details={"check_id": str(check_id)}
-        )
-        
-        return url_check
+            
+            # Check access permissions
+            if user and url_check.user_id and url_check.user_id != user.id:
+                if user.role != UserRole.ADMIN:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied to this URL check"
+                    )
+            
+            self.log_operation(
+                "URL check retrieved",
+                user_id=user.id if user else None,
+                details={"check_id": str(check_id)}
+            )
+            
+            return url_check
     
     async def get_scan_results(
         self,
@@ -374,20 +372,21 @@ class URLCheckController(BaseController):
         url_check = await self.get_url_check(check_id, user)
         
         # Get scan results
-        scan_results = (
-            self.db_session.query(ScanResult)
-            .filter(ScanResult.url_check_id == check_id)
-            .order_by(ScanResult.created_at.desc())
-            .all()
-        )
-        
-        self.log_operation(
-            "Scan results retrieved",
-            user_id=user.id if user else None,
-            details={"check_id": str(check_id), "results_count": len(scan_results)}
-        )
-        
-        return scan_results
+        async with self.get_db_session() as session:
+            scan_results = (
+                session.query(ScanResult)
+                .filter(ScanResult.url_check_id == check_id)
+                .order_by(ScanResult.created_at.desc())
+                .all()
+            )
+            
+            self.log_operation(
+                "Scan results retrieved",
+                user_id=user.id if user else None,
+                details={"check_id": str(check_id), "results_count": len(scan_results)}
+            )
+            
+            return scan_results
     
     async def get_url_history(
         self,
@@ -416,55 +415,56 @@ class URLCheckController(BaseController):
         # Validate pagination
         skip, limit = self.validate_pagination(page - 1, page_size)
         
-        # Build query
-        query = (
-            self.db_session.query(URLCheck)
-            .filter(URLCheck.user_id == user.id)
-        )
-        
-        # Apply filters
-        if url:
-            normalized_url = await self._validate_and_normalize_url(url)
-            query = query.filter(URLCheck.normalized_url == normalized_url)
-        
-        if domain:
-            query = query.filter(URLCheck.domain.ilike(f"%{domain}%"))
-        
-        if threat_level:
-            query = query.filter(URLCheck.threat_level == threat_level)
-        
-        if status:
-            query = query.filter(URLCheck.status == status)
-        
-        # Get total count
-        total_count = query.count()
-        
-        # Apply pagination and ordering
-        url_checks = (
-            query
-            .order_by(desc(URLCheck.created_at))
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
-        
-        self.log_operation(
-            "URL history retrieved",
-            user_id=user.id,
-            details={
-                "total_count": total_count,
-                "page": page,
-                "page_size": page_size,
-                "filters": {
-                    "url": url,
-                    "domain": domain,
-                    "threat_level": threat_level.value if threat_level else None,
-                    "status": status.value if status else None
+        async with self.get_db_session() as session:
+            # Build query
+            query = (
+                session.query(URLCheck)
+                .filter(URLCheck.user_id == user.id)
+            )
+            
+            # Apply filters
+            if url:
+                normalized_url = await self._validate_and_normalize_url(url)
+                query = query.filter(URLCheck.normalized_url == normalized_url)
+            
+            if domain:
+                query = query.filter(URLCheck.domain.ilike(f"%{domain}%"))
+            
+            if threat_level:
+                query = query.filter(URLCheck.threat_level == threat_level)
+            
+            if status:
+                query = query.filter(URLCheck.status == status)
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination and ordering
+            url_checks = (
+                query
+                .order_by(desc(URLCheck.created_at))
+                .offset(skip)
+                .limit(limit)
+                .all()
+            )
+            
+            self.log_operation(
+                "URL history retrieved",
+                user_id=user.id,
+                details={
+                    "total_count": total_count,
+                    "page": page,
+                    "page_size": page_size,
+                    "filters": {
+                        "url": url,
+                        "domain": domain,
+                        "threat_level": threat_level.value if threat_level else None,
+                        "status": status.value if status else None
+                    }
                 }
-            }
-        )
-        
-        return url_checks, total_count
+            )
+            
+            return url_checks, total_count
     
     async def get_domain_reputation(
         self,
@@ -483,28 +483,28 @@ class URLCheckController(BaseController):
         # Normalize domain
         domain = domain.lower().strip()
         
-        # Get reputation data
-        reputation = (
-            self.db_session.query(URLReputation)
-            .filter(URLReputation.domain == domain)
-            .first()
-        )
-        
-        if reputation:
-            # Update last seen timestamp
-            reputation.last_seen = utc_datetime()
-            await self.db_session.commit()
-        
-        self.log_operation(
-            "Domain reputation retrieved",
-            user_id=user.id if user else None,
-            details={
-                "domain": domain,
-                "reputation_found": reputation is not None
-            }
-        )
-        
-        return reputation
+        async with self.get_db_session() as session:
+            # Get reputation data
+            reputation = (
+                session.query(URLReputation)
+                .filter(URLReputation.domain == domain)
+                .first()
+            )
+            
+            if reputation:
+                # Update last seen timestamp
+                reputation.last_seen = utc_datetime()
+            
+            self.log_operation(
+                "Domain reputation retrieved",
+                user_id=user.id if user else None,
+                details={
+                    "domain": domain,
+                    "reputation_found": reputation is not None
+                }
+            )
+            
+            return reputation
     
     async def get_url_check_statistics(
         self,
@@ -522,79 +522,80 @@ class URLCheckController(BaseController):
         """
         cutoff_date = utc_datetime() - timedelta(days=days)
         
-        # Base query for user's checks in the time period
-        base_query = (
-            self.db_session.query(URLCheck)
-            .filter(
-                and_(
-                    URLCheck.user_id == user.id,
-                    URLCheck.created_at >= cutoff_date
+        async with self.get_db_session() as session:
+            # Base query for user's checks in the time period
+            base_query = (
+                session.query(URLCheck)
+                .filter(
+                    and_(
+                        URLCheck.user_id == user.id,
+                        URLCheck.created_at >= cutoff_date
+                    )
                 )
             )
-        )
-        
-        # Total counts
-        total_checks = base_query.count()
-        completed_checks = base_query.filter(URLCheck.status == CheckStatus.COMPLETED).count()
-        failed_checks = base_query.filter(URLCheck.status == CheckStatus.FAILED).count()
-        
-        # Threat level distribution
-        threat_distribution = {}
-        for threat_level in ThreatLevel:
-            count = base_query.filter(URLCheck.threat_level == threat_level).count()
-            threat_distribution[threat_level.value] = count
-        
-        # Top domains checked
-        top_domains = (
-            base_query
-            .with_entities(URLCheck.domain, func.count(URLCheck.id).label('count'))
-            .group_by(URLCheck.domain)
-            .order_by(desc('count'))
-            .limit(10)
-            .all()
-        )
-        
-        top_domains_list = [
-            {"domain": domain, "count": count}
-            for domain, count in top_domains
-        ]
-        
-        # Recent activity
-        recent_checks = (
-            base_query
-            .order_by(desc(URLCheck.created_at))
-            .limit(10)
-            .all()
-        )
-        
-        recent_activity = [
-            {
-                "id": str(check.id),
-                "url": check.normalized_url,
-                "threat_level": check.threat_level.value if check.threat_level else None,
-                "status": check.status.value,
-                "created_at": check.created_at.isoformat()
+            
+            # Total counts
+            total_checks = base_query.count()
+            completed_checks = base_query.filter(URLCheck.status == CheckStatus.COMPLETED).count()
+            failed_checks = base_query.filter(URLCheck.status == CheckStatus.FAILED).count()
+            
+            # Threat level distribution
+            threat_distribution = {}
+            for threat_level in ThreatLevel:
+                count = base_query.filter(URLCheck.threat_level == threat_level).count()
+                threat_distribution[threat_level.value] = count
+            
+            # Top domains checked
+            top_domains = (
+                base_query
+                .with_entities(URLCheck.domain, func.count(URLCheck.id).label('count'))
+                .group_by(URLCheck.domain)
+                .order_by(desc('count'))
+                .limit(10)
+                .all()
+            )
+            
+            top_domains_list = [
+                {"domain": domain, "count": count}
+                for domain, count in top_domains
+            ]
+            
+            # Recent activity
+            recent_checks = (
+                base_query
+                .order_by(desc(URLCheck.created_at))
+                .limit(10)
+                .all()
+            )
+            
+            recent_activity = [
+                {
+                    "id": str(check.id),
+                    "url": check.normalized_url,
+                    "threat_level": check.threat_level.value if check.threat_level else None,
+                    "status": check.status.value,
+                    "created_at": check.created_at.isoformat()
+                }
+                for check in recent_checks
+            ]
+            
+            stats = {
+                "total_checks": total_checks,
+                "completed_checks": completed_checks,
+                "failed_checks": failed_checks,
+                "success_rate": round((completed_checks / total_checks * 100) if total_checks > 0 else 0, 2),
+                "threat_distribution": threat_distribution,
+                "top_domains": top_domains_list,
+                "recent_activity": recent_activity
             }
-            for check in recent_checks
-        ]
-        
-        stats = {
-            "total_checks": total_checks,
-            "completed_checks": completed_checks,
-            "failed_checks": failed_checks,
-            "success_rate": round((completed_checks / total_checks * 100) if total_checks > 0 else 0, 2),
-            "threat_distribution": threat_distribution,
-            "top_domains": top_domains_list,
-            "recent_activity": recent_activity
-        }
-        
-        self.log_operation(
-            "URL check statistics retrieved",
-            user_id=user.id,
-            details={"days": days, "total_checks": total_checks}
-        )
-        
-        return stats
+            
+            self.log_operation(
+                "URL check statistics retrieved",
+                user_id=user.id,
+                details={"days": days, "total_checks": total_checks}
+            )
+            
+            return stats
     
     # Private helper methods
     
@@ -656,43 +657,42 @@ class URLCheckController(BaseController):
         except Exception:
             return "unknown"
     
-    async def _get_recent_check(
-        self,
-        normalized_url: str,
-        user: Optional[User],
-        hours: int = 1
-    ) -> Optional[URLCheck]:
-        """Get recent URL check for caching purposes.
+    async def _get_recent_check(self, normalized_url: str, user: Optional[User]) -> Optional[URLCheck]:
+        """Get recent check for the same URL by the same user."""
+        if not user:
+            return None
+            
+        cutoff_time = utc_datetime() - timedelta(minutes=5)
+        
+        async with self.get_db_session() as session:
+            return self._get_recent_check_from_db(session, normalized_url, user.id)
+
+    def _get_recent_check_from_db(self, session, normalized_url: str, user_id: uuid.UUID) -> Optional[URLCheck]:
+        """Get recent check for the same URL by the same user from database session.
         
         Args:
+            session: Database session
             normalized_url: Normalized URL to check
-            user: User making the request
-            hours: Hours to look back for recent checks
+            user_id: User ID
             
         Returns:
-            URLCheck: Recent check if found, None otherwise
+            Recent URLCheck record or None if not found
         """
-        cutoff_time = utc_datetime() - timedelta(hours=hours)
+        cutoff_time = utc_datetime() - timedelta(minutes=5)
         
-        query = (
-            self.db_session.query(URLCheck)
+        return (
+            session.query(URLCheck)
             .filter(
                 and_(
                     URLCheck.normalized_url == normalized_url,
                     URLCheck.created_at >= cutoff_time,
-                    URLCheck.status == CheckStatus.COMPLETED
+                    URLCheck.status == CheckStatus.COMPLETED,
+                    URLCheck.user_id == user_id
                 )
             )
+            .order_by(desc(URLCheck.created_at))
+            .first()
         )
-        
-        # If user is authenticated, prefer their own recent checks
-        if user:
-            user_check = query.filter(URLCheck.user_id == user.id).first()
-            if user_check:
-                return user_check
-        
-        # Otherwise, return any recent completed check
-        return query.first()
     
     async def _perform_url_analysis(
         self,
@@ -710,55 +710,44 @@ class URLCheckController(BaseController):
             callback_url: Webhook URL for results
         """
         try:
-            # Get URL check record
-            url_check = (
-                self.db_session.query(URLCheck)
-                .filter(URLCheck.id == check_id)
-                .first()
-            )
-            
-            if not url_check:
-                self.logger.error(f"URL check {check_id} not found for analysis")
-                return
-            
-            # Update status to in progress
-            url_check.status = CheckStatus.IN_PROGRESS
-            await self.db_session.commit()
-            
-            # Perform analysis using URL analysis service
-            analysis_results = await self.url_analysis_service.analyze_url(
-                url, scan_types
-            )
-            
-            # Update URL check with results
-            url_check.status = CheckStatus.COMPLETED
-            url_check.threat_level = analysis_results.get('threat_level')
-            url_check.confidence_score = analysis_results.get('confidence_score')
-            url_check.analysis_results = analysis_results
-            url_check.scan_completed_at = utc_datetime()
-            
-            # Create scan result records
-            for scan_result_data in analysis_results.get('scan_results', []):
-                scan_result = ScanResult(
-                    id=uuid.uuid4(),
-                    url_check_id=check_id,
-                    scan_type=ScanType(scan_result_data['scan_type']),
-                    provider=scan_result_data['provider'],
-                    threat_detected=scan_result_data['threat_detected'],
-                    threat_types=scan_result_data.get('threat_types', []),
-                    confidence_score=scan_result_data['confidence_score'],
-                    metadata=scan_result_data.get('metadata', {}),
-                    created_at=utc_datetime()
+            async with self.get_db_session() as db:
+                # Get URL check record
+                url_check = (
+                    db.query(URLCheck)
+                    .filter(URLCheck.id == check_id)
+                    .first()
                 )
-                self.db_session.add(scan_result)
-            
-            # Update domain reputation
-            await self._update_domain_reputation(
-                url_check.domain,
-                url_check.threat_level
-            )
-            
-            await self.db_session.commit()
+                
+                if not url_check:
+                    self.logger.error(f"URL check {check_id} not found for analysis")
+                    return
+                
+                # Update status to in progress
+                url_check.status = CheckStatus.IN_PROGRESS
+                db.commit()
+                
+                # Get domain reputation data for analysis
+                domain = self._extract_domain(url)
+                reputation_data = self._get_domain_reputation_data(db, domain)
+                
+                # Perform analysis using URL analysis service (now pure business logic)
+                analysis_results = self.url_analysis_service.analyze_url(
+                    url, scan_types, reputation_data
+                )
+                
+                # Update URL check with results
+                self._update_url_check_with_results(db, url_check, analysis_results)
+                
+                # Create scan result records
+                self._create_scan_results(db, check_id, analysis_results)
+                
+                # Update domain reputation based on analysis
+                self._update_domain_reputation_from_analysis(
+                    db, domain, analysis_results.get('threat_level'), 
+                    analysis_results.get('confidence_score')
+                )
+                
+                db.commit()
             
             # Send webhook notification if callback URL provided
             if callback_url:
@@ -777,16 +766,17 @@ class URLCheckController(BaseController):
         except Exception as e:
             # Update URL check with error status
             try:
-                url_check = (
-                    self.db_session.query(URLCheck)
-                    .filter(URLCheck.id == check_id)
-                    .first()
-                )
-                if url_check:
-                    url_check.status = CheckStatus.FAILED
-                    url_check.error_message = str(e)
-                    url_check.scan_completed_at = utc_datetime()
-                    await self.db_session.commit()
+                async with self.get_db_session() as db:
+                    url_check = (
+                        db.query(URLCheck)
+                        .filter(URLCheck.id == check_id)
+                        .first()
+                    )
+                    if url_check:
+                        url_check.status = CheckStatus.FAILED
+                        url_check.error_message = str(e)
+                        url_check.scan_completed_at = utc_datetime()
+                        db.commit()
             except Exception as commit_error:
                 self.logger.error(f"Failed to update URL check status: {str(commit_error)}")
             
@@ -810,41 +800,42 @@ class URLCheckController(BaseController):
         """
         results = []
         
-        for check_id in check_ids:
-            try:
-                url_check = (
-                    self.db_session.query(URLCheck)
-                    .filter(URLCheck.id == check_id)
-                    .first()
-                )
-                
-                if url_check:
-                    await self._perform_url_analysis(
-                        check_id,
-                        url_check.normalized_url,
-                        scan_types
+        async with self.get_db_session() as session:
+            for check_id in check_ids:
+                try:
+                    url_check = (
+                        session.query(URLCheck)
+                        .filter(URLCheck.id == check_id)
+                        .first()
                     )
                     
-                    # Refresh to get updated data
-                    await self.db_session.refresh(url_check)
-                    results.append(url_check)
-                    
-            except Exception as e:
-                self.logger.error(
-                    f"Bulk analysis failed for check {check_id}: {str(e)}"
-                )
-        
-        # Send bulk webhook notification if callback URL provided
-        if callback_url and results:
-            await self._send_bulk_webhook_notification(callback_url, results)
-        
-        self.log_operation(
-            "Bulk URL analysis completed",
-            details={
-                "total_checks": len(check_ids),
-                "successful_checks": len(results)
-            }
-        )
+                    if url_check:
+                        await self._perform_url_analysis(
+                            check_id,
+                            url_check.normalized_url,
+                            scan_types
+                        )
+                        
+                        # Refresh to get updated data
+                        await session.refresh(url_check)
+                        results.append(url_check)
+                        
+                except Exception as e:
+                    self.logger.error(
+                        f"Bulk analysis failed for check {check_id}: {str(e)}"
+                    )
+            
+            # Send bulk webhook notification if callback URL provided
+            if callback_url and results:
+                await self._send_bulk_webhook_notification(callback_url, results)
+            
+            self.log_operation(
+                "Bulk URL analysis completed",
+                details={
+                    "total_checks": len(check_ids),
+                    "successful_checks": len(results)
+                }
+            )
     
     async def _update_domain_reputation(
         self,
@@ -858,41 +849,124 @@ class URLCheckController(BaseController):
             threat_level: Detected threat level
         """
         try:
-            reputation = (
-                self.db_session.query(URLReputation)
-                .filter(URLReputation.domain == domain)
-                .first()
-            )
-            
-            if not reputation:
-                # Create new reputation record
-                reputation = URLReputation(
-                    id=uuid.uuid4(),
-                    domain=domain,
-                    reputation_score=50,  # Neutral starting score
-                    total_checks=0,
-                    malicious_count=0,
-                    first_seen=utc_datetime(),
-                    last_seen=utc_datetime()
+            async with self.get_db_session() as session:
+                self._update_domain_reputation_from_analysis(
+                    session, domain, threat_level, None
                 )
-                self.db_session.add(reputation)
-            
-            # Update reputation metrics
-            reputation.total_checks += 1
-            reputation.last_seen = utc_datetime()
-            reputation.last_threat_level = threat_level
-            
-            if threat_level in [ThreatLevel.HIGH, ThreatLevel.CRITICAL]:
-                reputation.malicious_count += 1
-            
-            # Calculate new reputation score
-            malicious_ratio = reputation.malicious_count / reputation.total_checks
-            reputation.reputation_score = max(0, min(100, int(100 * (1 - malicious_ratio))))
-            
-            await self.db_session.commit()
-            
+                session.commit()
         except Exception as e:
             self.logger.error(f"Failed to update domain reputation: {str(e)}")
+
+    def _get_domain_reputation_data(self, session, domain: str) -> Optional[Dict[str, Any]]:
+        """Get domain reputation data for analysis.
+        
+        Args:
+            session: Database session
+            domain: Domain to get reputation for
+            
+        Returns:
+            Dict containing reputation data or None if not found
+        """
+        reputation = (
+            session.query(URLReputation)
+            .filter(URLReputation.domain == domain)
+            .first()
+        )
+        
+        if not reputation:
+            return None
+            
+        return {
+            'domain': reputation.domain,
+            'reputation_score': reputation.reputation_score,
+            'total_checks': reputation.total_checks,
+            'malicious_count': reputation.malicious_count,
+            'first_seen': reputation.first_seen,
+            'last_seen': reputation.last_seen,
+            'last_threat_level': reputation.last_threat_level
+        }
+
+    def _update_url_check_with_results(self, session, url_check: URLCheck, analysis_results: Dict[str, Any]) -> None:
+        """Update URL check record with analysis results.
+        
+        Args:
+            session: Database session
+            url_check: URLCheck record to update
+            analysis_results: Analysis results from URLAnalysisService
+        """
+        url_check.status = CheckStatus.COMPLETED
+        url_check.threat_level = analysis_results.get('threat_level')
+        url_check.confidence_score = analysis_results.get('confidence_score')
+        url_check.analysis_results = analysis_results
+        url_check.scan_completed_at = utc_datetime()
+
+    def _create_scan_results(self, session, url_check_id: uuid.UUID, analysis_results: Dict[str, Any]) -> None:
+        """Create scan result records from analysis results.
+        
+        Args:
+            session: Database session
+            url_check_id: URL check ID
+            analysis_results: Analysis results containing scan data
+        """
+        for scan_result_data in analysis_results.get('scan_results', []):
+            scan_result = ScanResult(
+                id=uuid.uuid4(),
+                url_check_id=url_check_id,
+                scan_type=ScanType(scan_result_data['scan_type']),
+                provider=scan_result_data['provider'],
+                threat_detected=scan_result_data['threat_detected'],
+                threat_types=scan_result_data.get('threat_types', []),
+                confidence_score=scan_result_data['confidence_score'],
+                metadata=scan_result_data.get('metadata', {}),
+                created_at=utc_datetime()
+            )
+            session.add(scan_result)
+
+    def _update_domain_reputation_from_analysis(
+        self, 
+        session, 
+        domain: str, 
+        threat_level: Optional[ThreatLevel], 
+        confidence_score: Optional[float]
+    ) -> None:
+        """Update domain reputation based on analysis results.
+        
+        Args:
+            session: Database session
+            domain: Domain to update reputation for
+            threat_level: Detected threat level
+            confidence_score: Analysis confidence score
+        """
+        reputation = (
+            session.query(URLReputation)
+            .filter(URLReputation.domain == domain)
+            .first()
+        )
+        
+        if not reputation:
+            # Create new reputation record
+            reputation = URLReputation(
+                id=uuid.uuid4(),
+                domain=domain,
+                reputation_score=50,  # Neutral starting score
+                total_checks=0,
+                malicious_count=0,
+                first_seen=utc_datetime(),
+                last_seen=utc_datetime()
+            )
+            session.add(reputation)
+        
+        # Update reputation metrics
+        reputation.total_checks += 1
+        reputation.last_seen = utc_datetime()
+        reputation.last_threat_level = threat_level
+        
+        if threat_level in [ThreatLevel.HIGH, ThreatLevel.CRITICAL]:
+            reputation.malicious_count += 1
+        
+        # Calculate new reputation score
+        malicious_ratio = reputation.malicious_count / reputation.total_checks
+        reputation.reputation_score = max(0, min(100, int(100 * (1 - malicious_ratio))))
     
     async def _send_webhook_notification(
         self,
@@ -950,7 +1024,7 @@ class URLCheckController(BaseController):
             payload = {
                 "event": "bulk_url_check_completed",
                 "data": {
-                    "total_urls": len(results),
+                    "total_urls": len(url_checks),
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                     "results": [
                         {
@@ -959,7 +1033,7 @@ class URLCheckController(BaseController):
                             "threat_level": result.threat_level.value if result.threat_level else None,
                             "status": result.status.value
                         }
-                        for result in results
+                        for result in url_checks
                     ]
                 }
             }

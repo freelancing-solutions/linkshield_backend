@@ -2,8 +2,8 @@
 """
 LinkShield Backend Admin Service
 
-Comprehensive admin service for dashboard statistics, configuration management,
-user administration, and system monitoring.
+Pure business logic service for admin operations including data processing,
+validation, and formatting. No database dependencies.
 """
 
 import json
@@ -12,16 +12,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from collections import defaultdict
 
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func, desc, asc, text
-from sqlalchemy.exc import SQLAlchemyError
-
 from src.config.settings import get_settings
-from src.models.user import User, UserRole, UserStatus, SubscriptionPlan
-from src.models.url_check import URLCheck, ScanResult
-from src.models.ai_analysis import AIAnalysis
-from src.models.admin import GlobalConfig, AdminAction, SystemHealth, AdminSession, ConfigCategory, HealthStatus
-from src.config.database import check_database_health
 
 
 class AdminServiceError(Exception):
@@ -36,118 +27,145 @@ class ConfigurationError(AdminServiceError):
 
 class AdminService:
     """
-    Admin service for dashboard operations and system management.
+    Pure business logic admin service for data processing and validation.
+    All database operations are handled by AdminController.
     """
     
-    def __init__(self, db_session: Session):
-        self.db = db_session
+    def __init__(self):
         self.settings = get_settings()
     
-    # Statistics and Analytics Methods
+    # Data Processing Methods
     
-    async def get_system_statistics(self) -> Dict[str, Any]:
+    def process_system_statistics(
+        self, 
+        users_data: Dict, 
+        url_checks_data: Dict, 
+        ai_analyses_data: Dict
+    ) -> Dict[str, Any]:
         """
-        Get comprehensive system statistics for the admin dashboard.
+        Process raw system statistics data into formatted response.
         
+        Args:
+            users_data: Raw user statistics from database
+            url_checks_data: Raw URL check statistics from database
+            ai_analyses_data: Raw AI analysis statistics from database
+            
         Returns:
-            Dict containing system metrics and statistics
+            Dict containing processed system metrics and statistics
         """
         try:
-            # User statistics
-            total_users = self.db.query(User).count()
-            active_users = self.db.query(User).filter(User.is_active == True).count()
-            verified_users = self.db.query(User).filter(User.is_verified == True).count()
+            # Validate input data
+            self.validate_statistics_input(users_data, url_checks_data, ai_analyses_data)
             
-            # User role distribution
-            role_stats = self.db.query(
-                User.role, func.count(User.id)
-            ).group_by(User.role).all()
+            # Process user statistics
+            total_users = users_data.get('total', 0)
+            active_users = users_data.get('active', 0)
+            verified_users = users_data.get('verified', 0)
             
-            # Subscription statistics
-            subscription_stats = self.db.query(
-                User.subscription_plan, func.count(User.id)
-            ).group_by(User.subscription_plan).all()
+            verification_rate = (verified_users / total_users * 100) if total_users > 0 else 0
             
-            # URL check statistics
-            total_checks = self.db.query(URLCheck).count()
-            checks_today = self.db.query(URLCheck).filter(
-                URLCheck.created_at >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-            ).count()
+            # Process URL check statistics
+            total_checks = url_checks_data.get('total', 0)
+            checks_today = url_checks_data.get('today', 0)
+            threats_detected = url_checks_data.get('threats_detected', 0)
             
-            # Threat detection statistics
-            threats_detected = self.db.query(URLCheck).filter(
-                URLCheck.is_safe == False
-            ).count()
-            
-            # AI analysis statistics
-            ai_analyses = self.db.query(AIAnalysis).count()
-            
-            # Recent activity (last 7 days)
-            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-            recent_checks = self.db.query(
-                func.date(URLCheck.created_at).label('date'),
-                func.count(URLCheck.id).label('count')
-            ).filter(
-                URLCheck.created_at >= week_ago
-            ).group_by(func.date(URLCheck.created_at)).all()
+            threat_rate = (threats_detected / total_checks * 100) if total_checks > 0 else 0
             
             return {
                 "users": {
                     "total": total_users,
                     "active": active_users,
                     "verified": verified_users,
-                    "verification_rate": (verified_users / total_users * 100) if total_users > 0 else 0,
-                    "role_distribution": {role.value: count for role, count in role_stats},
-                    "subscription_distribution": {plan.value: count for plan, count in subscription_stats}
+                    "verification_rate": round(verification_rate, 2),
+                    "role_distribution": users_data.get('role_distribution', {}),
+                    "subscription_distribution": users_data.get('subscription_distribution', {})
                 },
                 "url_checks": {
                     "total": total_checks,
                     "today": checks_today,
                     "threats_detected": threats_detected,
-                    "threat_rate": (threats_detected / total_checks * 100) if total_checks > 0 else 0,
-                    "recent_activity": [
-                        {"date": str(date), "count": count} for date, count in recent_checks
-                    ]
+                    "threat_rate": round(threat_rate, 2),
+                    "recent_activity": url_checks_data.get('recent_activity', [])
                 },
                 "ai_analysis": {
-                    "total_analyses": ai_analyses
+                    "total_analyses": ai_analyses_data.get('total_analyses', 0)
                 },
                 "system": {
                     "uptime": self._get_system_uptime(),
                     "last_updated": datetime.now(timezone.utc).isoformat()
                 }
             }
-        except SQLAlchemyError as e:
-            raise AdminServiceError(f"Failed to get system statistics: {str(e)}")
-    
-    async def get_traffic_analytics(self, days: int = 30) -> Dict[str, Any]:
+        except Exception as e:
+            raise AdminServiceError(f"Failed to process system statistics: {str(e)}")
+
+    def process_traffic_analytics(
+        self, 
+        daily_traffic_data: List, 
+        top_domains_data: List, 
+        threat_types_data: List, 
+        days: int
+    ) -> Dict[str, Any]:
         """
-        Get traffic analytics for the specified period.
+        Process raw traffic analytics data into formatted response.
         
         Args:
-            days: Number of days to analyze
+            daily_traffic_data: Raw daily traffic data from database
+            top_domains_data: Raw top domains data from database
+            threat_types_data: Raw threat types data from database
+            days: Number of days analyzed
             
         Returns:
-            Dict containing traffic analytics
+            Dict containing processed traffic analytics
         """
         try:
-            start_date = datetime.now(timezone.utc) - timedelta(days=days)
+            # Validate input data
+            self.validate_analytics_input(daily_traffic_data, days)
             
-            # Daily traffic
-            daily_traffic = self.db.query(
-                func.date(URLCheck.created_at).label('date'),
-                func.count(URLCheck.id).label('checks'),
-                func.count(func.distinct(URLCheck.user_id)).label('unique_users')
-            ).filter(
-                URLCheck.created_at >= start_date
-            ).group_by(func.date(URLCheck.created_at)).order_by('date').all()
+            # Format daily traffic data
+            formatted_daily_traffic = self.format_date_range_data(daily_traffic_data, 'date')
             
-            # Top domains
-            top_domains = self.db.query(
-                URLCheck.domain,
-                func.count(URLCheck.id).label('count')
-            ).filter(
-                URLCheck.created_at >= start_date
+            # Calculate totals
+            total_checks = sum(item.get('checks', 0) for item in formatted_daily_traffic)
+            total_unique_users = len(set(item.get('unique_users', 0) for item in formatted_daily_traffic))
+            
+            # Process top domains
+            formatted_domains = [
+                {
+                    "domain": domain_data.get('domain', 'Unknown'),
+                    "count": domain_data.get('count', 0),
+                    "percentage": round((domain_data.get('count', 0) / total_checks * 100), 2) if total_checks > 0 else 0
+                }
+                for domain_data in top_domains_data[:10]  # Top 10 domains
+            ]
+            
+            # Process threat distribution
+            total_threats = sum(threat.get('count', 0) for threat in threat_types_data)
+            formatted_threats = [
+                {
+                    "type": threat.get('type', 'Unknown'),
+                    "count": threat.get('count', 0),
+                    "percentage": round((threat.get('count', 0) / total_threats * 100), 2) if total_threats > 0 else 0
+                }
+                for threat in threat_types_data
+            ]
+            
+            return {
+                "period": {
+                    "days": days,
+                    "start_date": (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
+                    "end_date": datetime.now(timezone.utc).isoformat()
+                },
+                "summary": {
+                    "total_checks": total_checks,
+                    "unique_users": total_unique_users,
+                    "avg_checks_per_day": round(total_checks / days, 2) if days > 0 else 0
+                },
+                "daily_traffic": formatted_daily_traffic,
+                "top_domains": formatted_domains,
+                "threat_distribution": formatted_threats
+            }
+        except Exception as e:
+            raise AdminServiceError(f"Failed to process traffic analytics: {str(e)}")
             ).group_by(URLCheck.domain).order_by(desc('count')).limit(10).all()
             
             # Threat distribution
@@ -181,333 +199,433 @@ class AdminService:
         except SQLAlchemyError as e:
             raise AdminServiceError(f"Failed to get traffic analytics: {str(e)}")
     
-    async def get_threat_intelligence(self) -> Dict[str, Any]:
+    def process_threat_intelligence(self, recent_threats_count: int, 
+                                  threat_trends_data: List[Dict], 
+                                  threat_sources_data: List[Dict]) -> Dict[str, Any]:
         """
-        Get threat intelligence summary.
-        
-        Returns:
-            Dict containing threat intelligence data
-        """
-        try:
-            # Recent threats (last 24 hours)
-            day_ago = datetime.now(timezone.utc) - timedelta(days=1)
-            recent_threats = self.db.query(URLCheck).filter(
-                URLCheck.created_at >= day_ago,
-                URLCheck.is_safe == False
-            ).count()
-            
-            # Threat trends (last 7 days)
-            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-            threat_trends = self.db.query(
-                func.date(URLCheck.created_at).label('date'),
-                func.count(URLCheck.id).label('threats')
-            ).filter(
-                URLCheck.created_at >= week_ago,
-                URLCheck.is_safe == False
-            ).group_by(func.date(URLCheck.created_at)).all()
-            
-            # Top threat sources
-            threat_sources = self.db.query(
-                URLCheck.domain,
-                func.count(URLCheck.id).label('count')
-            ).filter(
-                URLCheck.created_at >= week_ago,
-                URLCheck.is_safe == False
-            ).group_by(URLCheck.domain).order_by(desc('count')).limit(10).all()
-            
-            return {
-                "recent_threats_24h": recent_threats,
-                "threat_trends": [
-                    {"date": str(date), "count": threats}
-                    for date, threats in threat_trends
-                ],
-                "top_threat_sources": [
-                    {"domain": domain, "count": count}
-                    for domain, count in threat_sources
-                ]
-            }
-        except SQLAlchemyError as e:
-            raise AdminServiceError(f"Failed to get threat intelligence: {str(e)}")
-    
-    async def get_user_analytics(self) -> Dict[str, Any]:
-        """
-        Get user analytics and behavior insights.
-        
-        Returns:
-            Dict containing user analytics
-        """
-        try:
-            # User growth (last 30 days)
-            month_ago = datetime.now(timezone.utc) - timedelta(days=30)
-            user_growth = self.db.query(
-                func.date(User.created_at).label('date'),
-                func.count(User.id).label('new_users')
-            ).filter(
-                User.created_at >= month_ago
-            ).group_by(func.date(User.created_at)).all()
-            
-            # Active users by subscription
-            active_by_subscription = self.db.query(
-                User.subscription_plan,
-                func.count(User.id).label('count')
-            ).filter(
-                User.is_active == True
-            ).group_by(User.subscription_plan).all()
-            
-            # Top users by activity
-            top_users = self.db.query(
-                User.email,
-                User.total_check_count,
-                User.subscription_plan
-            ).filter(
-                User.is_active == True
-            ).order_by(desc(User.total_check_count)).limit(10).all()
-            
-            return {
-                "user_growth": [
-                    {"date": str(date), "new_users": new_users}
-                    for date, new_users in user_growth
-                ],
-                "active_by_subscription": [
-                    {"plan": plan.value, "count": count}
-                    for plan, count in active_by_subscription
-                ],
-                "top_users": [
-                    {
-                        "email": email,
-                        "total_checks": total_checks,
-                        "subscription": plan.value
-                    }
-                    for email, total_checks, plan in top_users
-                ]
-            }
-        except SQLAlchemyError as e:
-            raise AdminServiceError(f"Failed to get user analytics: {str(e)}")
-    
-    # Configuration Management Methods
-    
-    async def get_configuration(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Get system configuration settings.
+        Process threat intelligence data into formatted response.
         
         Args:
-            category: Optional category filter
+            recent_threats_count: Count of recent threats in last 24h
+            threat_trends_data: List of threat trend data with date and count
+            threat_sources_data: List of threat source data with domain and count
             
         Returns:
-            List of configuration settings
+            Dict containing formatted threat intelligence data
         """
         try:
-            query = self.db.query(GlobalConfig).filter(GlobalConfig.is_active == True)
+            # Validate input data
+            if not isinstance(recent_threats_count, int) or recent_threats_count < 0:
+                recent_threats_count = 0
             
-            if category:
-                query = query.filter(GlobalConfig.category == ConfigCategory(category))
+            if not isinstance(threat_trends_data, list):
+                threat_trends_data = []
             
-            configs = query.order_by(GlobalConfig.category, GlobalConfig.key).all()
+            if not isinstance(threat_sources_data, list):
+                threat_sources_data = []
             
-            return [
-                {
-                    "id": str(config.id),
-                    "key": config.key,
-                    "value": config.value if not config.is_sensitive else "***",
-                    "category": config.category.value,
-                    "description": config.description,
-                    "data_type": config.data_type,
-                    "is_sensitive": config.is_sensitive,
-                    "updated_at": config.updated_at.isoformat()
-                }
-                for config in configs
-            ]
-        except SQLAlchemyError as e:
-            raise AdminServiceError(f"Failed to get configuration: {str(e)}")
+            # Format threat trends
+            formatted_trends = []
+            for trend in threat_trends_data:
+                if isinstance(trend, dict) and 'date' in trend and 'count' in trend:
+                    formatted_trends.append({
+                        "date": str(trend['date']),
+                        "count": int(trend['count']) if trend['count'] is not None else 0
+                    })
+            
+            # Format threat sources (limit to top 10)
+            formatted_sources = []
+            for source in threat_sources_data[:10]:
+                if isinstance(source, dict) and 'domain' in source and 'count' in source:
+                    formatted_sources.append({
+                        "domain": str(source['domain']),
+                        "count": int(source['count']) if source['count'] is not None else 0
+                    })
+            
+            return {
+                "recent_threats_24h": recent_threats_count,
+                "threat_trends": formatted_trends,
+                "top_threat_sources": formatted_sources
+            }
+        except Exception as e:
+            raise AdminServiceError(f"Failed to process threat intelligence: {str(e)}")
     
-    async def update_configuration(self, key: str, value: str, user_id: uuid.UUID) -> Dict[str, Any]:
+    def process_user_analytics(self, user_growth_data: List[Dict], 
+                             subscription_data: List[Dict], 
+                             top_users_data: List[Dict]) -> Dict[str, Any]:
         """
-        Update a configuration setting.
+        Process user analytics data into formatted response.
         
         Args:
-            key: Configuration key
-            value: New value
-            user_id: ID of the user making the change
+            user_growth_data: List of user growth data with date and new_users count
+            subscription_data: List of subscription data with plan and count
+            top_users_data: List of top user data with email, total_checks, and subscription
             
         Returns:
-            Updated configuration data
+            Dict containing formatted user analytics data
         """
         try:
-            config = self.db.query(GlobalConfig).filter(GlobalConfig.key == key).first()
-            if not config:
-                raise ConfigurationError(f"Configuration key '{key}' not found")
+            # Validate and format user growth data
+            formatted_growth = []
+            if isinstance(user_growth_data, list):
+                for growth in user_growth_data:
+                    if isinstance(growth, dict) and 'date' in growth and 'new_users' in growth:
+                        formatted_growth.append({
+                            "date": str(growth['date']),
+                            "new_users": int(growth['new_users']) if growth['new_users'] is not None else 0
+                        })
+            
+            # Validate and format subscription data
+            formatted_subscriptions = []
+            if isinstance(subscription_data, list):
+                for sub in subscription_data:
+                    if isinstance(sub, dict) and 'plan' in sub and 'count' in sub:
+                        plan_value = sub['plan']
+                        # Handle enum values
+                        if hasattr(plan_value, 'value'):
+                            plan_value = plan_value.value
+                        formatted_subscriptions.append({
+                            "plan": str(plan_value),
+                            "count": int(sub['count']) if sub['count'] is not None else 0
+                        })
+            
+            # Validate and format top users data (limit to top 10)
+            formatted_users = []
+            if isinstance(top_users_data, list):
+                for user in top_users_data[:10]:
+                    if isinstance(user, dict) and all(k in user for k in ['email', 'total_checks', 'subscription']):
+                        subscription_value = user['subscription']
+                        # Handle enum values
+                        if hasattr(subscription_value, 'value'):
+                            subscription_value = subscription_value.value
+                        formatted_users.append({
+                            "email": str(user['email']),
+                            "total_checks": int(user['total_checks']) if user['total_checks'] is not None else 0,
+                            "subscription": str(subscription_value)
+                        })
+            
+            return {
+                "user_growth": formatted_growth,
+                "active_by_subscription": formatted_subscriptions,
+                "top_users": formatted_users
+            }
+        except Exception as e:
+            raise AdminServiceError(f"Failed to process user analytics: {str(e)}")
+    
+    # Configuration Processing Methods
+    
+    def process_configuration(self, config_data: List[Dict]) -> List[Dict[str, Any]]:
+        """
+        Process configuration data into formatted response.
+        
+        Args:
+            config_data: List of configuration data from database
+            
+        Returns:
+            List of formatted configuration settings
+        """
+        try:
+            formatted_configs = []
+            
+            if isinstance(config_data, list):
+                for config in config_data:
+                    if isinstance(config, dict) and all(k in config for k in ['id', 'key', 'value', 'category']):
+                        # Handle sensitive values
+                        display_value = config['value']
+                        if config.get('is_sensitive', False):
+                            display_value = "***"
+                        
+                        # Handle enum values
+                        category_value = config['category']
+                        if hasattr(category_value, 'value'):
+                            category_value = category_value.value
+                        
+                        formatted_configs.append({
+                            "id": str(config['id']),
+                            "key": str(config['key']),
+                            "value": display_value,
+                            "category": str(category_value),
+                            "description": str(config.get('description', '')),
+                            "data_type": str(config.get('data_type', 'string')),
+                            "is_sensitive": bool(config.get('is_sensitive', False)),
+                            "updated_at": config.get('updated_at', '')
+                        })
+            
+            return formatted_configs
+        except Exception as e:
+            raise AdminServiceError(f"Failed to process configuration: {str(e)}")
+    
+    def validate_configuration_update(self, config_data: Dict, new_value: str) -> Dict[str, Any]:
+        """
+        Validate and format configuration update data.
+        
+        Args:
+            config_data: Configuration metadata from database
+            new_value: New value to validate
+            
+        Returns:
+            Dict containing validation result and formatted data
+        """
+        try:
+            if not isinstance(config_data, dict):
+                raise AdminServiceError("Invalid configuration data")
             
             # Validate value based on data type and constraints
-            self._validate_config_value(config, value)
+            data_type = config_data.get('data_type', 'string')
             
-            # Update configuration
-            old_value = config.value
-            config.value = value
-            config.updated_by = user_id
-            config.updated_at = datetime.now(timezone.utc)
+            # Type validation
+            if data_type == "integer":
+                try:
+                    int_value = int(new_value)
+                    min_value = config_data.get('min_value')
+                    max_value = config_data.get('max_value')
+                    
+                    if min_value is not None and int_value < min_value:
+                        raise AdminServiceError(f"Value must be >= {min_value}")
+                    if max_value is not None and int_value > max_value:
+                        raise AdminServiceError(f"Value must be <= {max_value}")
+                except ValueError:
+                    raise AdminServiceError("Value must be an integer")
             
-            self.db.commit()
+            elif data_type == "boolean":
+                if new_value.lower() not in ["true", "false", "1", "0"]:
+                    raise AdminServiceError("Value must be a boolean (true/false)")
             
-            # Log the configuration change
-            await self._log_config_change(key, old_value, value, user_id)
+            elif data_type == "json":
+                try:
+                    import json
+                    json.loads(new_value)
+                except json.JSONDecodeError:
+                    raise AdminServiceError("Value must be valid JSON")
+            
+            # Allowed values validation
+            allowed_values = config_data.get('allowed_values')
+            if allowed_values and new_value not in allowed_values:
+                raise AdminServiceError(f"Value must be one of: {allowed_values}")
+            
+            # Regex validation
+            validation_regex = config_data.get('validation_regex')
+            if validation_regex:
+                import re
+                if not re.match(validation_regex, new_value):
+                    raise AdminServiceError("Value does not match required pattern")
             
             return {
-                "id": str(config.id),
-                "key": config.key,
-                "value": config.value if not config.is_sensitive else "***",
-                "category": config.category.value,
-                "updated_at": config.updated_at.isoformat()
+                "valid": True,
+                "validated_value": new_value,
+                "data_type": data_type
             }
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            raise AdminServiceError(f"Failed to update configuration: {str(e)}")
+        except Exception as e:
+            raise AdminServiceError(f"Configuration validation failed: {str(e)}")
     
-    # User Management Methods
+    # User Management Processing Methods
     
-    async def get_users(self, page: int = 1, limit: int = 50, filters: Optional[Dict] = None) -> Dict[str, Any]:
+    def process_users_data(self, users_data: List[Dict], total_count: int, 
+                          page: int, limit: int) -> Dict[str, Any]:
         """
-        Get paginated list of users with optional filters.
+        Process users list data into formatted paginated response.
         
         Args:
-            page: Page number
+            users_data: List of user data from database
+            total_count: Total number of users matching filters
+            page: Current page number
             limit: Items per page
-            filters: Optional filters (role, status, subscription, etc.)
             
         Returns:
-            Paginated user data
+            Dict containing formatted paginated user data
         """
         try:
-            query = self.db.query(User)
+            formatted_users = []
             
-            # Apply filters
-            if filters:
-                if filters.get('role'):
-                    query = query.filter(User.role == UserRole(filters['role']))
-                if filters.get('status'):
-                    query = query.filter(User.status == UserStatus(filters['status']))
-                if filters.get('subscription'):
-                    query = query.filter(User.subscription_plan == SubscriptionPlan(filters['subscription']))
-                if filters.get('is_active') is not None:
-                    query = query.filter(User.is_active == filters['is_active'])
-                if filters.get('search'):
-                    search_term = f"%{filters['search']}%"
-                    query = query.filter(
-                        or_(
-                            User.email.ilike(search_term),
-                            User.username.ilike(search_term),
-                            User.first_name.ilike(search_term),
-                            User.last_name.ilike(search_term)
-                        )
-                    )
+            if isinstance(users_data, list):
+                for user in users_data:
+                    if isinstance(user, dict):
+                        # Handle enum values
+                        role_value = user.get('role')
+                        if hasattr(role_value, 'value'):
+                            role_value = role_value.value
+                        
+                        status_value = user.get('status')
+                        if hasattr(status_value, 'value'):
+                            status_value = status_value.value
+                        
+                        subscription_value = user.get('subscription_plan')
+                        if hasattr(subscription_value, 'value'):
+                            subscription_value = subscription_value.value
+                        
+                        # Format last login
+                        last_login = user.get('last_login')
+                        if last_login and hasattr(last_login, 'isoformat'):
+                            last_login = last_login.isoformat()
+                        elif last_login:
+                            last_login = str(last_login)
+                        
+                        # Format created_at
+                        created_at = user.get('created_at')
+                        if created_at and hasattr(created_at, 'isoformat'):
+                            created_at = created_at.isoformat()
+                        elif created_at:
+                            created_at = str(created_at)
+                        
+                        formatted_users.append({
+                            "id": str(user.get('id', '')),
+                            "email": str(user.get('email', '')),
+                            "username": str(user.get('username', '')),
+                            "first_name": str(user.get('first_name', '')),
+                            "last_name": str(user.get('last_name', '')),
+                            "role": str(role_value) if role_value else '',
+                            "status": str(status_value) if status_value else '',
+                            "subscription_plan": str(subscription_value) if subscription_value else '',
+                            "is_active": bool(user.get('is_active', False)),
+                            "is_verified": bool(user.get('is_verified', False)),
+                            "total_check_count": int(user.get('total_check_count', 0)),
+                            "created_at": created_at,
+                            "last_login": last_login
+                        })
             
-            # Get total count
-            total = query.count()
-            
-            # Apply pagination
-            offset = (page - 1) * limit
-            users = query.offset(offset).limit(limit).all()
+            # Calculate pagination info
+            total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
             
             return {
-                "users": [
-                    {
-                        "id": str(user.id),
-                        "email": user.email,
-                        "username": user.username,
-                        "first_name": user.first_name,
-                        "last_name": user.last_name,
-                        "role": user.role.value,
-                        "status": user.status.value,
-                        "subscription_plan": user.subscription_plan.value,
-                        "is_active": user.is_active,
-                        "is_verified": user.is_verified,
-                        "total_check_count": user.total_check_count,
-                        "created_at": user.created_at.isoformat(),
-                        "last_login": user.last_login.isoformat() if user.last_login else None
-                    }
-                    for user in users
-                ],
+                "users": formatted_users,
                 "pagination": {
                     "page": page,
                     "limit": limit,
-                    "total": total,
-                    "pages": (total + limit - 1) // limit
+                    "total": total_count,
+                    "pages": total_pages
                 }
             }
-        except SQLAlchemyError as e:
-            raise AdminServiceError(f"Failed to get users: {str(e)}")
+        except Exception as e:
+            raise AdminServiceError(f"Failed to process users list: {str(e)}")
     
-    async def update_user_status(self, user_id: uuid.UUID, status: str, admin_user_id: uuid.UUID) -> Dict[str, Any]:
+    def process_user_status_update(self, user_data: Dict) -> Dict[str, Any]:
         """
-        Update user status (activate, deactivate, suspend).
+        Format user status update response.
         
         Args:
-            user_id: User ID to update
-            status: New status
-            admin_user_id: ID of admin making the change
+            user_data: Updated user data from database
             
         Returns:
-            Updated user data
+            Dict containing formatted user status data
         """
         try:
-            user = self.db.query(User).filter(User.id == user_id).first()
-            if not user:
-                raise AdminServiceError(f"User with ID {user_id} not found")
+            if not isinstance(user_data, dict):
+                raise AdminServiceError("Invalid user data")
             
-            old_status = user.status.value
-            user.status = UserStatus(status)
-            user.is_active = status == "active"
-            
-            self.db.commit()
-            
-            # Log the user management action
-            await self._log_user_management_action(
-                "status_update", user_id, admin_user_id,
-                {"old_status": old_status, "new_status": status}
-            )
+            # Handle enum values
+            status_value = user_data.get('status')
+            if hasattr(status_value, 'value'):
+                status_value = status_value.value
             
             return {
-                "id": str(user.id),
-                "email": user.email,
-                "status": user.status.value,
-                "is_active": user.is_active
+                "id": str(user_data.get('id', '')),
+                "email": str(user_data.get('email', '')),
+                "status": str(status_value) if status_value else '',
+                "is_active": bool(user_data.get('is_active', False))
             }
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            raise AdminServiceError(f"Failed to update user status: {str(e)}")
+        except Exception as e:
+            raise AdminServiceError(f"Failed to format user status update: {str(e)}")
     
-    # System Health Methods
-    
-    async def get_system_health(self) -> Dict[str, Any]:
+    def process_configuration_update(self, config_data: Dict, updated_at: str) -> Dict[str, Any]:
         """
-        Get current system health status.
+        Format configuration update response.
         
+        Args:
+            config_data: Configuration data
+            updated_at: Update timestamp
+            
         Returns:
-            System health data
+            Formatted configuration update response
         """
         try:
-            # Check database health
-            db_healthy = await check_database_health()
+            # Handle sensitive values
+            display_value = config_data.get('value', '')
+            if config_data.get('is_sensitive', False):
+                display_value = "***"
             
-            # Get latest health checks
-            latest_checks = self.db.query(SystemHealth).filter(
-                SystemHealth.checked_at >= datetime.now(timezone.utc) - timedelta(minutes=5)
-            ).all()
+            # Handle enum values
+            category_value = config_data.get('category', '')
+            if hasattr(category_value, 'value'):
+                category_value = category_value.value
             
-            # Aggregate health status
+            return {
+                "id": str(config_data.get('id', '')),
+                "key": str(config_data.get('key', '')),
+                "value": display_value,
+                "category": str(category_value),
+                "updated_at": updated_at
+            }
+        except Exception as e:
+            raise AdminServiceError(f"Failed to format config update response: {str(e)}")
+    
+    # System Health Processing Methods
+    
+    def process_system_health(self, health_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process system health data into formatted response.
+        
+        Args:
+            health_data: Health data prepared by AdminController
+            
+        Returns:
+            Dict containing formatted system health data
+        """
+        try:
+            from datetime import datetime, timezone
+            
+            # Process the health data components
             components = {}
-            for check in latest_checks:
-                components[check.component] = {
-                    "status": check.status.value,
-                    "response_time_ms": check.response_time_ms,
-                    "details": check.details,
-                    "checked_at": check.checked_at.isoformat()
+            
+            # Add database component
+            if 'database' in health_data:
+                db_data = health_data['database']
+                components["database"] = {
+                    "status": db_data.get('status', 'unknown'),
+                    "response_time_ms": db_data.get('response_time_ms'),
+                    "checked_at": datetime.now(timezone.utc).isoformat()
                 }
             
-            # Add database status
-            components["database"] = {
-                "status": "healthy" if db_healthy else "critical",
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
+            # Add activity metrics as components
+            if 'activity' in health_data:
+                activity = health_data['activity']
+                components["user_activity"] = {
+                    "status": "healthy" if activity.get('recent_users', 0) > 0 else "warning",
+                    "recent_users": activity.get('recent_users', 0),
+                    "recent_url_checks": activity.get('recent_url_checks', 0),
+                    "recent_ai_analyses": activity.get('recent_ai_analyses', 0),
+                    "checked_at": datetime.now(timezone.utc).isoformat()
+                }
+            
+            # Add background tasks component
+            if 'background_tasks' in health_data:
+                tasks = health_data['background_tasks']
+                failed_count = tasks.get('failed_last_hour', 0)
+                running_count = tasks.get('running', 0)
+                
+                task_status = "healthy"
+                if failed_count > 10:
+                    task_status = "critical"
+                elif failed_count > 5 or running_count > 20:
+                    task_status = "warning"
+                
+                components["background_tasks"] = {
+                    "status": task_status,
+                    "pending": tasks.get('pending', 0),
+                    "running": running_count,
+                    "failed_last_hour": failed_count,
+                    "checked_at": datetime.now(timezone.utc).isoformat()
+                }
+            
+            # Add system metrics component
+            if 'system' in health_data:
+                system = health_data['system']
+                components["system_metrics"] = {
+                    "status": "healthy",  # Would be determined from actual metrics
+                    "uptime": system.get('uptime'),
+                    "memory_usage": system.get('memory_usage'),
+                    "cpu_usage": system.get('cpu_usage'),
+                    "checked_at": datetime.now(timezone.utc).isoformat()
+                }
             
             # Determine overall status
             statuses = [comp["status"] for comp in components.values()]
@@ -523,65 +641,146 @@ class AdminService:
                 "components": components,
                 "last_updated": datetime.now(timezone.utc).isoformat()
             }
-        except SQLAlchemyError as e:
-            raise AdminServiceError(f"Failed to get system health: {str(e)}")
+        except Exception as e:
+            raise AdminServiceError(f"Failed to process system health: {str(e)}")
     
     # Helper Methods
     
     def _get_system_uptime(self) -> str:
-        """Get system uptime (placeholder implementation)."""
+        """
+        Get system uptime placeholder.
+        
+        Returns:
+            System uptime as string
+        """
         # This would typically read from system metrics
+        # For now, return a placeholder value
         return "99.9%"
     
-    def _validate_config_value(self, config: GlobalConfig, value: str) -> None:
+    def format_date_range_data(self, data: List, date_field: str) -> List[Dict]:
         """
-        Validate configuration value against constraints.
+        Format date range data for analytics.
         
         Args:
-            config: Configuration object
-            value: Value to validate
+            data: List of data items with date fields
+            date_field: Name of the date field to format
+            
+        Returns:
+            List of formatted data items
+        """
+        formatted_data = []
+        for item in data:
+            if isinstance(item, dict):
+                formatted_item = dict(item)
+                if date_field in formatted_item:
+                    date_value = formatted_item[date_field]
+                    if hasattr(date_value, 'isoformat'):
+                        formatted_item[date_field] = date_value.isoformat()
+                    else:
+                        formatted_item[date_field] = str(date_value)
+                formatted_data.append(formatted_item)
+        return formatted_data
+    
+    def validate_statistics_input(self, users_data: Dict, url_checks_data: Dict, ai_analyses_data: Dict):
+        """
+        Validate input data for system statistics processing.
+        
+        Args:
+            users_data: User statistics data
+            url_checks_data: URL check statistics data
+            ai_analyses_data: AI analysis statistics data
             
         Raises:
-            ConfigurationError: If validation fails
+            AdminServiceError: If validation fails
         """
-        # Type validation
-        if config.data_type == "integer":
-            try:
-                int_value = int(value)
-                if config.min_value is not None and int_value < config.min_value:
-                    raise ConfigurationError(f"Value must be >= {config.min_value}")
-                if config.max_value is not None and int_value > config.max_value:
-                    raise ConfigurationError(f"Value must be <= {config.max_value}")
-            except ValueError:
-                raise ConfigurationError("Value must be an integer")
-        
-        elif config.data_type == "boolean":
-            if value.lower() not in ["true", "false", "1", "0"]:
-                raise ConfigurationError("Value must be a boolean (true/false)")
-        
-        elif config.data_type == "json":
-            try:
-                json.loads(value)
-            except json.JSONDecodeError:
-                raise ConfigurationError("Value must be valid JSON")
-        
-        # Allowed values validation
-        if config.allowed_values and value not in config.allowed_values:
-            raise ConfigurationError(f"Value must be one of: {config.allowed_values}")
-        
-        # Regex validation
-        if config.validation_regex:
-            import re
-            if not re.match(config.validation_regex, value):
-                raise ConfigurationError("Value does not match required pattern")
+        if not isinstance(users_data, dict):
+            raise AdminServiceError("Invalid users data format")
+        if not isinstance(url_checks_data, dict):
+            raise AdminServiceError("Invalid URL checks data format")
+        if not isinstance(ai_analyses_data, dict):
+            raise AdminServiceError("Invalid AI analyses data format")
     
-    async def _log_config_change(self, key: str, old_value: str, new_value: str, user_id: uuid.UUID) -> None:
-        """Log configuration change for audit trail."""
-        # This would be implemented with the audit middleware
-        pass
+    def validate_analytics_input(self, daily_traffic_data: List, days: int):
+        """
+        Validate input data for analytics processing.
+        
+        Args:
+            daily_traffic_data: Daily traffic data
+            days: Number of days
+            
+        Raises:
+            AdminServiceError: If validation fails
+        """
+        if not isinstance(daily_traffic_data, list):
+            raise AdminServiceError("Invalid daily traffic data format")
+        if not isinstance(days, int) or days <= 0:
+            raise AdminServiceError("Invalid days parameter")
     
-    async def _log_user_management_action(self, action: str, target_user_id: uuid.UUID, 
-                                        admin_user_id: uuid.UUID, details: Dict) -> None:
-        """Log user management action for audit trail."""
-        # This would be implemented with the audit middleware
-        pass
+    def format_config_update_response(self, config_data: Dict, updated_at: str) -> Dict[str, Any]:
+        """
+        Format configuration update response.
+        
+        Args:
+            config_data: Configuration data
+            updated_at: Update timestamp
+            
+        Returns:
+            Formatted configuration update response
+        """
+        try:
+            # Handle sensitive values
+            display_value = config_data.get('value', '')
+            if config_data.get('is_sensitive', False):
+                display_value = "***"
+            
+            # Handle enum values
+            category_value = config_data.get('category', '')
+            if hasattr(category_value, 'value'):
+                category_value = category_value.value
+            
+            return {
+                "id": str(config_data.get('id', '')),
+                "key": str(config_data.get('key', '')),
+                "value": display_value,
+                "category": str(category_value),
+                "updated_at": updated_at
+            }
+        except Exception as e:
+            raise AdminServiceError(f"Failed to format config update response: {str(e)}")
+    
+    def validate_user_filters(self, filters: Optional[Dict]) -> Dict[str, Any]:
+        """
+        Validate and normalize user filters.
+        
+        Args:
+            filters: Optional filters dictionary
+            
+        Returns:
+            Validated and normalized filters
+        """
+        if not filters or not isinstance(filters, dict):
+            return {}
+        
+        validated_filters = {}
+        
+        # Validate role filter
+        if 'role' in filters and filters['role']:
+            validated_filters['role'] = str(filters['role'])
+        
+        # Validate status filter
+        if 'status' in filters and filters['status']:
+            validated_filters['status'] = str(filters['status'])
+        
+        # Validate subscription filter
+        if 'subscription' in filters and filters['subscription']:
+            validated_filters['subscription'] = str(filters['subscription'])
+        
+        # Validate is_active filter
+        if 'is_active' in filters and filters['is_active'] is not None:
+            validated_filters['is_active'] = bool(filters['is_active'])
+        
+        # Validate search filter
+        if 'search' in filters and filters['search']:
+            validated_filters['search'] = str(filters['search']).strip()
+        
+        return validated_filters

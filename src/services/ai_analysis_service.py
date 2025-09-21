@@ -6,29 +6,27 @@ Service for managing AI-powered content analysis with database integration.
 Handles content analysis, quality scoring, and intelligent insights storage.
 """
 
-import asyncio
 import hashlib
-import json
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, desc, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
-
+from src.config.database import get_db_session
+from src.config.settings import get_settings
 from src.models.ai_analysis import (
-    AIAnalysis, 
-    ContentSimilarity, 
-    AIModelMetrics,
+    AIAnalysis,
+    ContentSimilarity,
     ProcessingStatus,
     AnalysisType
 )
-from src.models.url_check import URLCheck
-from src.models.user import User
 from src.services.ai_service import AIService, AIServiceError
-from src.config.settings import get_settings
-from src.config.database import get_db_session
+
+class AIAnalysisException(HTTPException):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(status_code=status_code, detail=detail)
 
 
 class AIAnalysisService:

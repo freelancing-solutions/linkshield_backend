@@ -2,24 +2,30 @@
 """
 LinkShield Backend AI Analysis Controller
 
-Controller for handling AI analysis business logic including content analysis,
-quality scoring, similarity detection, and intelligent insights management.
+    Controller for handling AI analysis business logic including content analysis,
+    quality scoring, similarity detection, and intelligent insights management.
 """
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
+from http.client import HTTPException
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 
-from fastapi import HTTPException, status, Request, BackgroundTasks
-from loguru import logger
+from fastapi import BackgroundTasks
+from sqlalchemy import select, and_, or_, desc, func
+from starlette import status
+from starlette.requests import Request
 
 from src.controllers.base_controller import BaseController
-from src.services.ai_analysis_service import AIAnalysisService
-from src.services.webhook_service import get_webhook_service
-from src.services.task_tracking_service import get_task_tracking_service
-from src.models.ai_analysis import AIAnalysis, ProcessingStatus, AnalysisType
-from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
+from src.services.ai_analysis_service import AIAnalysisService, AIAnalysisException
+from src.services.ai_service import AIService
+from src.services.security_service import SecurityService
+from src.authentication.auth_service import AuthService
+from src.services.email_service import EmailService
+from src.models.ai_analysis import ProcessingStatus, AnalysisType, AIAnalysis, ContentSimilarity
+from src.models.task import TaskStatus, TaskType, TaskPriority
 from src.models.user import User
 
 
@@ -34,26 +40,25 @@ class AIAnalysisController(BaseController):
     
     def __init__(
         self,
-        db_session,
         ai_analysis_service: AIAnalysisService,
-        security_service=None,
-        auth_service=None
+        ai_service: AIService,
+        security_service: SecurityService,
+        auth_service: AuthService,
+        email_service: EmailService
     ):
         """
         Initialize the AI analysis controller.
         
         Args:
-            db_session: Database session for data operations
             ai_analysis_service: AI analysis service instance
+            ai_service: AI service for pure business logic analysis
             security_service: Security service for validation
             auth_service: Authentication service for user operations
+            email_service: Email service for notifications
         """
-        super().__init__(
-            get_db_session=db_session,
-            security_service=security_service,
-            auth_service=auth_service
-        )
+        super().__init__(security_service, auth_service, email_service)
         self.ai_analysis_service = ai_analysis_service
+        self.ai_service = ai_service
 
     async def analyze_content(
         self,
@@ -81,15 +86,103 @@ class AIAnalysisController(BaseController):
             Dict containing analysis results or task information for async processing
             
         Raises:
-            HTTPException: If analysis fails or validation errors occur
+            AIAnalysisException: If analysis fails or validation errors occur
         """
         try:
-            # Validate URL format
-            if not url.startswith(('http://', 'https://')):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="URL must start with http:// or https://"
+            # Determine if should process async
+            should_process_async = (
+                background_tasks is not None and 
+                (len(content) > 10000 or callback_url is not None)
+            )
+            
+            if should_process_async:
+                # Create background task for async processing
+                async with self.get_db_session() as db:
+                    task_tracking_service = get_task_tracking_service()
+                    
+                    task = await task_tracking_service.create_task(
+                        db=db,
+                        task_type=TaskType.AI_ANALYSIS,
+                        priority=TaskPriority.NORMAL,
+                        user_id=current_user.id,
+                        metadata={
+                            "url": url,
+                            "content_length": len(content),
+                            "analysis_types": [at.value for at in analysis_types] if analysis_types else None,
+                            "callback_url": callback_url
+                        }
+                    )
+                    
+                    # Add background task
+                    background_tasks.add_task(
+                        self._process_analysis_async,
+                        task_id=str(task.id),
+                        url=url,
+                        content=content,
+                        analysis_types=analysis_types,
+                        user_id=current_user.id,
+                        callback_url=callback_url
+                    )
+                    
+                    return {
+                        "task_id": str(task.id),
+                        "status": "processing",
+                        "message": "Analysis queued for processing",
+                        "url": url,
+                        "estimated_completion_time": task.estimated_completion_time,
+                        "created_at": task.created_at
+                    }
+            
+            # Process synchronously
+            async with self.get_db_session() as db:
+                # Create analysis record
+                analysis = await self._create_analysis_record(
+                    db=db,
+                    url=url,
+                    content=content,
+                    user_id=current_user.id if current_user else None,
+                    analysis_types=analysis_types
                 )
+                
+                # Perform AI analysis using pure business logic service
+                ai_results = await self.ai_service.analyze_content(content, url)
+                
+                # Update analysis record with results
+                await self._update_analysis_with_results(db, analysis, ai_results)
+                
+                # Commit changes
+                await db.commit()
+                await db.refresh(analysis)
+                
+                return {
+                    "id": str(analysis.id),
+                    "url": analysis.url,
+                    "domain": analysis.domain,
+                    "content_summary": analysis.content_summary,
+                    "quality_metrics": analysis.quality_metrics,
+                    "topic_categories": analysis.topic_categories,
+                    "sentiment_analysis": analysis.sentiment_analysis,
+                    "seo_metrics": analysis.seo_metrics,
+                    "content_length": analysis.content_length,
+                    "language": analysis.language,
+                    "reading_level": analysis.reading_level,
+                    "overall_quality_score": analysis.overall_quality_score,
+                    "readability_score": analysis.readability_score,
+                    "trustworthiness_score": analysis.trustworthiness_score,
+                    "professionalism_score": analysis.professionalism_score,
+                    "processing_status": analysis.processing_status.value,
+                    "processing_time_ms": analysis.processing_time_ms,
+                    "created_at": analysis.created_at,
+                    "processed_at": analysis.processed_at
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in analyze_content: {str(e)}")
+            raise AIAnalysisException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Analysis failed: {str(e)}"
+            )
+
 
     async def _process_analysis_async(
         self,
@@ -115,132 +208,142 @@ class AIAnalysisController(BaseController):
         webhook_service = get_webhook_service()
         
         try:
-            # Get database session
-            db = await self.get_db_session()
-            
-            # Update task status to running
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=10
-            )
-            
-            # Initialize AI service
-            await self.ai_analysis_service.initialize()
-            
-            # Update progress
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=25
-            )
-            
-            # Perform the actual analysis
-            analysis = await self.ai_analysis_service.analyze_content(
-                db=db,
-                url=url,
-                content=content,
-                user_id=user_id,
-                analysis_types=analysis_types
-            )
-            
-            # Update progress
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=90
-            )
-            
-            # Prepare result data
-            result_data = {
-                "id": str(analysis.id),
-                "url": analysis.url,
-                "domain": analysis.domain,
-                "content_summary": analysis.content_summary,
-                "quality_metrics": analysis.quality_metrics,
-                "topic_categories": analysis.topic_categories,
-                "sentiment_analysis": analysis.sentiment_analysis,
-                "seo_metrics": analysis.seo_metrics,
-                "content_length": analysis.content_length,
-                "language": analysis.language,
-                "reading_level": analysis.reading_level,
-                "overall_quality_score": analysis.overall_quality_score,
-                "readability_score": analysis.readability_score,
-                "trustworthiness_score": analysis.trustworthiness_score,
-                "professionalism_score": analysis.professionalism_score,
-                "processing_status": analysis.processing_status.value,
-                "processing_time_ms": analysis.processing_time_ms,
-                "created_at": analysis.created_at,
-                "processed_at": analysis.processed_at
-            }
-            
-            # Complete the task
-            await task_tracking_service.complete_task(
-                db=db,
-                task_id=task_id,
-                result=result_data
-            )
-            
-            # Send webhook notification if callback URL provided
-            if callback_url:
-                webhook_payload = {
-                    "event": "ai_analysis_completed",
-                    "task_id": task_id,
-                    "analysis": result_data,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                }
-                
-                await webhook_service.send_webhook(
-                    url=callback_url,
-                    payload=webhook_payload,
-                    event_type="ai_analysis_completed",
-                    user_id=user_id
-                )
-            
-            # Log successful completion
-            self.log_operation(
-                "AI content analysis completed asynchronously",
-                user_id=user_id,
-                details={
-                    "task_id": task_id,
-                    "analysis_id": str(analysis.id),
-                    "url": url,
-                    "content_length": len(content),
-                    "callback_url": callback_url
-                }
-            )
-            
-        except Exception as e:
-            # Handle failure
-            self.logger.error(f"Async AI analysis failed for task {task_id}: {e}")
-            
-            try:
-                # Mark task as failed
-                await task_tracking_service.fail_task(
+            # Get database session using context manager
+            async with self.get_db_session() as db:
+                # Update task status to running
+                await task_tracking_service.update_task_status(
                     db=db,
                     task_id=task_id,
-                    error=str(e)
+                    status=TaskStatus.RUNNING,
+                    progress=10
                 )
                 
-                # Send failure webhook if callback URL provided
+                # Initialize AI service
+                await self.ai_analysis_service.initialize()
+                
+                # Update progress
+                await task_tracking_service.update_task_status(
+                    db=db,
+                    task_id=task_id,
+                    status=TaskStatus.RUNNING,
+                    progress=25
+                )
+                
+                # Perform the actual analysis
+                analysis = await self._create_analysis_record(
+                    db=db,
+                    url=url,
+                    content=content,
+                    user_id=user_id,
+                    analysis_types=analysis_types
+                )
+                
+                # Perform AI analysis using pure business logic service
+                ai_results = await self.ai_service.analyze_content(content, url)
+                
+                # Update analysis record with results
+                await self._update_analysis_with_results(db, analysis, ai_results)
+                
+                # Commit changes
+                await db.commit()
+                await db.refresh(analysis)
+                
+                # Update progress
+                await task_tracking_service.update_task_status(
+                    db=db,
+                    task_id=task_id,
+                    status=TaskStatus.RUNNING,
+                    progress=90
+                )
+                
+                # Prepare result data
+                result_data = {
+                    "id": str(analysis.id),
+                    "url": analysis.url,
+                    "domain": analysis.domain,
+                    "content_summary": analysis.content_summary,
+                    "quality_metrics": analysis.quality_metrics,
+                    "topic_categories": analysis.topic_categories,
+                    "sentiment_analysis": analysis.sentiment_analysis,
+                    "seo_metrics": analysis.seo_metrics,
+                    "content_length": analysis.content_length,
+                    "language": analysis.language,
+                    "reading_level": analysis.reading_level,
+                    "overall_quality_score": analysis.overall_quality_score,
+                    "readability_score": analysis.readability_score,
+                    "trustworthiness_score": analysis.trustworthiness_score,
+                    "professionalism_score": analysis.professionalism_score,
+                    "processing_status": analysis.processing_status.value,
+                    "processing_time_ms": analysis.processing_time_ms,
+                    "created_at": analysis.created_at,
+                    "processed_at": analysis.processed_at
+                }
+                
+                # Complete the task
+                await task_tracking_service.complete_task(
+                    db=db,
+                    task_id=task_id,
+                    result=result_data
+                )
+                
+                # Send webhook notification if callback URL provided
                 if callback_url:
                     webhook_payload = {
-                        "event": "ai_analysis_failed",
+                        "event": "ai_analysis_completed",
                         "task_id": task_id,
-                        "error": str(e),
-                        "url": url,
+                        "analysis": result_data,
                         "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                     
                     await webhook_service.send_webhook(
                         url=callback_url,
                         payload=webhook_payload,
-                        event_type="ai_analysis_failed",
+                        event_type="ai_analysis_completed",
                         user_id=user_id
                     )
+                
+                # Log successful completion
+                self.log_operation(
+                    "AI content analysis completed asynchronously",
+                    user_id=user_id,
+                    details={
+                        "task_id": task_id,
+                        "analysis_id": str(analysis.id),
+                        "url": url,
+                        "content_length": len(content),
+                        "callback_url": callback_url
+                    }
+                )
+            
+        except Exception as e:
+            # Handle failure
+            self.logger.error(f"Async AI analysis failed for task {task_id}: {e}")
+            
+            try:
+                # Mark task as failed using context manager
+                async with self.get_db_session() as db:
+                    await task_tracking_service.fail_task(
+                        db=db,
+                        task_id=task_id,
+                        error=str(e)
+                    )
+                    
+                    # Send failure webhook if callback URL provided
+                    if callback_url:
+                        webhook_payload = {
+                            "event": "ai_analysis_failed",
+                            "task_id": task_id,
+                            "error": str(e),
+                            "url": url,
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        }
+                        
+                        await webhook_service.send_webhook(
+                            url=callback_url,
+                            payload=webhook_payload,
+                            event_type="ai_analysis_failed",
+                            user_id=user_id
+                        )
                 
             except Exception as cleanup_error:
                 self.logger.error(f"Failed to handle async analysis failure for task {task_id}: {cleanup_error}")
@@ -265,136 +368,133 @@ class AIAnalysisController(BaseController):
             Dict containing retry results or task information
             
         Raises:
-            HTTPException: If retry fails or analysis not found
+            AIAnalysisException: If retry fails or analysis not found
         """
         try:
             # Validate UUID format
             try:
                 uuid.UUID(analysis_id)
             except ValueError:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid analysis ID format"
                 )
             
-            # Get database session
-            db = await self.get_db_session()
-            
-            # Get original analysis
-            original_analysis = await self.ai_analysis_service.get_analysis(
-                db=db,
-                analysis_id=analysis_id,
-                user_id=current_user.id
-            )
-            
-            if not original_analysis:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Analysis not found"
-                )
-            
-            # Check if user owns this analysis
-            if original_analysis.user_id != current_user.id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this analysis"
-                )
-            
-            # Check if analysis actually failed
-            if original_analysis.processing_status != ProcessingStatus.FAILED:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Can only retry failed analyses"
-                )
-            
-            # Get original content (this would need to be stored or retrieved)
-            # For now, we'll assume the content is available in metadata or similar
-            content = original_analysis.metadata.get("original_content", "")
-            if not content:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Original content not available for retry"
-                )
-            
-            # Determine if should process async
-            should_process_async = (
-                background_tasks is not None and 
-                (len(content) > 10000 or callback_url is not None)
-            )
-            
-            if should_process_async:
-                # Create background task for async retry
-                task_tracking_service = get_task_tracking_service()
-                
-                task = await task_tracking_service.create_task(
+            # Get database session using context manager
+            async with self.get_db_session() as db:
+                # Get original analysis
+                original_analysis = await self.ai_analysis_service.get_analysis(
                     db=db,
-                    task_type=TaskType.AI_ANALYSIS_RETRY,
-                    priority=TaskPriority.HIGH,
-                    user_id=current_user.id,
-                    metadata={
+                    analysis_id=analysis_id,
+                    user_id=current_user.id
+                )
+                
+                if not original_analysis:
+                    raise AIAnalysisException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Analysis not found"
+                    )
+                
+                # Check if user owns this analysis
+                if original_analysis.user_id != current_user.id:
+                    raise AIAnalysisException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied to this analysis"
+                    )
+                
+                # Check if analysis actually failed
+                if original_analysis.processing_status != ProcessingStatus.FAILED:
+                    raise AIAnalysisException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Can only retry failed analyses"
+                    )
+                
+                # Get original content (this would need to be stored or retrieved)
+                # For now, we'll assume the content is available in metadata or similar
+                content = original_analysis.metadata.get("original_content", "")
+                if not content:
+                    raise AIAnalysisException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Original content not available for retry"
+                    )
+                
+                # Determine if should process async
+                should_process_async = (
+                    background_tasks is not None and 
+                    (len(content) > 10000 or callback_url is not None)
+                )
+                
+                if should_process_async:
+                    # Create background task for async retry
+                    task_tracking_service = get_task_tracking_service()
+                    
+                    task = await task_tracking_service.create_task(
+                        db=db,
+                        task_type=TaskType.AI_ANALYSIS_RETRY,
+                        priority=TaskPriority.HIGH,
+                        user_id=current_user.id,
+                        metadata={
+                            "original_analysis_id": analysis_id,
+                            "url": original_analysis.url,
+                            "content_length": len(content),
+                            "callback_url": callback_url
+                        }
+                    )
+                    
+                    # Add background task
+                    background_tasks.add_task(
+                        self._process_retry_async,
+                        task_id=str(task.id),
+                        original_analysis_id=analysis_id,
+                        url=original_analysis.url,
+                        content=content,
+                        user_id=current_user.id,
+                        callback_url=callback_url
+                    )
+                    
+                    return {
+                        "task_id": str(task.id),
+                        "status": "processing",
+                        "message": "Analysis retry queued for processing",
                         "original_analysis_id": analysis_id,
                         "url": original_analysis.url,
-                        "content_length": len(content),
-                        "callback_url": callback_url
+                        "estimated_completion_time": task.estimated_completion_time,
+                        "created_at": task.created_at
                     }
-                )
                 
-                # Add background task
-                background_tasks.add_task(
-                    self._process_retry_async,
-                    task_id=str(task.id),
-                    original_analysis_id=analysis_id,
-                    url=original_analysis.url,
-                    content=content,
-                    user_id=current_user.id,
-                    callback_url=callback_url
+                # Process retry synchronously
+                new_analysis = await self.ai_analysis_service.retry_analysis(
+                    db=db,
+                    analysis_id=analysis_id,
+                    user_id=current_user.id
                 )
                 
                 return {
-                    "task_id": str(task.id),
-                    "status": "processing",
-                    "message": "Analysis retry queued for processing",
+                    "id": str(new_analysis.id),
                     "original_analysis_id": analysis_id,
-                    "url": original_analysis.url,
-                    "estimated_completion_time": task.estimated_completion_time,
-                    "created_at": task.created_at
+                    "url": new_analysis.url,
+                    "domain": new_analysis.domain,
+                    "content_summary": new_analysis.content_summary,
+                    "quality_metrics": new_analysis.quality_metrics,
+                    "topic_categories": new_analysis.topic_categories,
+                    "sentiment_analysis": new_analysis.sentiment_analysis,
+                    "seo_metrics": new_analysis.seo_metrics,
+                    "content_length": new_analysis.content_length,
+                    "language": new_analysis.language,
+                    "reading_level": new_analysis.reading_level,
+                    "overall_quality_score": new_analysis.overall_quality_score,
+                    "readability_score": new_analysis.readability_score,
+                    "trustworthiness_score": new_analysis.trustworthiness_score,
+                    "professionalism_score": new_analysis.professionalism_score,
+                    "processing_status": new_analysis.processing_status.value,
+                    "processing_time_ms": new_analysis.processing_time_ms,
+                    "created_at": new_analysis.created_at,
+                    "processed_at": new_analysis.processed_at
                 }
-            
-            # Process retry synchronously
-            new_analysis = await self.ai_analysis_service.retry_analysis(
-                db=db,
-                analysis_id=analysis_id,
-                user_id=current_user.id
-            )
-            
-            return {
-                "id": str(new_analysis.id),
-                "original_analysis_id": analysis_id,
-                "url": new_analysis.url,
-                "domain": new_analysis.domain,
-                "content_summary": new_analysis.content_summary,
-                "quality_metrics": new_analysis.quality_metrics,
-                "topic_categories": new_analysis.topic_categories,
-                "sentiment_analysis": new_analysis.sentiment_analysis,
-                "seo_metrics": new_analysis.seo_metrics,
-                "content_length": new_analysis.content_length,
-                "language": new_analysis.language,
-                "reading_level": new_analysis.reading_level,
-                "overall_quality_score": new_analysis.overall_quality_score,
-                "readability_score": new_analysis.readability_score,
-                "trustworthiness_score": new_analysis.trustworthiness_score,
-                "professionalism_score": new_analysis.professionalism_score,
-                "processing_status": new_analysis.processing_status.value,
-                "processing_time_ms": new_analysis.processing_time_ms,
-                "created_at": new_analysis.created_at,
-                "processed_at": new_analysis.processed_at
-            }
-            
-        except HTTPException:
-            raise
+
         except Exception as e:
             self.logger.error(f"Analysis retry failed for {analysis_id}: {e}")
-            raise HTTPException(
+            raise AIAnalysisException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Analysis retry failed"
             )
@@ -423,101 +523,102 @@ class AIAnalysisController(BaseController):
         webhook_service = get_webhook_service()
         
         try:
-            # Get database session
-            db = await self.get_db_session()
-            
-            # Update task status
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=10
-            )
-            
-            # Perform retry
-            new_analysis = await self.ai_analysis_service.retry_analysis(
-                db=db,
-                analysis_id=original_analysis_id,
-                user_id=user_id
-            )
-            
-            # Prepare result data
-            result_data = {
-                "id": str(new_analysis.id),
-                "original_analysis_id": original_analysis_id,
-                "url": new_analysis.url,
-                "domain": new_analysis.domain,
-                "content_summary": new_analysis.content_summary,
-                "quality_metrics": new_analysis.quality_metrics,
-                "topic_categories": new_analysis.topic_categories,
-                "sentiment_analysis": new_analysis.sentiment_analysis,
-                "seo_metrics": new_analysis.seo_metrics,
-                "content_length": new_analysis.content_length,
-                "language": new_analysis.language,
-                "reading_level": new_analysis.reading_level,
-                "overall_quality_score": new_analysis.overall_quality_score,
-                "readability_score": new_analysis.readability_score,
-                "trustworthiness_score": new_analysis.trustworthiness_score,
-                "professionalism_score": new_analysis.professionalism_score,
-                "processing_status": new_analysis.processing_status.value,
-                "processing_time_ms": new_analysis.processing_time_ms,
-                "created_at": new_analysis.created_at,
-                "processed_at": new_analysis.processed_at
-            }
-            
-            # Complete the task
-            await task_tracking_service.complete_task(
-                db=db,
-                task_id=task_id,
-                result=result_data
-            )
-            
-            # Send webhook notification if callback URL provided
-            if callback_url:
-                webhook_payload = {
-                    "event": "ai_analysis_retry_completed",
-                    "task_id": task_id,
-                    "original_analysis_id": original_analysis_id,
-                    "analysis": result_data,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                }
-                
-                await webhook_service.send_webhook(
-                    url=callback_url,
-                    payload=webhook_payload,
-                    event_type="ai_analysis_retry_completed",
-                    user_id=user_id
-                )
-            
-        except Exception as e:
-            # Handle failure
-            self.logger.error(f"Async analysis retry failed for task {task_id}: {e}")
-            
-            try:
-                await task_tracking_service.fail_task(
+            # Get database session using context manager
+            async with self.get_db_session() as db:
+                # Update task status
+                await task_tracking_service.update_task_status(
                     db=db,
                     task_id=task_id,
-                    error=str(e)
+                    status=TaskStatus.RUNNING,
+                    progress=10
                 )
                 
+                # Perform retry
+                new_analysis = await self.ai_analysis_service.retry_analysis(
+                    db=db,
+                    analysis_id=original_analysis_id,
+                    user_id=user_id
+                )
+                
+                # Prepare result data
+                result_data = {
+                    "id": str(new_analysis.id),
+                    "original_analysis_id": original_analysis_id,
+                    "url": new_analysis.url,
+                    "domain": new_analysis.domain,
+                    "content_summary": new_analysis.content_summary,
+                    "quality_metrics": new_analysis.quality_metrics,
+                    "topic_categories": new_analysis.topic_categories,
+                    "sentiment_analysis": new_analysis.sentiment_analysis,
+                    "seo_metrics": new_analysis.seo_metrics,
+                    "content_length": new_analysis.content_length,
+                    "language": new_analysis.language,
+                    "reading_level": new_analysis.reading_level,
+                    "overall_quality_score": new_analysis.overall_quality_score,
+                    "readability_score": new_analysis.readability_score,
+                    "trustworthiness_score": new_analysis.trustworthiness_score,
+                    "professionalism_score": new_analysis.professionalism_score,
+                    "processing_status": new_analysis.processing_status.value,
+                    "processing_time_ms": new_analysis.processing_time_ms,
+                    "created_at": new_analysis.created_at,
+                    "processed_at": new_analysis.processed_at
+                }
+                
+                # Complete the task
+                await task_tracking_service.complete_task(
+                    db=db,
+                    task_id=task_id,
+                    result=result_data
+                )
+                
+                # Send webhook notification if callback URL provided
                 if callback_url:
                     webhook_payload = {
-                        "event": "ai_analysis_retry_failed",
+                        "event": "ai_analysis_retry_completed",
                         "task_id": task_id,
                         "original_analysis_id": original_analysis_id,
-                        "error": str(e),
+                        "analysis": result_data,
                         "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                     
                     await webhook_service.send_webhook(
                         url=callback_url,
                         payload=webhook_payload,
-                        event_type="ai_analysis_retry_failed",
+                        event_type="ai_analysis_retry_completed",
                         user_id=user_id
                     )
+            
+        except Exception as e:
+            # Handle failure
+            self.logger.error(f"Async analysis retry failed for task {task_id}: {e}")
+            
+            try:
+                # Mark task as failed using context manager
+                async with self.get_db_session() as db:
+                    await task_tracking_service.fail_task(
+                        db=db,
+                        task_id=task_id,
+                        error=str(e)
+                    )
+                    
+                    if callback_url:
+                        webhook_payload = {
+                            "event": "ai_analysis_retry_failed",
+                            "task_id": task_id,
+                            "original_analysis_id": original_analysis_id,
+                            "error": str(e),
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        }
+                        
+                        await webhook_service.send_webhook(
+                            url=callback_url,
+                            payload=webhook_payload,
+                            event_type="ai_analysis_retry_failed",
+                            user_id=user_id
+                        )
                 
             except Exception as cleanup_error:
-                self.logger.error(f"Failed to handle async retry failure for task {task_id}: cleanup_error}")
+                self.logger.error(f"Failed to handle async retry failure for task {task_id}: {cleanup_error}")
 
     async def get_service_status(self) -> Dict[str, Any]:
         """
@@ -537,19 +638,19 @@ class AIAnalysisController(BaseController):
             
         except Exception as e:
             self.logger.error(f"Failed to get service status: {e}")
-            raise HTTPException(
+            raise AIAnalysisException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to retrieve service status"
+                detail="Failed to retrieve service status")
             
             # Validate content length
             if len(content) < 10:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Content must be at least 10 characters long"
                 )
             
             if len(content) > 50000:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Content must not exceed 50,000 characters"
                 )
@@ -659,11 +760,11 @@ class AIAnalysisController(BaseController):
                 "processed_at": analysis.processed_at
             }
             
-        except HTTPException:
+        except AIAnalysisException:
             raise
         except Exception as e:
             self.logger.error(f"AI analysis failed: {e}")
-            raise HTTPException(
+            raise AIAnalysisException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Analysis processing failed"
             )
@@ -684,14 +785,14 @@ class AIAnalysisController(BaseController):
             Dict containing analysis results
             
         Raises:
-            HTTPException: If analysis not found or access denied
+            AIAnalysisException: If analysis not found or access denied
         """
         try:
             # Validate UUID format
             try:
                 uuid.UUID(analysis_id)
             except ValueError:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid analysis ID format"
                 )
@@ -707,14 +808,14 @@ class AIAnalysisController(BaseController):
             )
             
             if not analysis:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Analysis not found"
                 )
             
             # Check access permissions
             if current_user and analysis.user_id and analysis.user_id != current_user.id:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied to this analysis"
                 )
@@ -741,11 +842,11 @@ class AIAnalysisController(BaseController):
                 "processed_at": analysis.processed_at
             }
             
-        except HTTPException:
+        except AIAnalysisException:
             raise
         except Exception as e:
             self.logger.error(f"Failed to get analysis {analysis_id}: {e}")
-            raise HTTPException(
+            raise AIAnalysisException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve analysis"
             )
@@ -770,26 +871,26 @@ class AIAnalysisController(BaseController):
             Dict containing similar content results
             
         Raises:
-            HTTPException: If analysis not found or validation errors
+            AIAnalysisException: If analysis not found or validation errors
         """
         try:
             # Validate parameters
             try:
                 uuid.UUID(analysis_id)
             except ValueError:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid analysis ID format"
                 )
             
             if not 0.0 <= similarity_threshold <= 1.0:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Similarity threshold must be between 0.0 and 1.0"
                 )
             
             if not 1 <= limit <= 100:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Limit must be between 1 and 100"
                 )
@@ -845,7 +946,7 @@ class AIAnalysisController(BaseController):
             raise
         except Exception as e:
             self.logger.error(f"Failed to find similar content for {analysis_id}: {e}")
-            raise HTTPException(
+            raise AIAnalysisException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to find similar content"
             )
@@ -868,25 +969,25 @@ class AIAnalysisController(BaseController):
             Dict containing paginated analysis history
             
         Raises:
-            HTTPException: If user not authenticated or validation errors
+            AIAnalysisException: If user not authenticated or validation errors
         """
         try:
             # Require authentication for history
             if not current_user:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Authentication required"
                 )
             
             # Validate pagination parameters
             if page < 1:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Page must be >= 1"
                 )
             
             if not 1 <= page_size <= 100:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Page size must be between 1 and 100"
                 )
@@ -937,11 +1038,9 @@ class AIAnalysisController(BaseController):
                 "has_next": has_next
             }
             
-        except HTTPException:
-            raise
         except Exception as e:
             self.logger.error(f"Failed to get analysis history for user {current_user.id if current_user else 'None'}: {e}")
-            raise HTTPException(
+            raise AIAnalysisException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve analysis history"
             )
@@ -962,12 +1061,12 @@ class AIAnalysisController(BaseController):
             Dict containing domain statistics
             
         Raises:
-            HTTPException: If validation errors occur
+            AIAnalysisException: If validation errors occur
         """
         try:
             # Validate domain
             if not domain or len(domain.strip()) == 0:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Domain is required"
                 )
@@ -991,11 +1090,11 @@ class AIAnalysisController(BaseController):
                 "success_rate": stats.get("success_rate", 0.0)
             }
             
-        except HTTPException:
+        except AIAnalysisException:
             raise
         except Exception as e:
             self.logger.error(f"Failed to get domain stats for {domain}: {e}")
-            raise HTTPException(
+            raise AIAnalysisException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve domain statistics"
             )
@@ -1016,14 +1115,14 @@ class AIAnalysisController(BaseController):
             Dict containing updated analysis results
             
         Raises:
-            HTTPException: If analysis not found or cannot be retried
+            AIAnalysisException: If analysis not found or cannot be retried
         """
         try:
             # Validate UUID format
             try:
                 uuid.UUID(analysis_id)
             except ValueError:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid analysis ID format"
                 )
@@ -1039,7 +1138,7 @@ class AIAnalysisController(BaseController):
             )
             
             if not analysis:
-                raise HTTPException(
+                raise AIAnalysisException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Analysis not found or cannot be retried"
                 )
@@ -1073,11 +1172,11 @@ class AIAnalysisController(BaseController):
                 "processed_at": analysis.processed_at
             }
             
-        except HTTPException:
+        except AIAnalysisException:
             raise
         except Exception as e:
             self.logger.error(f"Failed to retry analysis {analysis_id}: {e}")
-            raise HTTPException(
+            raise AIAnalysisException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retry analysis"
             )
@@ -1111,3 +1210,113 @@ class AIAnalysisController(BaseController):
                 "version": "unknown",
                 "error": str(e)
             }
+
+    async def _create_analysis_record(
+        self,
+        db,
+        url: str,
+        content: str,
+        user_id: Optional[str] = None,
+        check_id: Optional[str] = None,
+        analysis_types: Optional[List[AnalysisType]] = None
+    ) -> AIAnalysis:
+        """
+        Create a new AI analysis record in the database.
+        
+        Args:
+            db: Database session
+            url: URL being analyzed
+            content: Content to analyze
+            user_id: Optional user ID
+            check_id: Optional URL check ID
+            analysis_types: Specific analysis types to perform
+            
+        Returns:
+            AIAnalysis: Created analysis record
+        """
+        # Generate content hash for deduplication
+        content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        
+        # Extract domain from URL
+        domain = urlparse(url).netloc if url else None
+        
+        # Create new analysis record
+        analysis = AIAnalysis(
+            user_id=user_id,
+            check_id=check_id,
+            url=url,
+            content_hash=content_hash,
+            domain=domain,
+            content_length=len(content),
+            processing_status=ProcessingStatus.PROCESSING,
+            analysis_types=[at.value for at in analysis_types] if analysis_types else None
+        )
+        
+        db.add(analysis)
+        await db.commit()
+        await db.refresh(analysis)
+        
+        return analysis
+
+    async def _update_analysis_with_results(
+        self,
+        db,
+        analysis: AIAnalysis,
+        ai_results: Dict[str, Any]
+    ) -> None:
+        """
+        Update analysis record with AI analysis results.
+        
+        Args:
+            db: Database session
+            analysis: Analysis record to update
+            ai_results: Results from AI analysis
+        """
+        start_time = datetime.now(timezone.utc)
+        
+        try:
+            # Calculate processing time
+            processing_time = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+            
+            # Extract content summary
+            if 'content_summary' in ai_results:
+                analysis.content_summary = ai_results['content_summary']
+            
+            # Store quality metrics
+            quality_data = ai_results.get('quality_analysis', {})
+            analysis.quality_metrics = quality_data
+            analysis.overall_quality_score = quality_data.get('overall_score', 0)
+            analysis.readability_score = quality_data.get('readability_score', 0)
+            analysis.trustworthiness_score = quality_data.get('trustworthiness_score', 0)
+            analysis.professionalism_score = quality_data.get('professionalism_score', 0)
+            
+            # Store topic classification
+            if 'topic_analysis' in ai_results:
+                analysis.topic_categories = ai_results['topic_analysis']
+            
+            # Store sentiment analysis
+            if 'sentiment_analysis' in ai_results:
+                analysis.sentiment_analysis = ai_results['sentiment_analysis']
+            
+            # Store SEO metrics
+            if 'seo_analysis' in ai_results:
+                analysis.seo_metrics = ai_results['seo_analysis']
+            
+            # Store language detection
+            if 'language' in ai_results:
+                analysis.language = ai_results['language']
+            
+            # Store processing metadata
+            analysis.processing_time_ms = processing_time
+            analysis.model_versions = ai_results.get('model_versions', {})
+            
+            # Update status
+            analysis.processing_status = ProcessingStatus.COMPLETED
+            analysis.processed_at = datetime.now(timezone.utc)
+            
+        except Exception as e:
+            # Update status to failed
+            analysis.processing_status = ProcessingStatus.FAILED
+            analysis.processed_at = datetime.now(timezone.utc)
+            self.logger.error(f"Failed to update analysis with results: {e}")
+            raise

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.database import get_db_session, AsyncSession
 from src.controllers.admin_controller import AdminController
-from src.services.admin_service import AdminService
+from src.controllers.depends import get_admin_controller
 from src.authentication.dependencies import get_admin_user
 from src.models.user import User
 
@@ -64,13 +64,6 @@ class AdminResponse(BaseModel):
     data: Dict[str, Any]
     message: Optional[str] = None
     timestamp: datetime
-
-
-# Dependency to get admin controller
-async def get_admin_controller(db: AsyncSession = Depends(get_db_session)) -> AdminController:
-    """Get admin controller instance."""
-    admin_service = AdminService(db)
-    return AdminController(admin_service)
 
 
 # Dashboard Statistics Endpoints

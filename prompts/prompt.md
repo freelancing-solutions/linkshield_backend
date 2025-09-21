@@ -2,267 +2,300 @@ I have created the following plan after thorough exploration and analysis of the
 
 ### Observations
 
-Based on my exploration, I can see that:
-
-1. **Current State**: The system already uses FastAPI BackgroundTasks effectively in URLCheckController and ReportController. The Celery implementation is only used for email operations and the user wants to stick with FastAPI BackgroundTasks.
-
-2. **Long-running Operations Identified**: 
-   - AI content analysis (AIAnalysisController) - currently synchronous
-   - URL analysis and bulk operations (URLCheckController) - already uses BackgroundTasks
-   - Report creation and processing (ReportController) - already uses BackgroundTasks  
-   - Admin analytics operations - currently synchronous
-
-3. **Existing Patterns**: URLCheckController already demonstrates good webhook patterns with `callback_url` parameters and `_send_webhook_notification()` methods.
-
-4. **Missing Components**: 
-   - Generic webhook service to standardize webhook delivery
-   - Enhanced BaseController with BackgroundTasks and webhook helpers
-   - Background task support for AI analysis and admin operations
-   - Consistent webhook payload schemas across all controllers
+AdminService currently takes `db_session: Session` in constructor and performs extensive database operations including queries, commits, and rollbacks. The service has methods like `get_system_statistics()`, `get_traffic_analytics()`, `get_threat_intelligence()`, etc. that all perform direct database queries. AdminController calls these service methods directly and handles error responses. The current dependency injection in `src/routes/admin.py` creates `AdminService(db)` and passes it to AdminController. This pattern needs to be completely refactored to move database operations to the controller while keeping business logic in the service.
 
 ### Approach
 
-The implementation will leverage FastAPI BackgroundTasks throughout the system and create a unified webhook system. The approach will:
+**Remove database session dependency and convert AdminService to pure business logic service:**
 
-1. **Create Webhook Service**: Build a generic `WebhookService` for standardized webhook delivery
-2. **Enhance BaseController**: Add BackgroundTasks and webhook helper methods
-3. **Extend BackgroundTasks Usage**: Convert synchronous long-running operations to use BackgroundTasks
-4. **Standardize Webhooks**: Create consistent webhook payload schemas and delivery patterns
-5. **Add Task Tracking**: Implement simple task status tracking using database records
-6. **Update Routes**: Add webhook support to all relevant endpoints
-
-This approach is much simpler than Celery while still providing the async processing and webhook capabilities needed.
+Refactor AdminService to become a pure data processing service without database dependencies. Move all database operations from AdminService to AdminController methods using the existing context manager pattern. Update service interfaces to accept data as parameters and return plain Python objects. Modify dependency injection to remove database session parameters from service constructors. Update AdminController to handle all database persistence decisions while using AdminService for data processing and business logic.
 
 ### Reasoning
 
-I explored the codebase systematically to understand the current architecture. I examined the existing background task system, analyzed controllers to identify long-running operations, reviewed models to understand data structures, checked routes to see current API patterns, and examined the settings. I discovered that URLCheckController and ReportController already use FastAPI BackgroundTasks effectively, making this the natural choice to extend rather than introducing Celery complexity.
+I examined the AdminController and AdminService files to understand current database usage patterns. I found that AdminService takes a database session in its constructor and performs extensive database operations throughout all methods. I reviewed the admin routes file to understand how AdminService is instantiated with database sessions. I checked the admin models to understand the database structure including GlobalConfig, AdminAction, SystemHealth, and AdminSession models. I also examined the dependency injection setup to understand how services are currently instantiated.
 
 ## Mermaid Diagram
 
 sequenceDiagram
-    participant Client
-    participant Route
-    participant Controller
-    participant BackgroundTasks
-    participant TaskTrackingService
-    participant WebhookService
-    participant WebhookTarget
-
-    Client->>Route: POST /api/ai-analysis/analyze (with callback_url)
-    Route->>Controller: analyze_content(callback_url, background_tasks)
-    Controller->>TaskTrackingService: create_task_record(ai_analysis)
-    TaskTrackingService->>Controller: task_id
-    Controller->>BackgroundTasks: add_task(perform_analysis, task_id, callback_url)
-    Controller->>Client: 202 Accepted {task_id, tracking_url}
+    participant Controller as AdminController
+    participant AdminService as AdminService (Refactored)
+    participant Database as Database
     
-    Note over BackgroundTasks: Background processing
-    BackgroundTasks->>TaskTrackingService: update_task_status(running)
-    BackgroundTasks->>BackgroundTasks: Perform AI analysis
-    BackgroundTasks->>TaskTrackingService: mark_task_completed(results)
-    BackgroundTasks->>WebhookService: send_webhook(callback_url, results)
-    WebhookService->>WebhookTarget: POST webhook notification
-    WebhookTarget->>WebhookService: 200 OK
+    Note over AdminService: No database dependency
     
-    Note over Client: Optional status checking
-    Client->>Route: GET /api/tasks/{task_id}
-    Route->>TaskTrackingService: get_task_status(task_id)
-    TaskTrackingService->>Client: Task status and results
+    Controller->>Controller: async with self.get_db_session() as session:
+    Controller->>Database: Query User statistics
+    Controller->>Database: Query URLCheck statistics  
+    Controller->>Database: Query AIAnalysis statistics
+    Database-->>Controller: Raw statistics data
+    
+    Controller->>AdminService: process_system_statistics(users_data, url_checks_data, ai_analyses_data)
+    AdminService->>AdminService: Calculate metrics and format data
+    AdminService-->>Controller: Processed statistics
+    
+    Controller->>Database: Commit transaction
+    Controller-->>Controller: Return formatted response
+    
+    Note over Controller: All database operations in controller
+    Note over AdminService: Pure data processing logic
 
 ## Proposed File Changes
 
-### src\services\webhook_service.py(NEW)
+### src\services\admin_service.py(MODIFY)
 
-Create a comprehensive webhook service that handles webhook delivery and management using aiohttp. This service will:
+References: 
 
-- Send HTTP POST requests to webhook URLs with standardized payloads
-- Support webhook signatures/authentication using HMAC-SHA256
-- Implement retry logic with exponential backoff for failed deliveries
-- Handle webhook timeouts and error responses
-- Provide methods like `send_webhook()`, `send_bulk_webhook()`, `validate_webhook_url()`
-- Support different event types: task_completed, analysis_finished, report_created, etc.
-- Include webhook delivery logging and error tracking
-- Extract and generalize the webhook functionality currently in `URLCheckController._send_webhook_notification()`
+- src\config\settings.py
 
-The service will be lightweight and focused on HTTP delivery without requiring Celery infrastructure.
+**Remove database session dependency and convert to pure business logic service:**
 
-### src\models\task.py(NEW)
+1. **Update constructor**:
+   - Remove `db_session: Session` parameter
+   - Remove `self.db` attribute
+   - Keep only `self.settings = get_settings()`
+   - Remove all database session references
 
-Create database models for tracking background tasks since FastAPI BackgroundTasks don't have built-in persistence. Include:
+2. **Convert database-dependent methods to pure data processing functions**:
+   - `process_system_statistics(users_data: Dict, url_checks_data: Dict, ai_analyses_data: Dict) -> Dict[str, Any]` - process raw data into statistics format
+   - `process_traffic_analytics(daily_traffic_data: List, top_domains_data: List, threat_types_data: List, days: int) -> Dict[str, Any]` - process traffic data
+   - `process_threat_intelligence(recent_threats_data: Dict, threat_trends_data: List, threat_sources_data: List) -> Dict[str, Any]` - process threat data
+   - `process_user_analytics(user_growth_data: List, subscription_data: List, top_users_data: List) -> Dict[str, Any]` - process user analytics
 
-- `BackgroundTask` model: id, user_id, task_type, status, progress, result, error_message, created_at, started_at, completed_at
-- `TaskStatus` enum: pending, running, completed, failed, cancelled
-- `TaskType` enum: ai_analysis, url_analysis, report_processing, admin_analytics, bulk_operation
-- Relationships with User model
-- Indexes for performance on user_id, status, and task_type
+3. **Convert configuration methods to validation and processing functions**:
+   - `process_configuration_data(configs_data: List, category: Optional[str] = None) -> List[Dict[str, Any]]` - format configuration data
+   - `validate_configuration_update(key: str, value: str, config_data: Dict) -> None` - validate config changes
+   - `process_configuration_update(config_data: Dict, key: str, value: str) -> Dict[str, Any]` - process config update
 
-This provides persistence and tracking for FastAPI BackgroundTasks that would otherwise be fire-and-forget.
+4. **Convert user management methods to data processing functions**:
+   - `process_users_data(users_data: List, total: int, page: int, limit: int) -> Dict[str, Any]` - format user data
+   - `validate_user_status_update(user_data: Dict, status: str, admin_user_id: str) -> None` - validate status change
+   - `process_user_status_update(user_data: Dict, status: str) -> Dict[str, Any]` - process status update
 
-### src\services\task_tracking_service.py(NEW)
+5. **Convert system health methods to data processing functions**:
+   - `process_system_health_data(health_checks_data: List, db_healthy: bool) -> Dict[str, Any]` - process health data
+   - `calculate_overall_health_status(components: Dict) -> str` - determine overall status
 
-Create a service for tracking FastAPI BackgroundTasks in the database. This service will:
+6. **Keep utility methods as pure functions**:
+   - `_get_system_uptime() -> str` - Keep as utility function
+   - `_validate_config_value(config_data: Dict, value: str) -> None` - Keep validation logic
+   - Move validation logic to accept config data as parameter instead of config object
 
-- Create task records when background tasks are started
-- Update task status and progress during execution
-- Store task results and error messages
-- Provide methods like `create_task_record()`, `update_task_status()`, `get_task_status()`, `mark_task_completed()`
-- Handle task cleanup and retention policies
-- Support task cancellation tracking (though FastAPI BackgroundTasks can't be truly cancelled)
+7. **Remove all database operations**:
+   - Remove all `self.db.query()` calls
+   - Remove all `self.db.commit()` and `self.db.rollback()` calls
+   - Remove all SQLAlchemy imports
+   - Remove model imports that are only used for database operations
 
-This bridges the gap between FastAPI's fire-and-forget BackgroundTasks and the need for task monitoring and status tracking.
+8. **Update imports**:
+   - Remove database-related imports (`Session`, `SQLAlchemyError`, model imports)
+   - Keep only data processing and utility imports
+   - Remove `from src.config.database import check_database_health`
 
-### src\controllers\base_controller.py(MODIFY)
-
-Enhance the BaseController to include generic background task and webhook functionality. Add new methods:
-
-- `queue_background_task(task_function, task_type, *args, callback_url=None, **kwargs)` - Generic method to queue FastAPI BackgroundTasks with tracking
-- `send_webhook_notification(event_type, payload, webhook_url, secret=None)` - Generic webhook sending using WebhookService
-- `get_task_status(task_id)` - Get status of tracked background task
-- `create_task_record(task_type, user_id=None)` - Create database record for task tracking
-
-Integrate with the new `WebhookService` and `TaskTrackingService`. Update the constructor to inject these services. Add a `background_tasks: BackgroundTasks` parameter to the constructor for dependency injection.
-
-This provides a consistent interface for all controllers to use background tasks and webhooks without duplicating code, building on the existing patterns in `src/controllers/base_controller.py`.
-
-### src\controllers\ai_analysis_controller.py(MODIFY)
-
-Convert AI analysis operations to use FastAPI BackgroundTasks and support webhooks. Modify:
-
-- `analyze_content()` - Add `callback_url` and `background_tasks` parameters, queue the analysis as a background task, return task_id immediately with 202 status
-- `find_similar_content()` - For large similarity searches, make this async with webhook support
-- `retry_analysis()` - Queue retry as background task
-- Add `async_mode: bool = True` parameter to allow sync/async choice
-
-Create new background task functions:
-- `_perform_ai_analysis_task()` - Background function for AI content analysis
-- `_perform_similarity_search_task()` - Background function for similarity searches
-
-Integrate with the enhanced `BaseController` methods for task queuing and webhook notifications. The heavy AI processing will run in FastAPI BackgroundTasks instead of blocking the request.
-
-The current implementation in `src/controllers/ai_analysis_controller.py` has good structure but runs everything synchronously.
-
-### src\controllers\report_controller.py(MODIFY)
-
-Enhance the report controller to use the new webhook system while keeping FastAPI BackgroundTasks. Modify:
-
-- `create_report()` - Replace inline background tasks with the new generic webhook system
-- `_analyze_reported_url()` and `_notify_moderation_team()` - Update to use the new WebhookService for notifications
-- Add webhook notifications for report status changes (assigned, resolved, etc.)
-- Add `callback_url` parameter to report creation for webhook notifications
-- Update `assign_report()` and `resolve_report()` to send webhook notifications
-
-Integrate with the enhanced `BaseController` methods and `WebhookService`. The current implementation already uses `BackgroundTasks` effectively, so we're mainly standardizing the webhook delivery.
-
-The existing code in `src/controllers/report_controller.py` already has good background task patterns that we can enhance.
+9. **Add helper methods for data structure validation**:
+   - `validate_statistics_input(users_data: Dict, url_checks_data: Dict, ai_analyses_data: Dict) -> None`
+   - `validate_analytics_input(daily_traffic_data: List, days: int) -> None`
+   - `format_date_range_data(data: List, date_field: str) -> List[Dict]`
 
 ### src\controllers\admin_controller.py(MODIFY)
 
-Add FastAPI BackgroundTasks support for long-running admin operations. Modify methods that could benefit from async processing:
+References: 
 
-- `get_dashboard_statistics()` - Add async mode for large datasets with webhook notifications
-- `get_traffic_analytics()` - Queue as background task for complex analytics
-- `get_user_analytics()` - Make async for large user bases
-- Add webhook support for admin events like configuration changes
-- Add `background_tasks: BackgroundTasks` parameter to relevant methods
+- src\services\admin_service.py(MODIFY)
+- src\models\user.py
+- src\models\url_check.py
+- src\models\ai_analysis.py
+- src\models\admin.py
+- src\config\database.py
 
-Add `callback_url` parameters where appropriate and integrate with the enhanced `BaseController` methods. Some admin operations like simple configuration retrieval can remain synchronous, but complex analytics should be moved to background tasks.
+**Move all database operations from AdminService to AdminController:**
 
-The current implementation in `src/controllers/admin_controller.py` is mostly synchronous but could benefit from background processing for heavy operations.
+1. **Update constructor**:
+   - Remove database session from AdminService instantiation
+   - Update to: `AdminService()` without database session
+   - Keep existing service dependencies
 
-### src\routes\tasks.py(NEW)
+2. **Refactor `get_dashboard_statistics()` method**:
+   - Add database operations using `async with self.get_db_session() as session:`
+   - Query User, URLCheck, AIAnalysis models directly in controller
+   - Collect raw data from database queries
+   - Call `self.admin_service.process_system_statistics(users_data, url_checks_data, ai_analyses_data)`
+   - Return processed results
 
-Create API routes for task monitoring and management. Include endpoints:
+3. **Refactor `get_traffic_analytics()` method**:
+   - Move URLCheck and ScanResult queries to controller using database context manager
+   - Query daily traffic, top domains, and threat distribution data
+   - Call `self.admin_service.process_traffic_analytics(daily_traffic_data, top_domains_data, threat_types_data, days)`
+   - Handle database operations in controller
 
-- `GET /api/tasks/{task_id}` - Get task status and results from database
-- `GET /api/tasks` - List user's tasks with filtering (status, type, date range)
-- `DELETE /api/tasks/{task_id}` - Mark task as cancelled (FastAPI BackgroundTasks can't be truly cancelled)
+4. **Refactor `get_threat_intelligence()` method**:
+   - Move threat detection queries to controller using database context manager
+   - Query recent threats, threat trends, and threat sources
+   - Call `self.admin_service.process_threat_intelligence(recent_threats_data, threat_trends_data, threat_sources_data)`
+   - Handle all database operations in controller
 
-Include request/response models:
-- `TaskStatusResponse` with fields: task_id, status, progress, result, error, created_at, completed_at
-- `TaskListResponse` with pagination and filtering
-- `TaskType` enum for filtering
+5. **Refactor `get_user_analytics()` method**:
+   - Move User model queries to controller using database context manager
+   - Query user growth, subscription distribution, and top users data
+   - Call `self.admin_service.process_user_analytics(user_growth_data, subscription_data, top_users_data)`
+   - Handle database operations in controller
 
-Integrate with the `TaskTrackingService` to provide task monitoring. Since FastAPI BackgroundTasks don't have built-in status tracking, this relies on database records.
+6. **Refactor configuration management methods**:
+   - Move GlobalConfig queries to controller in `get_configuration()` method
+   - Call `self.admin_service.process_configuration_data(configs_data, category)`
+   - Move configuration update logic to controller in `update_configuration()` method
+   - Use `self.admin_service.validate_configuration_update()` for validation
+   - Handle database commit/rollback in controller
 
-Follow the same patterns as existing route files like `src/routes/ai_analysis.py` and `src/routes/url_check.py`.
+7. **Refactor user management methods**:
+   - Move User model queries to controller in `get_users()` method
+   - Call `self.admin_service.process_users_data(users_data, total, page, limit)`
+   - Move user status update logic to controller in `update_user_status()` method
+   - Use `self.admin_service.validate_user_status_update()` for validation
+   - Handle database operations in controller
 
-### src\routes\ai_analysis.py(MODIFY)
+8. **Refactor system health methods**:
+   - Move SystemHealth queries to controller in `get_system_health()` method
+   - Import and call `check_database_health()` directly in controller
+   - Call `self.admin_service.process_system_health_data(health_checks_data, db_healthy)`
+   - Handle database operations in controller
 
-Update AI analysis routes to support FastAPI BackgroundTasks and webhooks. Modify existing endpoints:
+9. **Add helper methods for database operations**:
+   - `_get_user_statistics(session) -> Dict` - get user counts and distribution
+   - `_get_url_check_statistics(session) -> Dict` - get URL check metrics
+   - `_get_traffic_data(session, start_date) -> Tuple` - get traffic analytics data
+   - `_get_threat_data(session, start_date) -> Tuple` - get threat intelligence data
+   - `_get_user_analytics_data(session, start_date) -> Tuple` - get user analytics data
+   - `_get_configuration_data(session, category) -> List` - get configuration settings
+   - `_update_configuration_in_db(session, config, value, user_id) -> Dict` - update configuration
+   - `_get_users_from_db(session, filters, page, limit) -> Tuple` - get paginated users
+   - `_update_user_status_in_db(session, user_id, status) -> Dict` - update user status
+   - `_get_system_health_data(session) -> List` - get health check data
 
-- Add `callback_url: Optional[HttpUrl] = Query(None)` parameter to `/analyze` endpoint
-- Add `async_mode: bool = Query(True)` to allow sync/async choice
-- Add `background_tasks: BackgroundTasks` dependency injection
-- Update response models to include task_id when in async mode
-- Modify `/analysis/{analysis_id}/similar` to support async processing for large similarity searches
+10. **Update error handling**:
+    - Handle database errors separately from business logic errors
+    - Ensure proper error logging for both database and service operations
+    - Update exception handling to work with new service interface
 
-Update the response handling to return 202 Accepted with task information when operating in async mode, or 200 OK with results when operating synchronously.
-
-The existing routes in `src/routes/ai_analysis.py` have good structure but need to be enhanced for async operations with BackgroundTasks.
-
-### src\routes\report.py(MODIFY)
-
-Enhance report routes to support webhook notifications with FastAPI BackgroundTasks. Modify:
-
-- Add `callback_url: Optional[HttpUrl] = Query(None)` to the report creation endpoint
-- Update request models to include webhook configuration
-- Add webhook events for report status changes (assigned, resolved, etc.)
-- Ensure all background operations use the new webhook system
-- Add `background_tasks: BackgroundTasks` dependency where needed
-
-Update response models to include task information when background processing is involved. The existing routes in `src/routes/report.py` already have good structure with BackgroundTasks.
+11. **Add audit logging methods**:
+    - `_log_config_change(session, key, old_value, new_value, user_id)` - log configuration changes
+    - `_log_user_management_action(session, action, target_user_id, admin_user_id, details)` - log user management actions
+    - Handle audit logging in controller using database context manager
 
 ### src\routes\admin.py(MODIFY)
 
-Update admin routes to support FastAPI BackgroundTasks for heavy operations. Add:
+References: 
 
-- `callback_url` parameters for long-running analytics operations
-- `background_tasks: BackgroundTasks` dependency injection
-- Async mode support for dashboard statistics and analytics
-- Webhook notifications for admin events (configuration changes, system alerts)
+- src\controllers\admin_controller.py(MODIFY)
+- src\services\admin_service.py(MODIFY)
+- src\services\depends.py(MODIFY)
 
-Modify endpoints that could benefit from background processing to return task IDs when operating asynchronously. Follow the same patterns established in other route files.
+**Update admin route dependency injection to work with refactored AdminService:**
 
-### app.py(MODIFY)
+1. **Update `get_admin_controller()` function**:
+   - Remove `AdminService(db)` instantiation with database session
+   - Change to: `AdminService()` without database session
+   - Keep database session dependency for AdminController since it needs it for database operations
+   - Update function to:
+     ```python
+     async def get_admin_controller(db: AsyncSession = Depends(get_db_session)) -> AdminController:
+         admin_service = AdminService()
+         # AdminController will use db session via inherited get_db_session() context manager
+         return AdminController(
+             security_service=SecurityService(),
+             auth_service=AuthService(),
+             email_service=EmailService(),
+             admin_service=admin_service
+         )
+     ```
 
-Update the main FastAPI application to include the new task monitoring routes. Add:
+2. **Add service dependency imports**:
+   - Import required services: `from src.services.security_service import SecurityService`
+   - Import auth and email services: `from src.authentication.auth_service import AuthService`
+   - Import email service: `from src.services.email_service import EmailService`
+   - Or use dependency injection functions from services.depends
 
-- Include the new task monitoring router: `app.include_router(tasks_router, prefix="/api", tags=["Tasks"])`
-- Update any global configuration needed for the new services
-- Ensure proper dependency injection setup for the new services
+3. **Update imports**:
+   - Ensure all required service imports are present
+   - Remove any unused imports
 
-The existing `app.py` already has good structure with router inclusion patterns that we can follow.
+4. **Add documentation**:
+   - Add comments explaining that AdminService is now pure business logic
+   - Document that AdminController handles all database operations
+   - Explain the new dependency injection pattern
 
-### src\config\settings.py(MODIFY)
+5. **Verify route functionality**:
+   - Ensure all admin routes work with the new controller structure
+   - Verify that error handling works correctly
+   - Test that authentication and authorization still function properly
 
-Add configuration settings for the new webhook system. Add new configuration sections:
+### src\services\depends.py(MODIFY)
 
-- Webhook settings: default timeout, retry attempts, signature algorithm, max payload size
-- Task tracking settings: retention period, cleanup intervals
-- Webhook security settings: allowed domains, signature validation
-- Background task settings: default timeouts, concurrency limits
+References: 
 
-Integrate these settings with the existing configuration structure. The current `settings.py` already has comprehensive configuration management that we can extend.
+- src\services\admin_service.py(MODIFY)
 
-Based on the file summary, the settings file already has extensive configuration options, so we're adding to the existing structure.
+**Add AdminService dependency function without database session:**
 
-### alembic\versions\003_add_task_tracking.py(NEW)
+1. **Add `get_admin_service()` function**:
+   - Create new dependency function: `async def get_admin_service() -> AdminService:`
+   - Return `AdminService()` without database session
+   - Add proper imports for AdminService
 
-Create database migration for the new task tracking models. This migration will:
+2. **Update imports**:
+   - Add `from src.services.admin_service import AdminService`
+   - Ensure all imports are correct
 
-- Add the `background_tasks` table with columns: id, user_id, task_type, status, progress, result, error_message, created_at, started_at, completed_at
-- Add appropriate indexes for performance on user_id, status, task_type, and created_at
-- Add foreign key constraints between tasks and users
-- Add enum types for TaskStatus and TaskType
+3. **Add documentation**:
+   - Add docstring explaining that AdminService is now pure business logic
+   - Document that database operations are handled by controllers
 
-Follow the same patterns as existing migrations in the `alembic/versions/` directory.
+4. **Keep consistent pattern**:
+   - Follow the same pattern as other refactored services (EmailService, AuthService)
+   - Ensure AdminService follows the pure business logic pattern
+
+5. **Verify dependency chain**:
+   - Ensure AdminService can be properly instantiated without database dependencies
+   - Test that the service works correctly with the new interface
 
 ### src\controllers\depends.py(MODIFY)
 
-Add dependency injection functions for the new services. Add:
+References: 
 
-- `get_webhook_service()` - Returns WebhookService instance
-- `get_task_tracking_service()` - Returns TaskTrackingService instance
-- Update existing controller dependencies to inject the new services
-- Ensure proper dependency management and singleton patterns for service instances
+- src\controllers\admin_controller.py(MODIFY)
+- src\services\depends.py(MODIFY)
 
-The existing `src/controllers/depends.py` likely has patterns we can follow for dependency injection.
+**Add AdminController dependency function using refactored AdminService:**
+
+1. **Add `get_admin_controller()` function**:
+   - Create new dependency function that uses refactored services
+   - Import AdminService from services.depends: `from src.services.depends import get_admin_service`
+   - Create function:
+     ```python
+     async def get_admin_controller(
+         security_service: SecurityService = Depends(get_security_service),
+         auth_service: AuthService = Depends(get_auth_service),
+         email_service: EmailService = Depends(get_email_service),
+         admin_service: AdminService = Depends(get_admin_service)
+     ) -> AdminController:
+         return AdminController(
+             security_service=security_service,
+             auth_service=auth_service,
+             email_service=email_service,
+             admin_service=admin_service
+         )
+     ```
+
+2. **Update imports**:
+   - Add `from src.controllers.admin_controller import AdminController`
+   - Add `from src.services.depends import get_admin_service`
+   - Ensure all required imports are present
+
+3. **Add documentation**:
+   - Add docstring explaining AdminController dependency injection
+   - Document that AdminService is now pure business logic
+   - Explain that database operations are handled by AdminController
+
+4. **Verify consistency**:
+   - Ensure AdminController follows the same pattern as other controllers
+   - Test that all dependencies are correctly resolved
+   - Verify that the controller works with refactored services

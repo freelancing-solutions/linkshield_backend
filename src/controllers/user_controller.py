@@ -2,7 +2,8 @@
 
 This module contains the UserController class that handles all business logic
 for user authentication, registration, profile management, API key management,
-session management, and email verification.
+session management, and email verification. It now includes database operations
+that were previously in AuthService and EmailService.
 """
 
 import uuid
@@ -14,22 +15,29 @@ from typing import Dict, Any, List, Optional, Tuple
 from fastapi import HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc
-
+from sqlalchemy.exc import IntegrityError
 
 from src.controllers.base_controller import BaseController
 from src.models.user import (
     User, UserSession, APIKey, PasswordResetToken,
     EmailVerificationToken
 )
+from src.models.email import EmailLog, EmailType, EmailRequest
 
-from src.services.security_service import (
-    SecurityService
-)
-from src.authentication.auth_service import (
-    AuthService, InvalidCredentialsError
-)
+from src.services.security_service import SecurityService
+from src.authentication.auth_service import AuthService
 from src.services.email_service import EmailService
 from src.services.background_tasks import BackgroundEmailService
+
+
+class InvalidCredentialsError(Exception):
+    """Exception raised for invalid user credentials."""
+    pass
+
+
+class UserRegistrationError(Exception):
+    """Exception raised for user registration errors."""
+    pass
 
 
 class UserController(BaseController):
@@ -47,23 +55,20 @@ class UserController(BaseController):
     
     def __init__(
         self,
-        db_session: Session,
-        security_service: SecurityService = None,
-        auth_service: AuthService = None,
-        email_service: EmailService = None,
+        security_service: SecurityService,
+        auth_service: AuthService,
+        email_service: EmailService,
         background_email_service: BackgroundEmailService = None
     ):
         """Initialize user controller.
         
         Args:
-            db_session: Database session for operations
             security_service: Security service for validation
             auth_service: Authentication service
             email_service: Email service for sending emails
             background_email_service: Background email service for async operations
         """
-        super().__init__(db_session, security_service, auth_service)
-        self.email_service = email_service
+        super().__init__(security_service, auth_service, email_service)
         self.background_email_service = background_email_service
         
         # Rate limits
@@ -119,28 +124,56 @@ class UserController(BaseController):
                     detail="Registration rate limit exceeded. Please try again later."
                 )
         
-        # Check if user already exists
-        existing_user = (
-            self.db_session.query(User)
-            .filter(User.email == email.lower())
-            .first()
-        )
-        
-        if existing_user:
+        # Validate email format
+        if not self.auth_service.validate_email(email):
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="User with this email already exists"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email format"
+            )
+        
+        # Validate password strength
+        if not self.auth_service.check_password_strength(password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password does not meet security requirements"
             )
         
         try:
-            # Create user using auth service
-            user = await self.auth_service.register_user(
-                email=email,
-                password=password,
-                full_name=full_name,
-                company=company,
-                marketing_consent=marketing_consent
-            )
+            async with self.get_db_session() as db:
+                # Check if user already exists
+                existing_user = (
+                    db.query(User)
+                    .filter(User.email == email.lower())
+                    .first()
+                )
+                
+                if existing_user:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="User with this email already exists"
+                    )
+                
+                # Hash password
+                password_hash = self.auth_service.hash_password(password)
+                
+                # Create user
+                user = User(
+                    id=uuid.uuid4(),
+                    email=email.lower(),
+                    password_hash=password_hash,
+                    full_name=full_name,
+                    company=company,
+                    marketing_consent=marketing_consent,
+                    is_active=True,
+                    is_verified=False,
+                    subscription_tier="free",
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc)
+                )
+                
+                db.add(user)
+                db.commit()
+                db.refresh(user)
             
             # Create email verification token
             verification_token = await self._create_email_verification_token(user)
@@ -174,10 +207,12 @@ class UserController(BaseController):
             
             return user
             
-        except UserRegistrationError as e:
+        except HTTPException:
+            raise
+        except IntegrityError:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User with this email already exists"
             )
         except Exception as e:
             raise self.handle_database_error(e, "user registration")
@@ -217,14 +252,45 @@ class UserController(BaseController):
                 )
         
         try:
-            # Authenticate user
-            user = await self.auth_service.authenticate_user(email, password)
-            
-            if not user.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Account is deactivated"
+            async with self.get_db_session() as db:
+                # Find user by email
+                user = (
+                    db.query(User)
+                    .filter(User.email == email.lower())
+                    .first()
                 )
+                
+                if not user:
+                    raise InvalidCredentialsError("Invalid email or password")
+                
+                # Check if account is locked
+                if self._is_account_locked(user):
+                    raise HTTPException(
+                        status_code=status.HTTP_423_LOCKED,
+                        detail="Account is temporarily locked due to too many failed login attempts"
+                    )
+                
+                # Verify password
+                if not self.auth_service.verify_password(password, user.password_hash):
+                    # Record failed login attempt
+                    await self._record_failed_login(user)
+                    raise InvalidCredentialsError("Invalid email or password")
+                
+                # Reset failed login attempts on successful login
+                user.failed_login_attempts = 0
+                user.locked_until = None
+                
+                if not user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Account is deactivated"
+                    )
+                
+                # Update last login timestamp
+                user.last_login_at = datetime.now(timezone.utc)
+                db.add(user)
+                db.commit()
+                db.refresh(user)
             
             # Create user session
             session_duration = timedelta(days=30 if remember_me else 1)
@@ -233,15 +299,11 @@ class UserController(BaseController):
             )
             
             # Generate access token
-            access_token = await self.auth_service.create_access_token(
+            access_token = self.auth_service.create_access_token(
                 user_id=user.id,
                 session_id=session.id,
                 expires_delta=session_duration
             )
-            
-            # Update last login timestamp
-            user.last_login_at = datetime.utcnow()
-            await self.db_session.commit()
             
             # Log the operation
             self.log_operation(
@@ -261,6 +323,8 @@ class UserController(BaseController):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password"
             )
+        except HTTPException:
+            raise
         except Exception as e:
             raise self.handle_database_error(e, "user login")
     
@@ -279,36 +343,35 @@ class UserController(BaseController):
             HTTPException: If logout fails
         """
         try:
-            if session_id:
-                # Invalidate specific session
-                session = (
-                    self.db_session.query(UserSession)
-                    .filter(
+            async with self.get_db_session() as session:
+                if session_id:
+                    # Invalidate specific session
+                    session_obj = (
+                        session.query(UserSession)
+                        .filter(
+                            and_(
+                                UserSession.id == session_id,
+                                UserSession.user_id == user.id,
+                                UserSession.is_active == True
+                            )
+                        )
+                        .first()
+                    )
+                    
+                    if session_obj:
+                        session_obj.is_active = False
+                        session_obj.ended_at = datetime.utcnow()
+                else:
+                    # Invalidate all user sessions
+                    session.query(UserSession).filter(
                         and_(
-                            UserSession.id == session_id,
                             UserSession.user_id == user.id,
                             UserSession.is_active == True
                         )
-                    )
-                    .first()
-                )
-                
-                if session:
-                    session.is_active = False
-                    session.ended_at = datetime.utcnow()
-            else:
-                # Invalidate all user sessions
-                self.db_session.query(UserSession).filter(
-                    and_(
-                        UserSession.user_id == user.id,
-                        UserSession.is_active == True
-                    )
-                ).update({
-                    "is_active": False,
-                    "ended_at": datetime.utcnow()
-                })
-            
-            await self.db_session.commit()
+                    ).update({
+                        "is_active": False,
+                        "ended_at": datetime.utcnow()
+                    })
             
             # Log the operation
             self.log_operation(
@@ -379,8 +442,10 @@ class UserController(BaseController):
                 user.language = language
             
             user.updated_at = datetime.now(timezone.utc)
-            await self.db_session.commit()
-            await self.db_session.refresh(user)
+            
+            async with self.get_db_session() as session:
+                session.add(user)
+                await session.refresh(user)
             
             # Log the operation
             self.log_operation(
@@ -420,37 +485,46 @@ class UserController(BaseController):
         """
         try:
             # Verify current password
-            if not await self.auth_service.verify_password(current_password, user.password_hash):
+            if not self.auth_service.verify_password(current_password, user.password_hash):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Current password is incorrect"
                 )
             
             # Check if new password is different
-            if await self.auth_service.verify_password(new_password, user.password_hash):
+            if self.auth_service.verify_password(new_password, user.password_hash):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="New password must be different from current password"
                 )
             
-            # Update password
-            user.password_hash = await self.auth_service.hash_password(new_password)
-            user.password_changed_at = datetime.now(timezone.utc)
-            user.updated_at = datetime.now(timezone.utc)
-            
-            # Invalidate all existing sessions except current one
-            # This forces re-authentication on other devices
-            self.db_session.query(UserSession).filter(
-                and_(
-                    UserSession.user_id == user.id,
-                    UserSession.is_active == True
+            # Validate new password strength
+            if not self.auth_service.check_password_strength(new_password):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="New password does not meet security requirements"
                 )
-            ).update({
-                "is_active": False,
-                "ended_at": datetime.now(timezone.utc)
-            })
             
-            await self.db_session.commit()
+            # Update password and invalidate sessions within context manager
+            async with self.get_db_session() as db:
+                user.password_hash = self.auth_service.hash_password(new_password)
+                user.password_changed_at = datetime.now(timezone.utc)
+                user.updated_at = datetime.now(timezone.utc)
+                
+                # Invalidate all existing sessions except current one
+                # This forces re-authentication on other devices
+                db.query(UserSession).filter(
+                    and_(
+                        UserSession.user_id == user.id,
+                        UserSession.is_active == True
+                    )
+                ).update({
+                    "is_active": False,
+                    "ended_at": datetime.now(timezone.utc)
+                })
+                
+                db.add(user)
+                db.commit()
             
             # Log the operation
             self.log_operation(
@@ -491,12 +565,13 @@ class UserController(BaseController):
                     detail="Password reset rate limit exceeded. Please try again later."
                 )
         
-        # Find user by email
-        user = (
-            self.db_session.query(User)
-            .filter(User.email == email.lower())
-            .first()
-        )
+        # Find user by email within context manager
+        async with self.get_db_session() as session:
+            user = (
+                session.query(User)
+                .filter(User.email == email.lower())
+                .first()
+            )
         
         # Always return success to prevent email enumeration
         if user and user.is_active:
@@ -514,7 +589,7 @@ class UserController(BaseController):
                 elif background_tasks:
                     background_tasks.add_task(
                         self._send_password_reset_email,
-                        email,
+                        user,
                         reset_token.token
                     )
                 
@@ -546,59 +621,69 @@ class UserController(BaseController):
             HTTPException: If token is invalid or expired
         """
         try:
-            # Find and validate reset token
-            reset_token = (
-                self.db_session.query(PasswordResetToken)
-                .filter(
-                    and_(
-                        PasswordResetToken.token == token,
-                        PasswordResetToken.is_used == False,
-                        PasswordResetToken.expires_at > datetime.utcnow()
+            # Validate new password strength
+            if not self.auth_service.check_password_strength(new_password):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="New password does not meet security requirements"
+                )
+            
+            # Find and validate reset token within context manager
+            async with self.get_db_session() as db:
+                reset_token = (
+                    db.query(PasswordResetToken)
+                    .filter(
+                        and_(
+                            PasswordResetToken.token == token,
+                            PasswordResetToken.is_used == False,
+                            PasswordResetToken.expires_at > datetime.now(timezone.utc)
+                        )
                     )
+                    .first()
                 )
-                .first()
-            )
-            
-            if not reset_token:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid or expired reset token"
+                
+                if not reset_token:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid or expired reset token"
+                    )
+                
+                # Get user
+                user = (
+                    db.query(User)
+                    .filter(User.id == reset_token.user_id)
+                    .first()
                 )
-            
-            # Get user
-            user = (
-                self.db_session.query(User)
-                .filter(User.id == reset_token.user_id)
-                .first()
-            )
-            
-            if not user or not user.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid reset token"
-                )
-            
-            # Update password
-            user.password_hash = await self.auth_service.hash_password(new_password)
-            user.password_changed_at = datetime.utcnow()
-            user.updated_at = datetime.utcnow()
-            
-            # Mark token as used
-            reset_token.is_used = True
-            reset_token.used_at = datetime.utcnow()
-            
-            # Invalidate all user sessions
-            self.db_session.query(UserSession).filter(
-                and_(
-                    UserSession.user_id == user.id,
-                    UserSession.is_active == True
-                )
-            ).update({
-                "is_active": False,
-                "ended_at": datetime.utcnow()
-            })
-            
-            await self.db_session.commit()
+                
+                if not user or not user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid reset token"
+                    )
+                
+                # Update password
+                user.password_hash = self.auth_service.hash_password(new_password)
+                user.password_changed_at = datetime.now(timezone.utc)
+                user.updated_at = datetime.now(timezone.utc)
+                
+                # Mark token as used
+                reset_token.is_used = True
+                reset_token.used_at = datetime.now(timezone.utc)
+                
+                # Invalidate all user sessions
+                db.query(UserSession).filter(
+                    and_(
+                        UserSession.user_id == user.id,
+                        UserSession.is_active == True
+                    )
+                ).update({
+                    "is_active": False,
+                    "ended_at": datetime.now(timezone.utc)
+                })
+                
+                db.add(user)
+                db.add(reset_token)
+                db.commit()
             
             # Log the operation
             self.log_operation(
@@ -657,17 +742,18 @@ class UserController(BaseController):
                 detail=f"Invalid permissions: {', '.join(invalid_perms)}"
             )
         
-        # Check if user already has too many API keys
-        existing_keys_count = (
-            self.db_session.query(APIKey)
-            .filter(
-                and_(
-                    APIKey.user_id == user.id,
-                    APIKey.is_active == True
+        # Check if user already has too many API keys within context manager
+        async with self.get_db_session() as session:
+            existing_keys_count = (
+                session.query(APIKey)
+                .filter(
+                    and_(
+                        APIKey.user_id == user.id,
+                        APIKey.is_active == True
+                    )
                 )
+                .count()
             )
-            .count()
-        )
         
         max_keys = 10 if user.subscription_tier == "premium" else 3
         if existing_keys_count >= max_keys:
@@ -681,23 +767,24 @@ class UserController(BaseController):
             raw_key = secrets.token_urlsafe(32)
             key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
             
-            # Create API key record
-            api_key = APIKey(
-                id=uuid.uuid4(),
-                user_id=user.id,
-                name=name,
-                description=description,
-                key_hash=key_hash,
-                key_preview=raw_key[:8] + "...",
-                permissions=permissions,
-                expires_at=expires_at,
-                is_active=True,
-                created_at=datetime.utcnow()
-            )
-            
-            self.db_session.add(api_key)
-            await self.db_session.commit()
-            await self.db_session.refresh(api_key)
+            # Create API key record within context manager
+            async with self.get_db_session() as db:
+                api_key = APIKey(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    name=name,
+                    description=description,
+                    key_hash=key_hash,
+                    key_preview=raw_key[:8] + "...",
+                    permissions=permissions,
+                    expires_at=expires_at,
+                    is_active=True,
+                    created_at=datetime.now(timezone.utc)
+                )
+                
+                db.add(api_key)
+                db.commit()
+                db.refresh(api_key)
             
             # Log the operation
             self.log_operation(
@@ -715,34 +802,50 @@ class UserController(BaseController):
         except Exception as e:
             raise self.handle_database_error(e, "API key creation")
     
-    async def list_api_keys(self, user: User) -> List[APIKey]:
+    async def list_api_keys(
+        self,
+        user: User,
+        request: Optional[Request] = None
+    ) -> List[Dict[str, Any]]:
         """List user's API keys.
         
         Args:
-            user: Current user
+            user: User to list API keys for
+            request: HTTP request for logging
             
         Returns:
-            List[APIKey]: User's API keys
+            List of API key info (without raw keys)
         """
-        api_keys = (
-            self.db_session.query(APIKey)
-            .filter(
-                and_(
-                    APIKey.user_id == user.id,
-                    APIKey.is_active == True
+        try:
+            async with self.get_db_session() as db:
+                api_keys = (
+                    db.query(APIKey)
+                    .filter(
+                        and_(
+                            APIKey.user_id == user.id,
+                            APIKey.is_active == True
+                        )
+                    )
+                    .order_by(APIKey.created_at.desc())
+                    .all()
                 )
-            )
-            .order_by(desc(APIKey.created_at))
-            .all()
-        )
-        
-        self.log_operation(
-            "API keys listed",
-            user_id=user.id,
-            details={"count": len(api_keys)}
-        )
-        
-        return api_keys
+            
+            return [
+                {
+                    "id": str(key.id),
+                    "name": key.name,
+                    "description": key.description,
+                    "key_preview": key.key_preview,
+                    "permissions": key.permissions,
+                    "expires_at": key.expires_at.isoformat() if key.expires_at else None,
+                    "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None,
+                    "created_at": key.created_at.isoformat()
+                }
+                for key in api_keys
+            ]
+            
+        except Exception as e:
+            raise self.handle_database_error(e, "API key listing")
     
     async def delete_api_key(
         self,
@@ -758,30 +861,32 @@ class UserController(BaseController):
         Raises:
             HTTPException: If key not found or access denied
         """
-        api_key = (
-            self.db_session.query(APIKey)
-            .filter(
-                and_(
-                    APIKey.id == key_id,
-                    APIKey.user_id == user.id,
-                    APIKey.is_active == True
-                )
-            )
-            .first()
-        )
-        
-        if not api_key:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="API key not found"
-            )
-        
         try:
-            # Soft delete API key
-            api_key.is_active = False
-            api_key.deleted_at = datetime.utcnow()
-            
-            await self.db_session.commit()
+            async with self.get_db_session() as db:
+                api_key = (
+                    db.query(APIKey)
+                    .filter(
+                        and_(
+                            APIKey.id == key_id,
+                            APIKey.user_id == user.id,
+                            APIKey.is_active == True
+                        )
+                    )
+                    .first()
+                )
+                
+                if not api_key:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="API key not found"
+                    )
+                
+                # Soft delete API key
+                api_key.is_active = False
+                api_key.deleted_at = datetime.now(timezone.utc)
+                
+                db.add(api_key)
+                db.commit()
             
             # Log the operation
             self.log_operation(
@@ -789,39 +894,64 @@ class UserController(BaseController):
                 user_id=user.id,
                 details={"key_id": str(key_id), "name": api_key.name}
             )
-            
+                
+        except HTTPException:
+            raise
         except Exception as e:
             raise self.handle_database_error(e, "API key deletion")
     
-    async def list_user_sessions(self, user: User) -> List[UserSession]:
+    async def list_user_sessions(
+        self,
+        user: User,
+        request: Optional[Request] = None
+    ) -> List[Dict[str, Any]]:
         """List user's active sessions.
         
         Args:
             user: Current user
+            request: HTTP request for logging
             
         Returns:
-            List[UserSession]: User's active sessions
+            List of user session info
         """
-        sessions = (
-            self.db_session.query(UserSession)
-            .filter(
-                and_(
-                    UserSession.user_id == user.id,
-                    UserSession.is_active == True,
-                    UserSession.expires_at > datetime.utcnow()
+        try:
+            async with self.get_db_session() as db:
+                user_sessions = (
+                    db.query(UserSession)
+                    .filter(
+                        and_(
+                            UserSession.user_id == user.id,
+                            UserSession.is_active == True,
+                            UserSession.expires_at > datetime.now(timezone.utc)
+                        )
+                    )
+                    .order_by(UserSession.created_at.desc())
+                    .all()
                 )
+            
+            # Log the operation
+            self.log_operation(
+                "User sessions listed",
+                user_id=user.id,
+                details={"count": len(user_sessions)}
             )
-            .order_by(desc(UserSession.last_activity_at))
-            .all()
-        )
-        
-        self.log_operation(
-            "User sessions listed",
-            user_id=user.id,
-            details={"count": len(sessions)}
-        )
-        
-        return sessions
+            
+            return [
+                {
+                    "id": str(session.id),
+                    "device_info": session.device_info,
+                    "ip_address": session.ip_address,
+                    "user_agent": session.user_agent,
+                    "created_at": session.created_at.isoformat(),
+                    "last_activity_at": session.last_activity_at.isoformat() if session.last_activity_at else None,
+                    "expires_at": session.expires_at.isoformat() if session.expires_at else None,
+                    "is_current": session.id == getattr(request, 'session_id', None) if request else False
+                }
+                for session in user_sessions
+            ]
+            
+        except Exception as e:
+            raise self.handle_database_error(e, "user sessions listing")
     
     async def terminate_session(
         self,
@@ -837,30 +967,32 @@ class UserController(BaseController):
         Raises:
             HTTPException: If session not found or access denied
         """
-        session = (
-            self.db_session.query(UserSession)
-            .filter(
-                and_(
-                    UserSession.id == session_id,
-                    UserSession.user_id == user.id,
-                    UserSession.is_active == True
-                )
-            )
-            .first()
-        )
-        
-        if not session:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Session not found"
-            )
-        
         try:
-            # Terminate session
-            session.is_active = False
-            session.ended_at = datetime.utcnow()
-            
-            await self.db_session.commit()
+            async with self.get_db_session() as db:
+                user_session = (
+                    db.query(UserSession)
+                    .filter(
+                        and_(
+                            UserSession.id == session_id,
+                            UserSession.user_id == user.id,
+                            UserSession.is_active == True
+                        )
+                    )
+                    .first()
+                )
+                
+                if not user_session:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Session not found"
+                    )
+                
+                # Terminate session
+                user_session.is_active = False
+                user_session.ended_at = datetime.now(timezone.utc)
+                
+                db.add(user_session)
+                db.commit()
             
             # Log the operation
             self.log_operation(
@@ -868,44 +1000,52 @@ class UserController(BaseController):
                 user_id=user.id,
                 details={"session_id": str(session_id)}
             )
-            
+                
+        except HTTPException:
+            raise
         except Exception as e:
             raise self.handle_database_error(e, "session termination")
     
-    async def terminate_all_sessions(self, user: User) -> int:
+    async def terminate_all_sessions(
+        self,
+        user: User,
+        request: Optional[Request] = None
+    ) -> int:
         """Terminate all user sessions.
         
         Args:
             user: Current user
+            request: HTTP request for logging
             
         Returns:
-            int: Number of sessions terminated
+            Number of sessions terminated
         """
         try:
-            # Get count of active sessions
-            active_sessions_count = (
-                self.db_session.query(UserSession)
-                .filter(
+            async with self.get_db_session() as db:
+                # Get count of active sessions
+                active_sessions_count = (
+                    db.query(UserSession)
+                    .filter(
+                        and_(
+                            UserSession.user_id == user.id,
+                            UserSession.is_active == True
+                        )
+                    )
+                    .count()
+                )
+                
+                # Terminate all active sessions
+                db.query(UserSession).filter(
                     and_(
                         UserSession.user_id == user.id,
                         UserSession.is_active == True
                     )
-                )
-                .count()
-            )
-            
-            # Terminate all active sessions
-            self.db_session.query(UserSession).filter(
-                and_(
-                    UserSession.user_id == user.id,
-                    UserSession.is_active == True
-                )
-            ).update({
-                "is_active": False,
-                "ended_at": datetime.utcnow()
-            })
-            
-            await self.db_session.commit()
+                ).update({
+                    "is_active": False,
+                    "ended_at": datetime.now(timezone.utc)
+                })
+                
+                db.commit()
             
             # Log the operation
             self.log_operation(
@@ -935,49 +1075,52 @@ class UserController(BaseController):
             HTTPException: If token is invalid or expired
         """
         try:
-            # Find and validate verification token
-            verification_token = (
-                self.db_session.query(EmailVerificationToken)
-                .filter(
-                    and_(
-                        EmailVerificationToken.token == token,
-                        EmailVerificationToken.is_used == False,
-                        EmailVerificationToken.expires_at > datetime.utcnow()
+            async with self.get_db_session() as db:
+                # Find and validate verification token
+                verification_token = (
+                    db.query(EmailVerificationToken)
+                    .filter(
+                        and_(
+                            EmailVerificationToken.token == token,
+                            EmailVerificationToken.is_used == False,
+                            EmailVerificationToken.expires_at > datetime.now(timezone.utc)
+                        )
                     )
+                    .first()
                 )
-                .first()
-            )
-            
-            if not verification_token:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid or expired verification token"
+                
+                if not verification_token:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid or expired verification token"
+                    )
+                
+                # Get user
+                user = (
+                    db.query(User)
+                    .filter(User.id == verification_token.user_id)
+                    .first()
                 )
-            
-            # Get user
-            user = (
-                self.db_session.query(User)
-                .filter(User.id == verification_token.user_id)
-                .first()
-            )
-            
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid verification token"
-                )
-            
-            # Mark email as verified
-            user.is_verified = True
-            user.email_verified_at = datetime.utcnow()
-            user.updated_at = datetime.utcnow()
-            
-            # Mark token as used
-            verification_token.is_used = True
-            verification_token.used_at = datetime.utcnow()
-            
-            await self.db_session.commit()
-            await self.db_session.refresh(user)
+                
+                if not user:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid verification token"
+                    )
+                
+                # Mark email as verified
+                user.is_verified = True
+                user.email_verified_at = datetime.now(timezone.utc)
+                user.updated_at = datetime.now(timezone.utc)
+                
+                # Mark token as used
+                verification_token.is_used = True
+                verification_token.used_at = datetime.now(timezone.utc)
+                
+                db.add(user)
+                db.add(verification_token)
+                db.commit()
+                db.refresh(user)
             
             # Log the operation
             self.log_operation(
@@ -996,57 +1139,51 @@ class UserController(BaseController):
     async def resend_verification_email(
         self,
         user: User,
-        background_tasks: Optional[BackgroundTasks] = None
+        request: Optional[Request] = None
     ) -> None:
         """Resend email verification.
         
         Args:
-            user: Current user
-            background_tasks: FastAPI background tasks
+            user: User to resend verification for
+            request: HTTP request for logging
             
         Raises:
-            HTTPException: If user is already verified or rate limit exceeded
+            HTTPException: If user already verified or rate limit exceeded
         """
-        if user.is_verified:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email is already verified"
-            )
-        
-        # Check rate limits
-        if not await self.check_rate_limit(
-            user.id, "email_verification", 3, window_seconds=3600
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Email verification rate limit exceeded"
-            )
-        
         try:
+            # Check if user is already verified
+            if user.is_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email is already verified"
+                )
+            
+            # Check rate limit
+            if not self.security_service.check_rate_limit(
+                f"verification_resend:{user.id}",
+                max_attempts=3,
+                window_minutes=15
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Too many verification email requests"
+                )
+            
             # Create new verification token
             verification_token = await self._create_email_verification_token(user)
             
-            # Queue verification email for background sending
-            if self.background_email_service:
-                self.background_email_service.queue_verification_email(
-                    user.email,
-                    user.full_name.split()[0] if user.full_name else "User",  # First name
-                    verification_token.token
-                )
-            elif background_tasks:
-                background_tasks.add_task(
-                    self._send_verification_email,
-                    user.email,
-                    user.full_name,
-                    verification_token.token
-                )
+            # Queue verification email
+            await self._send_verification_email(user, verification_token.token)
             
             # Log the operation
             self.log_operation(
                 "Verification email resent",
-                user_id=user.id
+                user_id=user.id,
+                details={"token_id": str(verification_token.id)}
             )
             
+        except HTTPException:
+            raise
         except Exception as e:
             raise self.handle_database_error(e, "verification email resend")
     
@@ -1070,23 +1207,24 @@ class UserController(BaseController):
         Returns:
             UserSession: Created session
         """
-        session = UserSession(
-            id=uuid.uuid4(),
-            user_id=user.id,
-            device_info=device_info,
-            ip_address=request.client.host if request else None,
-            user_agent=request.headers.get("user-agent") if request else None,
-            is_active=True,
-            expires_at=datetime.utcnow() + duration,
-            last_activity_at=datetime.utcnow(),
-            created_at=datetime.utcnow()
-        )
-        
-        self.db_session.add(session)
-        await self.db_session.commit()
-        await self.db_session.refresh(session)
-        
-        return session
+        async with self.get_db_session() as db:
+            user_session = UserSession(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                device_info=device_info,
+                ip_address=request.client.host if request else None,
+                user_agent=request.headers.get("user-agent") if request else None,
+                is_active=True,
+                expires_at=datetime.now(timezone.utc) + duration,
+                last_activity_at=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc)
+            )
+            
+            db.add(user_session)
+            db.commit()
+            db.refresh(user_session)
+            
+            return user_session
     
     async def _create_email_verification_token(self, user: User) -> EmailVerificationToken:
         """Create email verification token.
@@ -1097,29 +1235,30 @@ class UserController(BaseController):
         Returns:
             EmailVerificationToken: Created token
         """
-        # Invalidate existing tokens
-        self.db_session.query(EmailVerificationToken).filter(
-            and_(
-                EmailVerificationToken.user_id == user.id,
-                EmailVerificationToken.is_used == False
+        async with self.get_db_session() as db:
+            # Invalidate existing tokens
+            db.query(EmailVerificationToken).filter(
+                and_(
+                    EmailVerificationToken.user_id == user.id,
+                    EmailVerificationToken.is_used == False
+                )
+            ).update({"is_used": True, "used_at": datetime.now(timezone.utc)})
+            
+            # Create new token
+            token = EmailVerificationToken(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                token=secrets.token_urlsafe(32),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                is_used=False,
+                created_at=datetime.now(timezone.utc)
             )
-        ).update({"is_used": True, "used_at": datetime.utcnow()})
-        
-        # Create new token
-        token = EmailVerificationToken(
-            id=uuid.uuid4(),
-            user_id=user.id,
-            token=secrets.token_urlsafe(32),
-            expires_at=datetime.utcnow() + timedelta(hours=24),
-            is_used=False,
-            created_at=datetime.utcnow()
-        )
-        
-        self.db_session.add(token)
-        await self.db_session.commit()
-        await self.db_session.refresh(token)
-        
-        return token
+            
+            db.add(token)
+            db.commit()
+            db.refresh(token)
+            
+            return token
     
     async def _create_password_reset_token(self, user: User) -> PasswordResetToken:
         """Create password reset token.
@@ -1130,41 +1269,40 @@ class UserController(BaseController):
         Returns:
             PasswordResetToken: Created token
         """
-        # Invalidate existing tokens
-        self.db_session.query(PasswordResetToken).filter(
-            and_(
-                PasswordResetToken.user_id == user.id,
-                PasswordResetToken.is_used == False
+        async with self.get_db_session() as db:
+            # Invalidate existing tokens
+            db.query(PasswordResetToken).filter(
+                and_(
+                    PasswordResetToken.user_id == user.id,
+                    PasswordResetToken.is_used == False
+                )
+            ).update({"is_used": True, "used_at": datetime.now(timezone.utc)})
+            
+            # Create new token
+            token = PasswordResetToken(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                token=secrets.token_urlsafe(32),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                is_used=False,
+                created_at=datetime.now(timezone.utc)
             )
-        ).update({"is_used": True, "used_at": datetime.utcnow()})
-        
-        # Create new token
-        token = PasswordResetToken(
-            id=uuid.uuid4(),
-            user_id=user.id,
-            token=secrets.token_urlsafe(32),
-            expires_at=datetime.utcnow() + timedelta(hours=1),
-            is_used=False,
-            created_at=datetime.utcnow()
-        )
-        
-        self.db_session.add(token)
-        await self.db_session.commit()
-        await self.db_session.refresh(token)
-        
-        return token
+            
+            db.add(token)
+            db.commit()
+            db.refresh(token)
+            
+            return token
     
     async def _send_verification_email(
         self,
-        email: str,
-        full_name: str,
+        user: User,
         token: str
     ) -> None:
         """Send email verification email.
         
         Args:
-            email: User email address
-            full_name: User full name
+            user: User to send verification email to
             token: Verification token
         """
         if self.email_service:
@@ -1175,11 +1313,11 @@ class UserController(BaseController):
             verification_url = f"{settings.APP_URL}/verify-email?token={token}"
             
             email_request = EmailRequest(
-                to=email,
+                to=user.email,
                 subject=f"Verify your {settings.APP_NAME} account",
                 email_type=EmailType.VERIFICATION,
                 template_variables={
-                    "user_name": full_name.split()[0] if full_name else "User",
+                    "user_name": user.full_name.split()[0] if user.full_name else "User",
                     "verification_url": verification_url,
                     "expiry_hours": 24,
                     "current_year": datetime.now().year
@@ -1190,19 +1328,19 @@ class UserController(BaseController):
         else:
             # Fallback: just log the email
             self.logger.info(
-                f"Sending verification email to {email} for {full_name} with token {token}"
+                f"Sending verification email to {user.email} for {user.full_name} with token {token}"
             )
     
     async def _send_password_reset_email(
         self,
-        email: str,
+        user: User,
         token: str
     ) -> None:
         """Send password reset email.
         
         Args:
-            email: User email address
-            token: Reset token
+            user: User to send password reset email to
+            token: Password reset token
         """
         if self.email_service:
             from src.models.email import EmailRequest, EmailType
@@ -1211,16 +1349,12 @@ class UserController(BaseController):
             settings = get_settings()
             reset_url = f"{settings.APP_URL}/reset-password?token={token}"
             
-            # Get user name from database
-            user = self.db_session.query(User).filter(User.email == email).first()
-            user_name = user.full_name.split()[0] if user and user.full_name else "User"
-            
             email_request = EmailRequest(
-                to=email,
+                to=user.email,
                 subject=f"Reset your {settings.APP_NAME} password",
                 email_type=EmailType.PASSWORD_RESET,
                 template_variables={
-                    "user_name": user_name,
+                    "user_name": user.full_name.split()[0] if user.full_name else "User",
                     "reset_url": reset_url,
                     "expiry_hours": 1,
                     "current_year": datetime.now().year
@@ -1231,5 +1365,5 @@ class UserController(BaseController):
         else:
             # Fallback: just log the email
             self.logger.info(
-                f"Sending password reset email to {email} with token {token}"
+                f"Sending password reset email to {user.email} with token {token}"
             )

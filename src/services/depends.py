@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException
 from src.authentication.auth_service import AuthService
 from src.config.database import AsyncSession, get_db_session
+from src.services.admin_service import AdminService
 from src.services.ai_service import AIService
 from src.services.ai_analysis_service import AIAnalysisService
 from src.services.email_service import EmailService
@@ -10,28 +11,33 @@ from src.services.security_service import SecurityService
 from src.services.url_analysis_service import URLAnalysisService
 from src.models import User
 
-async def get_email_service(db_session: AsyncSession = Depends(get_db_session)):
+async def get_email_service():
     """
+    Get EmailService instance without database session dependency.
+    """
+    return EmailService()
 
+async def get_security_service() -> SecurityService:
     """
-    return EmailService(db_session=db_session)
-
-async def get_security_service(db_session: AsyncSession = Depends(get_db_session)) -> SecurityService:
+    Get SecurityService instance without database session dependency.
     """
-    """
-    security_service = SecurityService(db_session=db_session)
-    return security_service
+    return SecurityService()
 
 async def get_auth_service(
-    db_session: AsyncSession = Depends(get_db_session),
     email_service: EmailService = Depends(get_email_service),
     security_service: SecurityService = Depends(get_security_service)
     ) -> AuthService:
     """
-
+    Get AuthService instance without database session dependency.
     """
-    return AuthService(get_db_session=db_session, email_service=email_service, security_service=security_service)
+    return AuthService(email_service=email_service, security_service=security_service)
 
+async def get_admin_service() -> AdminService:
+    """
+    Get AdminService instance without database session dependency.
+    Pure business logic service for data processing and validation.
+    """
+    return AdminService()
 
 async def get_rate_limits(user: Optional[User], db: AsyncSession = Depends(get_db_session), security_service: SecurityService = Depends(get_security_service)) -> None:
     """
@@ -51,6 +57,7 @@ async def get_rate_limits(user: Optional[User], db: AsyncSession = Depends(get_d
 
 async def get_ai_service() -> AIService:
     """
+    Get AIService instance (pure business logic, no database dependency).
     """
     return AIService()
 
@@ -60,5 +67,8 @@ async def get_ai_analysis_service(db_session: AsyncSession = Depends(get_db_sess
     """
     return AIAnalysisService(db_session=db_session)
 
-async def get_url_analysis_service(db_session: AsyncSession = Depends(get_db_session), ai_service:AIService = Depends(get_ai_service)) -> URLAnalysisService:
-    return URLAnalysisService(db_session=db_session, ai_service=ai_service)
+async def get_url_analysis_service(ai_service: AIService = Depends(get_ai_service)) -> URLAnalysisService:
+    """
+    Get URL analysis service instance (pure business logic, no database dependency).
+    """
+    return URLAnalysisService(ai_service=ai_service)

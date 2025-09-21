@@ -7,7 +7,7 @@ configuration management, user administration, and system monitoring.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 
 from fastapi import HTTPException, BackgroundTasks
@@ -15,10 +15,15 @@ from loguru import logger
 
 from src.controllers.base_controller import BaseController
 from src.services.admin_service import AdminService, AdminServiceError, ConfigurationError
-from src.services.webhook_service import get_webhook_service
-from src.services.task_tracking_service import get_task_tracking_service
-from src.models.user import User
+from src.services.security_service import SecurityService
+from src.authentication.auth_service import AuthService
+from src.services.email_service import EmailService
+from src.models.user import User, UserRole, UserSession
+from src.models.url_check import URLCheck, ScanResult, ThreatLevel
+from src.models.ai_analysis import AIAnalysis, AnalysisType, ProcessingStatus
+from src.models.admin import AdminAction, AdminSession
 from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
+from src.models.configuration import Configuration
 
 
 class AdminController(BaseController):
@@ -29,14 +34,23 @@ class AdminController(BaseController):
     and system health monitoring for administrative users.
     """
     
-    def __init__(self, admin_service: AdminService):
+    def __init__(
+        self,
+        security_service: SecurityService,
+        auth_service: AuthService,
+        email_service: EmailService,
+        admin_service: AdminService
+    ):
         """
         Initialize the admin controller.
         
         Args:
+            security_service: Security service for validation
+            auth_service: Authentication service
+            email_service: Email service for notifications
             admin_service: Admin service instance
         """
-        super().__init__()
+        super().__init__(security_service, auth_service, email_service)
         self.admin_service = admin_service
     
     # Dashboard Statistics Methods
@@ -51,7 +65,75 @@ class AdminController(BaseController):
         try:
             self.logger.info("Fetching dashboard statistics")
             
-            statistics = await self.admin_service.get_system_statistics()
+            # Get database session and fetch raw data
+            async with self.get_db_session() as db:
+                # Query user statistics
+                total_users = await db.query(User).count()
+                active_users = await db.query(User).filter(User.is_active == True).count()
+                verified_users = await db.query(User).filter(User.is_verified == True).count()
+                
+                # Query role distribution
+                role_stats = await db.query(
+                    UserRole.name, 
+                    db.func.count(User.id).label('count')
+                ).join(User).group_by(UserRole.name).all()
+                
+                # Query subscription statistics
+                subscription_stats = await db.query(
+                    User.subscription_tier,
+                    db.func.count(User.id).label('count')
+                ).group_by(User.subscription_tier).all()
+                
+                # Query URL check statistics
+                total_checks = await db.query(URLCheck).count()
+                checks_today = await db.query(URLCheck).filter(
+                    URLCheck.created_at >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+                ).count()
+                threats_detected = await db.query(URLCheck).filter(URLCheck.threat_level != ThreatLevel.SAFE).count()
+                
+                # Query AI analysis statistics
+                total_analyses = await db.query(AIAnalysis).count()
+                analyses_today = await db.query(AIAnalysis).filter(
+                    AIAnalysis.created_at >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+                ).count()
+                
+                # Query recent activity (last 24 hours)
+                recent_activity = await db.query(URLCheck).filter(
+                    URLCheck.created_at >= datetime.now(timezone.utc) - timedelta(hours=24)
+                ).order_by(URLCheck.created_at.desc()).limit(10).all()
+                
+                # Prepare data for AdminService processing
+                users_data = {
+                    'total': total_users,
+                    'active': active_users,
+                    'verified': verified_users,
+                    'role_distribution': {role.name: role.count for role in role_stats},
+                    'subscription_distribution': {sub.subscription_tier: sub.count for sub in subscription_stats}
+                }
+                
+                url_checks_data = {
+                    'total': total_checks,
+                    'today': checks_today,
+                    'threats_detected': threats_detected
+                }
+                
+                ai_analyses_data = {
+                    'total': total_analyses,
+                    'today': analyses_today,
+                    'recent_activity': [
+                        {
+                            'id': str(activity.id),
+                            'url': activity.url,
+                            'threat_level': activity.threat_level.value,
+                            'created_at': activity.created_at.isoformat()
+                        } for activity in recent_activity
+                    ]
+                }
+            
+            # Process data using AdminService
+            statistics = self.admin_service.process_system_statistics(
+                users_data, url_checks_data, ai_analyses_data
+            )
             
             self.logger.info("Dashboard statistics retrieved successfully")
             return {
@@ -97,96 +179,95 @@ class AdminController(BaseController):
         webhook_service = get_webhook_service()
         
         try:
-            # Get database session
-            db = await self.get_db_session()
-            
-            # Update task status to running
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=10
-            )
-            
-            self.logger.info(f"Starting async user export (task: {task_id})")
-            
-            # Fetch all user data (potentially large dataset)
-            users_data = await self.admin_service.get_users(page, limit, filters)
-            
-            # Update progress
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=50
-            )
-            
-            # Process and format data for export
-            export_data = {
-                "users": users_data.get('users', []),
-                "total": users_data.get('total', 0),
-                "page": page,
-                "limit": limit,
-                "filters": filters,
-                "exported_at": datetime.now(timezone.utc).isoformat()
-            }
-            
-            # Update progress
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=90
-            )
-            
-            # Complete task
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.COMPLETED,
-                progress=100,
-                result=export_data
-            )
-            
-            # Send webhook notification if callback URL provided
-            if callback_url:
-                await webhook_service.send_webhook(
-                    url=callback_url,
-                    event_type="ADMIN_USER_EXPORT_COMPLETED",
-                    data={
-                        "task_id": task_id,
-                        "status": "completed",
-                        "total_users": export_data["total"],
-                        "export_data": export_data
-                    }
+            # Get database session using context manager
+            async with self.get_db_session() as db:
+                # Update task status to running
+                await task_tracking_service.update_task_status(
+                    db=db,
+                    task_id=task_id,
+                    status=TaskStatus.RUNNING,
+                    progress=10
                 )
-            
-            self.logger.info(f"User export completed successfully (task: {task_id})")
+                
+                self.logger.info(f"Starting async user export (task: {task_id})")
+                
+                # Fetch all user data (potentially large dataset)
+                users_data = await self.admin_service.get_users(page, limit, filters)
+                
+                # Update progress
+                await task_tracking_service.update_task_status(
+                    db=db,
+                    task_id=task_id,
+                    status=TaskStatus.RUNNING,
+                    progress=50
+                )
+                
+                # Process and format data for export
+                export_data = {
+                    "users": users_data.get('users', []),
+                    "total": users_data.get('total', 0),
+                    "page": page,
+                    "limit": limit,
+                    "filters": filters,
+                    "exported_at": datetime.now(timezone.utc).isoformat()
+                }
+                
+                # Update progress
+                await task_tracking_service.update_task_status(
+                    db=db,
+                    task_id=task_id,
+                    status=TaskStatus.RUNNING,
+                    progress=90
+                )
+                
+                # Complete task
+                await task_tracking_service.update_task_status(
+                    db=db,
+                    task_id=task_id,
+                    status=TaskStatus.COMPLETED,
+                    progress=100,
+                    result=export_data
+                )
+                
+                # Send webhook notification if callback URL provided
+                if callback_url:
+                    await webhook_service.send_webhook(
+                        url=callback_url,
+                        event_type="ADMIN_USER_EXPORT_COMPLETED",
+                        data={
+                            "task_id": task_id,
+                            "status": "completed",
+                            "total_users": export_data["total"],
+                            "export_data": export_data
+                        }
+                    )
+                
+                self.logger.info(f"User export completed successfully (task: {task_id})")
             
         except Exception as e:
             self.logger.error(f"User export failed (task: {task_id}): {str(e)}")
             
             # Update task status to failed
             try:
-                db = await self.get_db_session()
-                await task_tracking_service.update_task_status(
-                    db=db,
-                    task_id=task_id,
-                    status=TaskStatus.FAILED,
-                    error_message=str(e)
-                )
-                
-                # Send failure webhook notification
-                if callback_url:
-                    await webhook_service.send_webhook(
-                        url=callback_url,
-                        event_type="ADMIN_USER_EXPORT_FAILED",
-                        data={
-                            "task_id": task_id,
-                            "status": "failed",
-                            "error": str(e)
-                        }
+                async with self.get_db_session() as db:
+                    await task_tracking_service.update_task_status(
+                        db=db,
+                        task_id=task_id,
+                        status=TaskStatus.FAILED,
+                        error_message=str(e)
                     )
+                    
+                    # Send failure webhook notification
+                    if callback_url:
+                        await webhook_service.send_webhook(
+                            url=callback_url,
+                            event_type="ADMIN_USER_EXPORT_FAILED",
+                            data={
+                                "task_id": task_id,
+                                "status": "failed",
+                                "error": str(e)
+                            }
+                        )
             except Exception as webhook_error:
                 self.logger.error(f"Failed to send failure notification (task: {task_id}): {webhook_error}")
     
@@ -210,97 +291,96 @@ class AdminController(BaseController):
         webhook_service = get_webhook_service()
         
         try:
-            # Get database session
-            db = await self.get_db_session()
-            
-            # Update task status to running
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=10
-            )
-            
-            self.logger.info(f"Starting async log export (task: {task_id})")
-            
-            # Simulate log processing (in real implementation, read from log files/service)
-            # This would involve reading from actual log files or a logging service
-            logs = []
-            for i in range(min(limit, 1000)):  # Simulate processing logs
-                logs.append({
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "level": level,
-                    "message": f"Log entry {i+1}",
-                    "module": "system",
-                    "request_id": str(uuid.uuid4())
-                })
-                
-                # Update progress periodically
-                if i % 100 == 0:
-                    progress = min(10 + (i / limit) * 80, 90)
-                    await task_tracking_service.update_task_status(
-                        db=db,
-                        task_id=task_id,
-                        status=TaskStatus.RUNNING,
-                        progress=int(progress)
-                    )
-            
-            # Prepare export data
-            export_data = {
-                "logs": logs,
-                "level": level,
-                "count": len(logs),
-                "exported_at": datetime.now(timezone.utc).isoformat()
-            }
-            
-            # Complete task
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.COMPLETED,
-                progress=100,
-                result=export_data
-            )
-            
-            # Send webhook notification if callback URL provided
-            if callback_url:
-                await webhook_service.send_webhook(
-                    url=callback_url,
-                    event_type="ADMIN_LOG_EXPORT_COMPLETED",
-                    data={
-                        "task_id": task_id,
-                        "status": "completed",
-                        "log_count": len(logs),
-                        "export_data": export_data
-                    }
+            # Get database session using context manager
+            async with self.get_db_session() as db:
+                # Update task status to running
+                await task_tracking_service.update_task_status(
+                    db=db,
+                    task_id=task_id,
+                    status=TaskStatus.RUNNING,
+                    progress=10
                 )
-            
-            self.logger.info(f"Log export completed successfully (task: {task_id})")
+                
+                self.logger.info(f"Starting async log export (task: {task_id})")
+                
+                # Simulate log processing (in real implementation, read from log files/service)
+                # This would involve reading from actual log files or a logging service
+                logs = []
+                for i in range(min(limit, 1000)):  # Simulate processing logs
+                    logs.append({
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "level": level,
+                        "message": f"Log entry {i+1}",
+                        "module": "system",
+                        "request_id": str(uuid.uuid4())
+                    })
+                    
+                    # Update progress periodically
+                    if i % 100 == 0:
+                        progress = min(10 + (i / limit) * 80, 90)
+                        await task_tracking_service.update_task_status(
+                            db=db,
+                            task_id=task_id,
+                            status=TaskStatus.RUNNING,
+                            progress=int(progress)
+                        )
+                
+                # Prepare export data
+                export_data = {
+                    "logs": logs,
+                    "level": level,
+                    "count": len(logs),
+                    "exported_at": datetime.now(timezone.utc).isoformat()
+                }
+                
+                # Complete task
+                await task_tracking_service.update_task_status(
+                    db=db,
+                    task_id=task_id,
+                    status=TaskStatus.COMPLETED,
+                    progress=100,
+                    result=export_data
+                )
+                
+                # Send webhook notification if callback URL provided
+                if callback_url:
+                    await webhook_service.send_webhook(
+                        url=callback_url,
+                        event_type="ADMIN_LOG_EXPORT_COMPLETED",
+                        data={
+                            "task_id": task_id,
+                            "status": "completed",
+                            "log_count": len(logs),
+                            "export_data": export_data
+                        }
+                    )
+                
+                self.logger.info(f"Log export completed successfully (task: {task_id})")
             
         except Exception as e:
             self.logger.error(f"Log export failed (task: {task_id}): {str(e)}")
             
             # Update task status to failed
             try:
-                db = await self.get_db_session()
-                await task_tracking_service.update_task_status(
-                    db=db,
-                    task_id=task_id,
-                    status=TaskStatus.FAILED,
-                    error_message=str(e)
-                )
-                
-                # Send failure webhook notification
-                if callback_url:
-                    await webhook_service.send_webhook(
-                        url=callback_url,
-                        event_type="ADMIN_LOG_EXPORT_FAILED",
-                        data={
-                            "task_id": task_id,
-                            "status": "failed",
-                            "error": str(e)
-                        }
+                async with self.get_db_session() as db:
+                    await task_tracking_service.update_task_status(
+                        db=db,
+                        task_id=task_id,
+                        status=TaskStatus.FAILED,
+                        error_message=str(e)
                     )
+                    
+                    # Send failure webhook notification
+                    if callback_url:
+                        await webhook_service.send_webhook(
+                            url=callback_url,
+                            event_type="ADMIN_LOG_EXPORT_FAILED",
+                            data={
+                                "task_id": task_id,
+                                "status": "failed",
+                                "error": str(e)
+                            }
+                        )
             except Exception as webhook_error:
                 self.logger.error(f"Failed to send failure notification (task: {task_id}): {webhook_error}")
     
@@ -324,7 +404,67 @@ class AdminController(BaseController):
             
             self.logger.info(f"Fetching traffic analytics for {days} days")
             
-            analytics = await self.admin_service.get_traffic_analytics(days)
+            # Get database session and fetch raw data
+            async with self.get_db_session() as db:
+                # Calculate date range
+                end_date = datetime.now(timezone.utc)
+                start_date = end_date - timedelta(days=days)
+                
+                # Query daily traffic data
+                daily_traffic = await db.query(
+                    db.func.date(URLCheck.created_at).label('date'),
+                    db.func.count(URLCheck.id).label('count'),
+                    db.func.count(db.case([(URLCheck.threat_level != ThreatLevel.SAFE, 1)])).label('threats')
+                ).filter(
+                    URLCheck.created_at >= start_date,
+                    URLCheck.created_at <= end_date
+                ).group_by(db.func.date(URLCheck.created_at)).order_by('date').all()
+                
+                # Query top domains
+                top_domains = await db.query(
+                    URLCheck.domain,
+                    db.func.count(URLCheck.id).label('count')
+                ).filter(
+                    URLCheck.created_at >= start_date,
+                    URLCheck.created_at <= end_date
+                ).group_by(URLCheck.domain).order_by(db.func.count(URLCheck.id).desc()).limit(10).all()
+                
+                # Query threat distribution
+                threat_distribution = await db.query(
+                    URLCheck.threat_level,
+                    db.func.count(URLCheck.id).label('count')
+                ).filter(
+                    URLCheck.created_at >= start_date,
+                    URLCheck.created_at <= end_date
+                ).group_by(URLCheck.threat_level).all()
+                
+                # Prepare data for AdminService processing
+                daily_traffic_data = [
+                    {
+                        'date': traffic.date.isoformat(),
+                        'count': traffic.count,
+                        'threats': traffic.threats
+                    } for traffic in daily_traffic
+                ]
+                
+                top_domains_data = [
+                    {
+                        'domain': domain.domain,
+                        'count': domain.count
+                    } for domain in top_domains
+                ]
+                
+                threat_types_data = [
+                    {
+                        'threat_level': threat.threat_level.value,
+                        'count': threat.count
+                    } for threat in threat_distribution
+                ]
+            
+            # Process data using AdminService
+            analytics = self.admin_service.process_traffic_analytics(
+                daily_traffic_data, top_domains_data, threat_types_data, days
+            )
             
             self.logger.info("Traffic analytics retrieved successfully")
             return {
@@ -358,7 +498,73 @@ class AdminController(BaseController):
         try:
             self.logger.info("Fetching threat intelligence")
             
-            intelligence = await self.admin_service.get_threat_intelligence()
+            # Get database session and fetch raw data
+            async with self.get_db_session() as db:
+                # Query recent threats (last 7 days)
+                recent_date = datetime.now(timezone.utc) - timedelta(days=7)
+                recent_threats = await db.query(URLCheck).filter(
+                    URLCheck.threat_level != ThreatLevel.SAFE,
+                    URLCheck.created_at >= recent_date
+                ).order_by(URLCheck.created_at.desc()).limit(50).all()
+                
+                # Query threat trends (daily counts for last 30 days)
+                trend_date = datetime.now(timezone.utc) - timedelta(days=30)
+                threat_trends = await db.query(
+                    db.func.date(URLCheck.created_at).label('date'),
+                    URLCheck.threat_level,
+                    db.func.count(URLCheck.id).label('count')
+                ).filter(
+                    URLCheck.threat_level != ThreatLevel.SAFE,
+                    URLCheck.created_at >= trend_date
+                ).group_by(
+                    db.func.date(URLCheck.created_at),
+                    URLCheck.threat_level
+                ).order_by('date').all()
+                
+                # Query top threat sources (domains with most threats)
+                threat_sources = await db.query(
+                    URLCheck.domain,
+                    URLCheck.threat_level,
+                    db.func.count(URLCheck.id).label('count')
+                ).filter(
+                    URLCheck.threat_level != ThreatLevel.SAFE,
+                    URLCheck.created_at >= trend_date
+                ).group_by(URLCheck.domain, URLCheck.threat_level).order_by(
+                    db.func.count(URLCheck.id).desc()
+                ).limit(20).all()
+                
+                # Prepare data for AdminService processing
+                recent_threats_data = [
+                    {
+                        'id': str(threat.id),
+                        'url': threat.url,
+                        'domain': threat.domain,
+                        'threat_level': threat.threat_level.value,
+                        'created_at': threat.created_at.isoformat(),
+                        'threat_details': threat.threat_details
+                    } for threat in recent_threats
+                ]
+                
+                threat_trends_data = [
+                    {
+                        'date': trend.date.isoformat(),
+                        'threat_level': trend.threat_level.value,
+                        'count': trend.count
+                    } for trend in threat_trends
+                ]
+                
+                threat_sources_data = [
+                    {
+                        'domain': source.domain,
+                        'threat_level': source.threat_level.value,
+                        'count': source.count
+                    } for source in threat_sources
+                ]
+            
+            # Process data using AdminService
+            intelligence = self.admin_service.process_threat_intelligence(
+                recent_threats_data, threat_trends_data, threat_sources_data
+            )
             
             self.logger.info("Threat intelligence retrieved successfully")
             return {
@@ -390,7 +596,79 @@ class AdminController(BaseController):
         try:
             self.logger.info("Fetching user analytics")
             
-            analytics = await self.admin_service.get_user_analytics()
+            # Get database session and fetch raw data
+            async with self.get_db_session() as db:
+                # Query user growth (daily registrations for last 30 days)
+                growth_date = datetime.now(timezone.utc) - timedelta(days=30)
+                user_growth = await db.query(
+                    db.func.date(User.created_at).label('date'),
+                    db.func.count(User.id).label('count')
+                ).filter(
+                    User.created_at >= growth_date
+                ).group_by(db.func.date(User.created_at)).order_by('date').all()
+                
+                # Query active users by subscription tier
+                active_users_by_subscription = await db.query(
+                    User.subscription_tier,
+                    db.func.count(User.id).label('count')
+                ).filter(
+                    User.is_active == True,
+                    User.last_login_at >= datetime.now(timezone.utc) - timedelta(days=30)
+                ).group_by(User.subscription_tier).all()
+                
+                # Query top users by activity (most URL checks in last 30 days)
+                top_users = await db.query(
+                    User.id,
+                    User.email,
+                    User.subscription_tier,
+                    db.func.count(URLCheck.id).label('check_count')
+                ).join(URLCheck).filter(
+                    URLCheck.created_at >= datetime.now(timezone.utc) - timedelta(days=30)
+                ).group_by(User.id, User.email, User.subscription_tier).order_by(
+                    db.func.count(URLCheck.id).desc()
+                ).limit(10).all()
+                
+                # Query user engagement metrics
+                engagement_metrics = await db.query(
+                    db.func.count(db.distinct(User.id)).label('total_active_users'),
+                    db.func.avg(db.func.count(URLCheck.id)).label('avg_checks_per_user')
+                ).join(URLCheck).filter(
+                    URLCheck.created_at >= datetime.now(timezone.utc) - timedelta(days=30)
+                ).first()
+                
+                # Prepare data for AdminService processing
+                user_growth_data = [
+                    {
+                        'date': growth.date.isoformat(),
+                        'count': growth.count
+                    } for growth in user_growth
+                ]
+                
+                subscription_data = [
+                    {
+                        'subscription_tier': sub.subscription_tier,
+                        'count': sub.count
+                    } for sub in active_users_by_subscription
+                ]
+                
+                top_users_data = [
+                    {
+                        'user_id': str(user.id),
+                        'email': user.email,
+                        'subscription_tier': user.subscription_tier,
+                        'check_count': user.check_count
+                    } for user in top_users
+                ]
+                
+                engagement_data = {
+                    'total_active_users': engagement_metrics.total_active_users or 0,
+                    'avg_checks_per_user': float(engagement_metrics.avg_checks_per_user or 0)
+                }
+            
+            # Process data using AdminService
+            analytics = self.admin_service.process_user_analytics(
+                user_growth_data, subscription_data, top_users_data, engagement_data
+            )
             
             self.logger.info("User analytics retrieved successfully")
             return {
@@ -436,7 +714,28 @@ class AdminController(BaseController):
                         detail=f"Invalid category. Must be one of: {valid_categories}"
                     )
             
-            configuration = await self.admin_service.get_configuration(category)
+            # Fetch configuration data from database
+            async with self.get_db_session() as db:
+                query = db.query(Configuration)
+                if category:
+                    query = query.filter(Configuration.category == category)
+                
+                config_records = await query.filter(Configuration.is_active == True).all()
+                
+                # Prepare configuration data
+                configuration_data = {}
+                for config in config_records:
+                    if config.category not in configuration_data:
+                        configuration_data[config.category] = {}
+                    configuration_data[config.category][config.key] = {
+                        'value': config.value,
+                        'description': config.description,
+                        'updated_at': config.updated_at.isoformat() if config.updated_at else None,
+                        'updated_by': config.updated_by
+                    }
+            
+            # Process configuration using AdminService
+            configuration = self.admin_service.process_configuration(configuration_data, category)
             
             self.logger.info("Configuration retrieved successfully")
             return {
@@ -491,11 +790,58 @@ class AdminController(BaseController):
                     detail="Configuration value cannot be null"
                 )
             
-            updated_config = await self.admin_service.update_configuration(
-                key=key.strip(),
-                value=value,
-                user_id=current_user.id
-            )
+            # Update configuration in database
+            async with self.get_db_session() as db:
+                # Find existing configuration
+                config = await db.query(Configuration).filter(
+                    Configuration.key == key.strip()
+                ).first()
+                
+                if not config:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Configuration key '{key}' not found"
+                    )
+                
+                # Update configuration
+                old_value = config.value
+                config.value = value
+                config.updated_at = datetime.now(timezone.utc)
+                config.updated_by = current_user.id
+                
+                await db.commit()
+                await db.refresh(config)
+                
+                # Log admin action
+                admin_action = AdminAction(
+                    user_id=current_user.id,
+                    action_type="configuration_update",
+                    resource_type="configuration",
+                    resource_id=str(config.id),
+                    details={
+                        "key": key.strip(),
+                        "old_value": old_value,
+                        "new_value": value
+                    },
+                    ip_address=None,  # This would be set by middleware
+                    user_agent=None   # This would be set by middleware
+                )
+                db.add(admin_action)
+                await db.commit()
+                
+                # Prepare updated configuration data
+                updated_config_data = {
+                    'id': str(config.id),
+                    'key': config.key,
+                    'value': config.value,
+                    'category': config.category,
+                    'description': config.description,
+                    'updated_at': config.updated_at.isoformat(),
+                    'updated_by': config.updated_by
+                }
+            
+            # Process updated configuration using AdminService
+            updated_config = self.admin_service.process_configuration_update(updated_config_data)
             
             self.logger.info(f"Configuration key '{key}' updated successfully")
             return {
@@ -567,7 +913,67 @@ class AdminController(BaseController):
             
             self.logger.info(f"Fetching users (page: {page}, limit: {limit})")
             
-            # Build filters
+            # Fetch users data from database
+            async with self.get_db_session() as db:
+                # Build query with filters
+                query = db.query(User)
+                
+                if role:
+                    query = query.join(UserRole).filter(UserRole.role_name == role)
+                if status:
+                    query = query.filter(User.status == status)
+                if subscription:
+                    query = query.filter(User.subscription_tier == subscription)
+                if is_active is not None:
+                    query = query.filter(User.is_active == is_active)
+                if search:
+                    search_term = f"%{search.strip()}%"
+                    query = query.filter(
+                        db.or_(
+                            User.email.ilike(search_term),
+                            User.username.ilike(search_term),
+                            User.first_name.ilike(search_term),
+                            User.last_name.ilike(search_term)
+                        )
+                    )
+                
+                # Get total count
+                total_count = await query.count()
+                
+                # Apply pagination
+                offset = (page - 1) * limit
+                users = await query.offset(offset).limit(limit).all()
+                
+                # Prepare users data
+                users_data = []
+                for user in users:
+                    user_data = {
+                        'id': str(user.id),
+                        'email': user.email,
+                        'username': user.username,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                        'subscription_tier': user.subscription_tier,
+                        'status': user.status,
+                        'is_active': user.is_active,
+                        'created_at': user.created_at.isoformat() if user.created_at else None,
+                        'last_login_at': user.last_login_at.isoformat() if user.last_login_at else None,
+                        'email_verified': user.email_verified
+                    }
+                    users_data.append(user_data)
+                
+                # Prepare pagination metadata
+                pagination_data = {
+                    'users': users_data,
+                    'total': total_count,
+                    'page': page,
+                    'limit': limit,
+                    'total_pages': (total_count + limit - 1) // limit,
+                    'has_next': page * limit < total_count,
+                    'has_prev': page > 1
+                }
+            
+            # Build filters for processing
             filters = {}
             if role:
                 filters['role'] = role
@@ -580,42 +986,43 @@ class AdminController(BaseController):
             if search:
                 filters['search'] = search.strip()
             
-            users_data = await self.admin_service.get_users(page, limit, filters)
+            # Process users data using AdminService
+            processed_users_data = self.admin_service.process_users_data(pagination_data, filters)
             
             # Check if this should be processed asynchronously for large datasets
             should_process_async = (
                 background_tasks is not None and 
-                (users_data.get('total', 0) > 1000 or callback_url is not None)
+                (total_count > 1000 or callback_url is not None)
             )
             
             if should_process_async:
                 # Create background task for async processing
                 task_tracking_service = get_task_tracking_service()
-                db = await self.get_db_session()
                 
-                task = await task_tracking_service.create_task(
-                    db=db,
-                    task_type=TaskType.ADMIN_USER_EXPORT,
-                    priority=TaskPriority.MEDIUM,
-                    user_id=None,  # Admin operation
-                    metadata={
-                        "page": page,
-                        "limit": limit,
-                        "filters": filters,
-                        "total_users": users_data.get('total', 0),
-                        "callback_url": callback_url
-                    }
-                )
-                
-                # Add background task for async processing
-                background_tasks.add_task(
-                    self._export_users_async,
-                    task_id=str(task.id),
-                    page=page,
-                    limit=limit,
-                    filters=filters,
-                    callback_url=callback_url
-                )
+                async with self.get_db_session() as db:
+                    task = await task_tracking_service.create_task(
+                        db=db,
+                        task_type=TaskType.ADMIN_USER_EXPORT,
+                        priority=TaskPriority.MEDIUM,
+                        user_id=None,  # Admin operation
+                        metadata={
+                            "page": page,
+                            "limit": limit,
+                            "filters": filters,
+                            "total_users": total_count,
+                            "callback_url": callback_url
+                        }
+                    )
+                    
+                    # Add background task for async processing
+                    background_tasks.add_task(
+                        self._export_users_async,
+                        task_id=str(task.id),
+                        page=page,
+                        limit=limit,
+                        filters=filters,
+                        callback_url=callback_url
+                    )
                 
                 self.logger.info(f"Large user dataset queued for async processing (task: {task.id})")
                 return {
@@ -629,7 +1036,7 @@ class AdminController(BaseController):
             self.logger.info("Users retrieved successfully")
             return {
                 "success": True,
-                "data": users_data,
+                "data": processed_users_data,
                 "timestamp": datetime.now(timezone.utc)
             }
         
@@ -684,11 +1091,62 @@ class AdminController(BaseController):
             
             self.logger.info(f"Updating user {user_id} status to {status}")
             
-            updated_user = await self.admin_service.update_user_status(
-                user_id=user_uuid,
-                status=status,
-                admin_user_id=current_user.id
-            )
+            # Update user status in database
+            async with self.get_db_session() as db:
+                # Find the user
+                user = await db.query(User).filter(User.id == user_uuid).first()
+                if not user:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="User not found"
+                    )
+                
+                # Store old status for logging
+                old_status = user.status
+                
+                # Update user status
+                user.status = status
+                user.is_active = status == "active"
+                user.updated_at = datetime.now(timezone.utc)
+                
+                await db.commit()
+                await db.refresh(user)
+                
+                # Log admin action
+                admin_action = AdminAction(
+                    user_id=current_user.id,
+                    action_type="user_status_update",
+                    resource_type="user",
+                    resource_id=str(user.id),
+                    details={
+                        "user_email": user.email,
+                        "old_status": old_status,
+                        "new_status": status
+                    },
+                    ip_address=None,  # This would be set by middleware
+                    user_agent=None   # This would be set by middleware
+                )
+                db.add(admin_action)
+                await db.commit()
+                
+                # Prepare updated user data
+                updated_user_data = {
+                    'id': str(user.id),
+                    'email': user.email,
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'subscription_tier': user.subscription_tier,
+                    'status': user.status,
+                    'is_active': user.is_active,
+                    'created_at': user.created_at.isoformat() if user.created_at else None,
+                    'updated_at': user.updated_at.isoformat() if user.updated_at else None,
+                    'last_login_at': user.last_login_at.isoformat() if user.last_login_at else None,
+                    'email_verified': user.email_verified
+                }
+            
+            # Process updated user using AdminService
+            updated_user = self.admin_service.process_user_status_update(updated_user_data, old_status, status)
             
             self.logger.info(f"User {user_id} status updated successfully")
             return {
@@ -725,12 +1183,80 @@ class AdminController(BaseController):
         try:
             self.logger.info("Fetching system health")
             
-            health_data = await self.admin_service.get_system_health()
+            # Gather system health data from database and system
+            async with self.get_db_session() as db:
+                # Database health check
+                try:
+                    await db.execute("SELECT 1")
+                    db_status = "healthy"
+                    db_response_time = 0.001  # This would be measured in real implementation
+                except Exception as e:
+                    db_status = "unhealthy"
+                    db_response_time = None
+                    self.logger.error(f"Database health check failed: {e}")
+                
+                # Get recent system metrics
+                recent_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+                
+                # Check recent user activity
+                recent_users = await db.query(User).filter(
+                    User.last_login_at >= recent_time
+                ).count()
+                
+                # Check recent URL checks
+                recent_url_checks = await db.query(URLCheck).filter(
+                    URLCheck.created_at >= recent_time
+                ).count()
+                
+                # Check recent AI analyses
+                recent_ai_analyses = await db.query(AIAnalysis).filter(
+                    AIAnalysis.created_at >= recent_time
+                ).count()
+                
+                # Check background task status
+                pending_tasks = await db.query(BackgroundTask).filter(
+                    BackgroundTask.status == "pending"
+                ).count()
+                
+                running_tasks = await db.query(BackgroundTask).filter(
+                    BackgroundTask.status == "running"
+                ).count()
+                
+                failed_tasks = await db.query(BackgroundTask).filter(
+                    BackgroundTask.status == "failed",
+                    BackgroundTask.updated_at >= datetime.now(timezone.utc) - timedelta(hours=1)
+                ).count()
+                
+                # Prepare health data
+                health_data = {
+                    'database': {
+                        'status': db_status,
+                        'response_time_ms': db_response_time * 1000 if db_response_time else None
+                    },
+                    'activity': {
+                        'recent_users': recent_users,
+                        'recent_url_checks': recent_url_checks,
+                        'recent_ai_analyses': recent_ai_analyses
+                    },
+                    'background_tasks': {
+                        'pending': pending_tasks,
+                        'running': running_tasks,
+                        'failed_last_hour': failed_tasks
+                    },
+                    'system': {
+                        'uptime': None,  # This would be calculated from system start time
+                        'memory_usage': None,  # This would be gathered from system metrics
+                        'cpu_usage': None  # This would be gathered from system metrics
+                    }
+                }
+            
+            # Process health data using AdminService
+            processed_health_data = self.admin_service.process_system_health(health_data)
             
             self.logger.info("System health retrieved successfully")
             return {
                 "success": True,
-                "data": health_data,
+                "data": processed_health_data,
                 "timestamp": datetime.now(timezone.utc)
             }
         
@@ -788,19 +1314,19 @@ class AdminController(BaseController):
             if should_process_async:
                 # Create background task for async log processing
                 task_tracking_service = get_task_tracking_service()
-                db = await self.get_db_session()
                 
-                task = await task_tracking_service.create_task(
-                    db=db,
-                    task_type=TaskType.ADMIN_LOG_EXPORT,
-                    priority=TaskPriority.LOW,
-                    user_id=None,  # Admin operation
-                    metadata={
-                        "level": level.upper(),
-                        "limit": limit,
-                        "callback_url": callback_url
-                    }
-                )
+                async with self.get_db_session() as db:
+                    task = await task_tracking_service.create_task(
+                        db=db,
+                        task_type=TaskType.ADMIN_LOG_EXPORT,
+                        priority=TaskPriority.LOW,
+                        user_id=None,  # Admin operation
+                        metadata={
+                            "level": level.upper(),
+                            "limit": limit,
+                            "callback_url": callback_url
+                        }
+                    )
                 
                 # Add background task for async processing
                 background_tasks.add_task(

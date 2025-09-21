@@ -17,18 +17,10 @@ from urllib.parse import urlparse, urljoin
 import aiohttp
 import requests
 
-from sqlalchemy import and_, or_
-
 from src.config.settings import get_settings
-from src.config.database import AsyncSession
-from src.models.url_check import (
-    URLCheck, ScanResult, URLReputation, 
-    CheckStatus, ThreatLevel, ScanType
-)
-from src.models.user import User
+from src.models.url_check import ThreatLevel, ScanType
 from src.services.ai_service import AIService
 from src.services.security_service import SecurityService
-from src.utils.utils import utc_datetime
 
 
 class URLAnalysisError(Exception):
@@ -57,8 +49,14 @@ class URLAnalysisService:
     URL analysis service for comprehensive security scanning.
     """
     
-    def __init__(self, db_session: AsyncSession, ai_service: AIService, security_service: SecurityService):
-        self.db_session = db_session
+    def __init__(self, ai_service: AIService, security_service: SecurityService):
+        """
+        Initialize URLAnalysisService with pure business logic dependencies.
+        
+        Args:
+            ai_service: AI analysis service for content analysis
+            security_service: Security service for additional security checks
+        """
         self.ai_service = ai_service
         self.security_service = security_service
         self.settings = get_settings()
@@ -93,94 +91,48 @@ class URLAnalysisService:
     async def analyze_url(
         self, 
         url: str, 
-        user_id: Optional[uuid.UUID] = None,
         scan_types: Optional[List[ScanType]] = None,
-        priority: bool = False
-    ) -> URLCheck:
+        reputation_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
-        Perform comprehensive URL analysis.
+        Perform comprehensive URL analysis and return results as dictionary.
         
         Args:
             url: URL to analyze
-            user_id: User requesting the analysis
             scan_types: Specific scan types to perform
-            priority: Whether to prioritize this scan
+            reputation_data: Historical reputation data for analysis
         
         Returns:
-            URLCheck object with analysis results
+            Dictionary containing analysis results with threat level and confidence score
         """
         # Validate and normalize URL
         normalized_url = self._normalize_url(url)
         if not normalized_url:
             raise InvalidURLError(f"Invalid URL format: {url}")
         
-        # Check for existing recent analysis
-        existing_check = self._get_recent_check(normalized_url)
-        if existing_check and not priority:
-            return existing_check
-        
-        # Create URL check record
-        url_check = URLCheck(
-            user_id=user_id,
-            original_url=url,
-            normalized_url=normalized_url,
-            domain=self._extract_domain(normalized_url),
-            status=CheckStatus.PENDING
+        # Perform comprehensive analysis
+        analysis_results = await self._perform_comprehensive_analysis(
+            normalized_url, 
+            scan_types or [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
         )
         
-        self.db_session.add(url_check)
-        self.db_session.flush()  # Get ID
+        # Include reputation analysis if data provided
+        if reputation_data:
+            reputation_analysis = self._analyze_reputation(normalized_url, reputation_data)
+            analysis_results.update(reputation_analysis)
         
-        try:
-            # Update status to scanning
-            url_check.status = CheckStatus.SCANNING
-            url_check.scan_started_at = datetime.now(timezone.utc)
-            self.db_session.commit()
-            
-            # Perform analysis
-            analysis_results = await self._perform_comprehensive_analysis(
-                normalized_url, 
-                scan_types or [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
-            )
-            
-            # Process results and determine threat level
-            threat_level, confidence_score = self._calculate_threat_level(analysis_results)
-            
-            # Update URL check with results
-            url_check.status = CheckStatus.COMPLETED
-            url_check.threat_level = threat_level
-            url_check.confidence_score = confidence_score
-            url_check.scan_completed_at = utc_datetime()
-            url_check.analysis_results = analysis_results
-            
-            # Create scan results
-            for scan_type, result in analysis_results.items():
-                scan_result = ScanResult(
-                    url_check_id=url_check.id,
-                    scan_type=ScanType(scan_type),
-                    provider=result.get("provider", "internal"),
-                    threat_detected=result.get("threat_detected", False),
-                    threat_types=result.get("threat_types", []),
-                    confidence_score=result.get("confidence_score", 0),
-                    raw_response=result.get("raw_response"),
-                    metadata=result.get("metadata", {})
-                )
-                self.db_session.add(scan_result)
-            
-            # Update or create URL reputation
-            self._update_url_reputation(normalized_url, threat_level, confidence_score)
-            
-            self.db_session.commit()
-            
-        except Exception as e:
-            # Handle scan failure
-            url_check.status = CheckStatus.FAILED
-            url_check.error_message = str(e)
-            url_check.scan_completed_at = utc_datetime()
-            self.db_session.commit()
-            raise URLAnalysisError(f"Analysis failed: {str(e)}")
+        # Calculate threat level and confidence score
+        threat_level, confidence_score = self._calculate_threat_level(analysis_results)
         
-        return url_check
+        # Return structured analysis results
+        return {
+            "normalized_url": normalized_url,
+            "domain": self._extract_domain(normalized_url),
+            "threat_level": threat_level,
+            "confidence_score": confidence_score,
+            "analysis_results": analysis_results,
+            "scan_types": scan_types or [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
+        }
     
     async def _perform_comprehensive_analysis(self, url: str, scan_types: List[ScanType]) -> Dict[str, Any]:
         """
@@ -434,21 +386,23 @@ class URLAnalysisService:
                 }
             }
     
-    async def _analyze_reputation(self, url: str) -> Dict[str, Any]:
+    def _analyze_reputation(self, url: str, reputation_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Analyze URL reputation based on historical data.
+        Analyze URL reputation based on provided historical data.
+        
+        Args:
+            url: URL to analyze
+            reputation_data: Historical reputation data from database
+        
+        Returns:
+            Dictionary containing reputation analysis results
         """
         domain = self._extract_domain(url)
         
-        # Check existing reputation
-        reputation = self.db_session.query(URLReputation).filter(
-            URLReputation.domain == domain
-        ).first()
-        
-        if reputation:
+        if reputation_data:
             # Calculate reputation score based on historical data
-            total_checks = reputation.total_checks
-            malicious_checks = reputation.malicious_count
+            total_checks = reputation_data.get("total_checks", 0)
+            malicious_checks = reputation_data.get("malicious_count", 0)
             
             reputation_score = 100 - (malicious_checks / total_checks * 100) if total_checks > 0 else 50
             
@@ -465,8 +419,8 @@ class URLAnalysisService:
                         "reputation_score": reputation_score,
                         "total_checks": total_checks,
                         "malicious_checks": malicious_checks,
-                        "first_seen": reputation.first_seen.isoformat() if reputation.first_seen else None,
-                        "last_seen": reputation.last_seen.isoformat() if reputation.last_seen else None
+                        "first_seen": reputation_data.get("first_seen"),
+                        "last_seen": reputation_data.get("last_seen")
                     }
                 }
             }
@@ -713,70 +667,63 @@ class URLAnalysisService:
         except Exception:
             return ""
     
-    def _get_recent_check(self, url: str, hours: int = 24) -> Optional[URLCheck]:
-        """
-        Get recent check for URL if available.
-        """
-        cutoff_time = utc_datetime() - timedelta(hours=hours)
-        
-        return self.db_session.query(URLCheck).filter(
-            and_(
-                URLCheck.normalized_url == url,
-                URLCheck.status == CheckStatus.COMPLETED,
-                URLCheck.scan_completed_at > cutoff_time
-            )
-        ).order_by(URLCheck.scan_completed_at.desc()).first()
+    # Helper methods for controller integration
     
-    def _update_url_reputation(self, url: str, threat_level: ThreatLevel, confidence_score: int) -> None:
+    def get_analysis_result_structure(self) -> Dict[str, Any]:
         """
-        Update URL reputation based on analysis results.
+        Return expected structure for analysis results.
+        
+        Returns:
+            Dictionary describing the expected analysis result structure
         """
-        domain = self._extract_domain(url)
-        
-        reputation = self.db_session.query(URLReputation).filter(
-            URLReputation.domain == domain
-        ).first()
-        
-        if not reputation:
-            reputation = URLReputation(
-                domain=domain,
-                first_seen=utc_datetime()
-            )
-            self.db_session.add(reputation)
-        
-        # Update reputation statistics
-        reputation.total_checks += 1
-        reputation.last_seen = datetime.now(timezone.utc)
-        
-        if threat_level in [ThreatLevel.MEDIUM, ThreatLevel.HIGH]:
-            reputation.malicious_count += 1
-        
-        # Update reputation score
-        reputation.reputation_score = (
-            (reputation.total_checks - reputation.malicious_count) / 
-            reputation.total_checks * 100
-        ) if reputation.total_checks > 0 else 50
-        
-        # Update threat level if this is worse
-        if threat_level.value > (reputation.last_threat_level.value if reputation.last_threat_level else 0):
-            reputation.last_threat_level = threat_level
+        return {
+            "normalized_url": "str",
+            "domain": "str", 
+            "threat_level": "ThreatLevel enum",
+            "confidence_score": "int (0-100)",
+            "analysis_results": {
+                "security_scan_type": {
+                    "provider": "str",
+                    "threat_detected": "bool",
+                    "threat_types": "List[str]",
+                    "confidence_score": "int",
+                    "raw_response": "dict",
+                    "metadata": "dict"
+                }
+            },
+            "scan_types": "List[ScanType]"
+        }
     
-    def get_url_history(self, url: str, limit: int = 10) -> List[URLCheck]:
+    def validate_scan_types(self, scan_types: List[ScanType]) -> bool:
         """
-        Get analysis history for URL.
-        """
-        normalized_url = self._normalize_url(url)
-        if not normalized_url:
-            return []
+        Validate scan type parameters.
         
-        return self.db_session.query(URLCheck).filter(
-            URLCheck.normalized_url == normalized_url
-        ).order_by(URLCheck.created_at.desc()).limit(limit).all()
+        Args:
+            scan_types: List of scan types to validate
+            
+        Returns:
+            True if all scan types are valid
+        """
+        valid_types = [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
+        return all(scan_type in valid_types for scan_type in scan_types)
     
-    def get_domain_reputation(self, domain: str) -> Optional[URLReputation]:
+    def estimate_analysis_time(self, scan_types: List[ScanType]) -> int:
         """
-        Get reputation information for domain.
+        Estimate time for analysis in seconds.
+        
+        Args:
+            scan_types: List of scan types to perform
+            
+        Returns:
+            Estimated analysis time in seconds
         """
-        return self.db_session.query(URLReputation).filter(
-            URLReputation.domain == domain.lower()
-        ).first()
+        base_time = 5  # Base analysis time
+        
+        if ScanType.SECURITY in scan_types:
+            base_time += 15  # External security scans take longer
+        if ScanType.CONTENT in scan_types:
+            base_time += 10  # Content analysis with AI
+        if ScanType.REPUTATION in scan_types:
+            base_time += 2   # Reputation lookup
+            
+        return base_time

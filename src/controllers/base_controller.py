@@ -7,58 +7,87 @@ error handling utilities, logging, validation helpers, and response formatting.
 
 from typing import Dict, Any, Optional, List, Union
 from abc import ABC
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, status, Request, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from pydantic import ValidationError
 
-from src.database.session import get_db_session
+from src.config.database import get_db
 from src.config.settings import get_settings
 from src.services.security_service import SecurityService
 from src.services.auth_service import AuthService
 from src.services.email_service import EmailService
-from src.services.webhook_service import get_webhook_service
-from src.services.task_tracking_service import get_task_tracking_service
+from .webhook_controller import WebhookController
 from src.models.user import User
 from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
 
 
-class BaseController(ABC):
+class BaseController(WebhookController):
     """Base controller class with common functionality.
     
-    This class provides:
-    - Dependency injection for common services
-    - Standard error handling and logging
-    - Common validation helpers
-    - Response formatting utilities
-    - Rate limiting and authentication helpers
+    This class provides common functionality for all controllers including:
+    - Database session management
+    - Authentication and authorization
+    - Logging and error handling
+    - Webhook and background task management (inherited from WebhookController)
+    
+    All controllers should inherit from this class to ensure consistent
+    behavior across the application.
     """
     
     def __init__(
         self,
-        get_db_session: Optional[AsyncSession] = None,
-        security_service: Optional[SecurityService] = None,
-        auth_service: Optional[AuthService] = None,
-        email_service: Optional[EmailService] = None
+        security_service: SecurityService,
+        auth_service: AuthService,
+        email_service: EmailService
     ):
-        """Initialize base controller with common dependencies.
+        """Initialize the base controller.
         
         Args:
-            db_session: Database session for data operations
-            security_service: Security service for validation and checks
-            auth_service: Authentication service for user operations
+            security_service: Service for security operations
+            auth_service: Service for authentication operations
+            email_service: Service for email operations
         """
-        self.get_db_session = get_db_session if get_db_session else get_db_session
-        self.email_service = email_service or EmailService(db_session=self.get_db_session)
-        self.security_service = security_service or SecurityService(db_session=self.get_db_session)
-        self.auth_service = auth_service or AuthService(db_session=self.get_db_session, email_service=self.email_service, security_service=self.security_service)
+        # Initialize parent WebhookController
+        super().__init__()
+        
+        # Initialize services
+        self.security_service = security_service
+        self.auth_service = auth_service
+        self.email_service = email_service
+        
+        # Initialize settings and logger
         self.settings = get_settings()
         self.logger = logging.getLogger(self.__class__.__name__)
     
+    @asynccontextmanager
+    async def get_db_session(self) -> AsyncSession:
+        """Async context manager for database session management.
+        
+        Provides proper session lifecycle management with automatic
+        commit/rollback and cleanup.
+        
+        Yields:
+            AsyncSession: Database session for operations
+            
+        Example:
+            async with self.get_db_session() as session:
+                result = await session.query(User).all()
+        """
+        session = await get_db()
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
    
     def log_operation(
         self,
@@ -335,290 +364,14 @@ class BaseController(ABC):
             )
     
     async def cleanup_resources(self) -> None:
-        """Clean up controller resources (database connections, etc.).
+        """Clean up controller resources.
         
         This method should be called when the controller is no longer needed
-        to ensure proper resource cleanup.
+        to ensure proper resource cleanup. Database sessions are now managed
+        by the context manager, so no manual cleanup is needed.
         """
-        if self.db_session:
-            try:
-                await self.db_session.close()
-            except Exception as e:
-                self.logger.error(f"Error closing database session: {str(e)}")
-            finally:
-                self.db_session = None
+        # Database sessions are now managed by context manager
+        # No manual cleanup needed
+        pass
 
-    # Background Task and Webhook Methods
-    
-    async def create_background_task(
-        self,
-        task_type: TaskType,
-        task_data: Dict[str, Any],
-        user_id: Optional[int] = None,
-        priority: TaskPriority = TaskPriority.MEDIUM,
-        callback_url: Optional[str] = None,
-        depends_on: Optional[List[str]] = None
-    ) -> str:
-        """Create a new background task for tracking.
-        
-        Args:
-            task_type: Type of the task
-            task_data: Task-specific data
-            user_id: ID of the user who initiated the task
-            priority: Task priority level
-            callback_url: Optional webhook URL for completion notification
-            depends_on: List of task IDs this task depends on
-            
-        Returns:
-            str: Task ID
-            
-        Raises:
-            HTTPException: If task creation fails
-        """
-        try:
-            task_tracking_service = get_task_tracking_service()
-            db = await self.get_db_session()
-            
-            task_id = str(uuid.uuid4())
-            
-            task = BackgroundTask(
-                id=task_id,
-                task_type=task_type,
-                status=TaskStatus.PENDING,
-                priority=priority,
-                user_id=user_id,
-                task_data=task_data,
-                callback_url=callback_url,
-                depends_on=depends_on or [],
-                created_at=datetime.utcnow()
-            )
-            
-            await task_tracking_service.create_task(db=db, task=task)
-            
-            self.logger.info(f"Created background task {task_id} of type {task_type.value}")
-            return task_id
-            
-        except Exception as e:
-            self.logger.error(f"Failed to create background task: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create background task"
-            )
-    
-    async def update_task_progress(
-        self,
-        task_id: str,
-        progress: int,
-        status: Optional[TaskStatus] = None,
-        result_data: Optional[Dict[str, Any]] = None,
-        error_message: Optional[str] = None
-    ) -> None:
-        """Update background task progress and status.
-        
-        Args:
-            task_id: ID of the task to update
-            progress: Progress percentage (0-100)
-            status: New task status
-            result_data: Task result data
-            error_message: Error message if task failed
-            
-        Raises:
-            HTTPException: If task update fails
-        """
-        try:
-            task_tracking_service = get_task_tracking_service()
-            db = await self.get_db_session()
-            
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=status or TaskStatus.RUNNING,
-                progress=progress,
-                result_data=result_data,
-                error_message=error_message
-            )
-            
-            self.logger.info(f"Updated task {task_id} progress to {progress}%")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to update task progress: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update task progress"
-            )
-    
-    async def complete_task_with_webhook(
-        self,
-        task_id: str,
-        result_data: Dict[str, Any],
-        callback_url: Optional[str] = None
-    ) -> None:
-        """Complete a background task and send webhook notification.
-        
-        Args:
-            task_id: ID of the task to complete
-            result_data: Task result data
-            callback_url: Optional webhook URL override
-            
-        Raises:
-            HTTPException: If task completion fails
-        """
-        try:
-            task_tracking_service = get_task_tracking_service()
-            webhook_service = get_webhook_service()
-            db = await self.get_db_session()
-            
-            # Update task status to completed
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.COMPLETED,
-                progress=100,
-                result_data=result_data
-            )
-            
-            # Get task details for webhook
-            task = await task_tracking_service.get_task(db=db, task_id=task_id)
-            if not task:
-                self.logger.error(f"Task {task_id} not found for webhook notification")
-                return
-            
-            # Send webhook notification if callback URL is provided
-            webhook_url = callback_url or task.callback_url
-            if webhook_url:
-                webhook_payload = {
-                    "task_id": task_id,
-                    "task_type": task.task_type.value,
-                    "status": "completed",
-                    "result": result_data,
-                    "completed_at": datetime.utcnow().isoformat()
-                }
-                
-                await webhook_service.send_webhook(
-                    url=webhook_url,
-                    payload=webhook_payload,
-                    event_type="task.completed"
-                )
-            
-            self.logger.info(f"Completed task {task_id} with webhook notification")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to complete task with webhook: {str(e)}")
-            # Don't raise exception here to avoid breaking the main process
-    
-    async def fail_task_with_webhook(
-        self,
-        task_id: str,
-        error_message: str,
-        callback_url: Optional[str] = None
-    ) -> None:
-        """Mark a background task as failed and send webhook notification.
-        
-        Args:
-            task_id: ID of the task to fail
-            error_message: Error message describing the failure
-            callback_url: Optional webhook URL override
-            
-        Raises:
-            HTTPException: If task failure handling fails
-        """
-        try:
-            task_tracking_service = get_task_tracking_service()
-            webhook_service = get_webhook_service()
-            db = await self.get_db_session()
-            
-            # Update task status to failed
-            await task_tracking_service.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.FAILED,
-                error_message=error_message
-            )
-            
-            # Get task details for webhook
-            task = await task_tracking_service.get_task(db=db, task_id=task_id)
-            if not task:
-                self.logger.error(f"Task {task_id} not found for webhook notification")
-                return
-            
-            # Send webhook notification if callback URL is provided
-            webhook_url = callback_url or task.callback_url
-            if webhook_url:
-                webhook_payload = {
-                    "task_id": task_id,
-                    "task_type": task.task_type.value,
-                    "status": "failed",
-                    "error": error_message,
-                    "failed_at": datetime.utcnow().isoformat()
-                }
-                
-                await webhook_service.send_webhook(
-                    url=webhook_url,
-                    payload=webhook_payload,
-                    event_type="task.failed"
-                )
-            
-            self.logger.info(f"Failed task {task_id} with webhook notification")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to handle task failure with webhook: {str(e)}")
-            # Don't raise exception here to avoid breaking the main process
-    
-    async def add_background_task_with_tracking(
-        self,
-        background_tasks: BackgroundTasks,
-        task_func: callable,
-        task_type: TaskType,
-        task_data: Dict[str, Any],
-        user_id: Optional[int] = None,
-        priority: TaskPriority = TaskPriority.MEDIUM,
-        callback_url: Optional[str] = None,
-        *args,
-        **kwargs
-    ) -> str:
-        """Add a background task with automatic tracking and webhook support.
-        
-        Args:
-            background_tasks: FastAPI BackgroundTasks instance
-            task_func: Function to execute in background
-            task_type: Type of the task
-            task_data: Task-specific data
-            user_id: ID of the user who initiated the task
-            priority: Task priority level
-            callback_url: Optional webhook URL for completion notification
-            *args: Additional positional arguments for task_func
-            **kwargs: Additional keyword arguments for task_func
-            
-        Returns:
-            str: Task ID
-            
-        Raises:
-            HTTPException: If task creation fails
-        """
-        try:
-            # Create task record
-            task_id = await self.create_background_task(
-                task_type=task_type,
-                task_data=task_data,
-                user_id=user_id,
-                priority=priority,
-                callback_url=callback_url
-            )
-            
-            # Add to FastAPI background tasks
-            background_tasks.add_task(
-                task_func,
-                task_id,
-                *args,
-                **kwargs
-            )
-            
-            self.logger.info(f"Added background task {task_id} to execution queue")
-            return task_id
-            
-        except Exception as e:
-            self.logger.error(f"Failed to add background task with tracking: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to add background task"
-            )
+    # Additional controller-specific methods can be added here
