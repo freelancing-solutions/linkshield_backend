@@ -2,8 +2,8 @@
 """
 LinkShield Backend Security Service
 
-Comprehensive security service for threat detection, compliance monitoring,
-and security policy enforcement.
+Pure business logic security service for threat detection, compliance monitoring,
+and security policy enforcement. Database operations are handled by controllers.
 """
 
 import hashlib
@@ -17,13 +17,8 @@ from urllib.parse import urlparse
 import bcrypt
 import jwt
 from cryptography.fernet import Fernet
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
 
 from src.config.settings import get_settings
-from src.config.database import AsyncSession
-from src.models.user import User, UserSession, APIKey
-from src.models.url_check import URLCheck, ScanResult
 
 
 class SecurityError(Exception):
@@ -56,11 +51,11 @@ class RateLimitError(SecurityError):
 
 class SecurityService:
     """
-    Security service for authentication, authorization, and threat detection.
+    Pure business logic security service for authentication, authorization, and threat detection.
+    Database operations are handled by controllers.
     """
     
-    def __init__(self, db_session: AsyncSession):
-        self.db = db_session
+    def __init__(self):
         self.settings = get_settings()
         
         # Initialize encryption
@@ -217,41 +212,242 @@ class SecurityService:
         """
         return self.fernet.decrypt(encrypted_data.encode()).decode()
     
-    def validate_session(self, session_id: str, user_id: str) -> Tuple[bool, Optional[UserSession]]:
+    def validate_session_data(self, session_data: Dict, user_id: str) -> Tuple[bool, Optional[Dict]]:
         """
-        Validate user session.
-        """
-        session = self.db.query(UserSession).filter(
-            and_(
-                UserSession.id == session_id,
-                UserSession.user_id == user_id,
-                UserSession.is_active == True
-            )
-        ).first()
+        Validate session data without database queries.
         
-        if not session:
-            return False, None
+        Args:
+            session_data: Dictionary containing session information
+            user_id: User ID to validate against
+            
+        Returns:
+            Tuple of (is_valid, validation_result)
+        """
+        if not session_data:
+            return False, {"error": "No session data provided"}
+        
+        # Check if session belongs to user
+        if str(session_data.get("user_id")) != str(user_id):
+            return False, {"error": "Session does not belong to user"}
+        
+        # Check if session is active
+        if not session_data.get("is_active", False):
+            return False, {"error": "Session is not active"}
         
         # Check session expiration
-        now = datetime.now(timezone.utc)
-        
-        if session.expires_at and session.expires_at < now:
-            session.is_active = False
-            self.db.commit()
-            return False, None
+        if self.validate_session_expiry(session_data):
+            return False, {"error": "Session has expired"}
         
         # Check idle timeout
+        if self.validate_session_idle_timeout(session_data):
+            return False, {"error": "Session idle timeout exceeded"}
+        
+        return True, {"status": "valid", "session_id": session_data.get("id")}
+    
+    def validate_session_expiry(self, session_data: Dict) -> bool:
+        """
+        Check if session is expired.
+        
+        Args:
+            session_data: Dictionary containing session information
+            
+        Returns:
+            True if session is expired, False otherwise
+        """
+        expires_at = session_data.get("expires_at")
+        if not expires_at:
+            return False
+        
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+        
+        return expires_at < datetime.now(timezone.utc)
+    
+    def validate_session_idle_timeout(self, session_data: Dict) -> bool:
+        """
+        Check idle timeout.
+        
+        Args:
+            session_data: Dictionary containing session information
+            
+        Returns:
+            True if idle timeout exceeded, False otherwise
+        """
+        last_activity = session_data.get("last_activity_at")
+        if not last_activity:
+            return False
+        
+        if isinstance(last_activity, str):
+            last_activity = datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
+        
         idle_timeout = timedelta(hours=self.session_config["max_idle_hours"])
-        if session.last_activity_at and (now - session.last_activity_at) > idle_timeout:
-            session.is_active = False
-            self.db.commit()
-            return False, None
+        return (datetime.now(timezone.utc) - last_activity) > idle_timeout
+    
+    def validate_api_key_data(self, api_key_data: Dict, required_permissions: List[str]) -> Tuple[bool, Optional[Dict]]:
+        """
+        Validate API key data without database queries.
         
-        # Update last activity
-        session.last_activity_at = now
-        self.db.commit()
+        Args:
+            api_key_data: Dictionary containing API key information
+            required_permissions: List of required permissions
+            
+        Returns:
+            Tuple of (is_valid, validation_result)
+        """
+        if not api_key_data:
+            return False, {"error": "No API key data provided"}
         
-        return True, session
+        # Check if API key is active
+        if not api_key_data.get("is_active", False):
+            return False, {"error": "API key is not active"}
+        
+        # Check expiration
+        expires_at = api_key_data.get("expires_at")
+        if expires_at:
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            
+            if expires_at < datetime.now(timezone.utc):
+                return False, {"error": "API key has expired"}
+        
+        # Check permissions
+        if required_permissions:
+            user_permissions = api_key_data.get("permissions", [])
+            missing_permissions = [perm for perm in required_permissions if perm not in user_permissions]
+            
+            if missing_permissions:
+                return False, {
+                    "error": "Insufficient permissions",
+                    "missing_permissions": missing_permissions
+                }
+        
+        return True, {"status": "valid", "api_key_id": api_key_data.get("id")}
+    
+    def process_security_report_data(self, sessions_data: List, url_checks_data: List, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """
+        Process security data for reporting.
+        
+        Args:
+            sessions_data: List of session records
+            url_checks_data: List of URL check records
+            start_date: Report start date
+            end_date: Report end date
+            
+        Returns:
+            Processed security report data
+        """
+        # Count failed logins (inactive sessions)
+        failed_logins = len([s for s in sessions_data if not s.get("is_active", True)])
+        
+        # Count suspicious URLs
+        suspicious_urls = len([u for u in url_checks_data if u.get("threat_level") in ["MEDIUM", "HIGH"]])
+        
+        total_checks = len(url_checks_data)
+        
+        metrics = {
+            "total_url_checks": total_checks,
+            "suspicious_urls_detected": suspicious_urls,
+            "failed_login_attempts": failed_logins,
+            "threat_detection_rate": (suspicious_urls / total_checks * 100) if total_checks > 0 else 0
+        }
+        
+        return {
+            "period": {
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat()
+            },
+            "metrics": metrics,
+            "recommendations": self.format_security_recommendations(metrics)
+        }
+    
+    def identify_expired_sessions(self, sessions_data: List) -> List[str]:
+        """
+        Identify expired session IDs.
+        
+        Args:
+            sessions_data: List of session records
+            
+        Returns:
+            List of expired session IDs
+        """
+        expired_session_ids = []
+        now = datetime.now(timezone.utc)
+        idle_timeout = timedelta(hours=self.session_config["max_idle_hours"])
+        
+        for session in sessions_data:
+            session_id = session.get("id")
+            if not session_id:
+                continue
+            
+            # Check expiration
+            expires_at = session.get("expires_at")
+            if expires_at:
+                if isinstance(expires_at, str):
+                    expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                
+                if expires_at < now:
+                    expired_session_ids.append(str(session_id))
+                    continue
+            
+            # Check idle timeout
+            last_activity = session.get("last_activity_at")
+            if last_activity:
+                if isinstance(last_activity, str):
+                    last_activity = datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
+                
+                if (now - last_activity) > idle_timeout:
+                    expired_session_ids.append(str(session_id))
+        
+        return expired_session_ids
+    
+    def calculate_security_metrics(self, data: Dict) -> Dict[str, Any]:
+        """
+        Calculate security metrics from data.
+        
+        Args:
+            data: Dictionary containing security data
+            
+        Returns:
+            Calculated security metrics
+        """
+        total_requests = data.get("total_requests", 0)
+        blocked_requests = data.get("blocked_requests", 0)
+        suspicious_requests = data.get("suspicious_requests", 0)
+        
+        return {
+            "block_rate": (blocked_requests / total_requests * 100) if total_requests > 0 else 0,
+            "suspicious_rate": (suspicious_requests / total_requests * 100) if total_requests > 0 else 0,
+            "security_score": max(0, 100 - (blocked_requests + suspicious_requests) / max(total_requests, 1) * 100)
+        }
+    
+    def format_security_recommendations(self, metrics: Dict) -> List[str]:
+        """
+        Format security recommendations based on metrics.
+        
+        Args:
+            metrics: Dictionary containing security metrics
+            
+        Returns:
+            List of security recommendations
+        """
+        recommendations = []
+        
+        failed_logins = metrics.get("failed_login_attempts", 0)
+        if failed_logins > 100:
+            recommendations.append("Consider implementing additional authentication measures")
+        
+        total_checks = metrics.get("total_url_checks", 0)
+        suspicious_urls = metrics.get("suspicious_urls_detected", 0)
+        
+        if total_checks > 0:
+            threat_rate = suspicious_urls / total_checks
+            if threat_rate > 0.1:  # More than 10% threats
+                recommendations.append("High threat detection rate - review security policies")
+        
+        if not recommendations:
+            recommendations.append("Security metrics are within normal ranges")
+        
+        return recommendations
     
     def check_rate_limit(self, identifier: str, limit_type: str, ip_address: str) -> Tuple[bool, Dict[str, Any]]:
         """
@@ -382,40 +578,6 @@ class SecurityService:
         else:
             return "allow"
     
-    def validate_api_key(self, api_key: str, required_permissions: List[str] = None) -> Tuple[bool, Optional[APIKey]]:
-        """
-        Validate API key and check permissions.
-        """
-        # Hash the API key for lookup
-        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        
-        api_key_obj = self.db.query(APIKey).filter(
-            and_(
-                APIKey.key_hash == key_hash,
-                APIKey.is_active == True
-            )
-        ).first()
-        
-        if not api_key_obj:
-            return False, None
-        
-        # Check expiration
-        if api_key_obj.expires_at and api_key_obj.expires_at < datetime.now(timezone.utc):
-            return False, None
-        
-        # Check permissions if required
-        if required_permissions:
-            user_permissions = api_key_obj.permissions or []
-            if not all(perm in user_permissions for perm in required_permissions):
-                raise AuthorizationError("Insufficient permissions")
-        
-        # Update last used
-        api_key_obj.last_used_at = datetime.now(timezone.utc)
-        api_key_obj.usage_count += 1
-        self.db.commit()
-        
-        return True, api_key_obj
-    
     def check_ip_reputation(self, ip_address: str) -> Dict[str, Any]:
         """
         Check IP address reputation.
@@ -462,12 +624,20 @@ class SecurityService:
         
         return reputation_data
     
-    def log_security_event(self, event_type: str, details: Dict[str, Any], user_id: str = None, ip_address: str = None) -> None:
+    def log_security_event(self, event_type: str, details: Dict[str, Any], user_id: str = None, ip_address: str = None) -> Dict[str, Any]:
         """
-        Log security events for monitoring and analysis.
+        Format security event for logging (database operations handled by controllers).
+        
+        Args:
+            event_type: Type of security event
+            details: Event details
+            user_id: Optional user ID
+            ip_address: Optional IP address
+            
+        Returns:
+            Formatted security event data
         """
-        # In production, this would write to a security log system
-        security_event = {
+        return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": event_type,
             "user_id": user_id,
@@ -475,9 +645,6 @@ class SecurityService:
             "details": details,
             "severity": self._get_event_severity(event_type)
         }
-        
-        # For now, just print (in production, use proper logging)
-        print(f"SECURITY EVENT: {security_event}")
     
     def _get_event_severity(self, event_type: str) -> str:
         """
@@ -500,91 +667,3 @@ class SecurityService:
             return "medium"
         else:
             return "low"
-    
-    def generate_security_report(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """
-        Generate security report for given time period.
-        """
-        # Query security-related data from database
-        failed_logins = self.db.query(UserSession).filter(
-            and_(
-                UserSession.created_at >= start_date,
-                UserSession.created_at <= end_date,
-                UserSession.is_active == False
-            )
-        ).count()
-        
-        suspicious_urls = self.db.query(URLCheck).filter(
-            and_(
-                URLCheck.created_at >= start_date,
-                URLCheck.created_at <= end_date,
-                URLCheck.threat_level.in_(["MEDIUM", "HIGH"])
-            )
-        ).count()
-        
-        total_checks = self.db.query(URLCheck).filter(
-            and_(
-                URLCheck.created_at >= start_date,
-                URLCheck.created_at <= end_date
-            )
-        ).count()
-        
-        return {
-            "period": {
-                "start_date": start_date.isoformat(),
-                "end_date": end_date.isoformat()
-            },
-            "metrics": {
-                "total_url_checks": total_checks,
-                "suspicious_urls_detected": suspicious_urls,
-                "failed_login_attempts": failed_logins,
-                "threat_detection_rate": (suspicious_urls / total_checks * 100) if total_checks > 0 else 0
-            },
-            "recommendations": self._generate_security_recommendations({
-                "failed_logins": failed_logins,
-                "suspicious_urls": suspicious_urls,
-                "total_checks": total_checks
-            })
-        }
-    
-    def _generate_security_recommendations(self, metrics: Dict[str, int]) -> List[str]:
-        """
-        Generate security recommendations based on metrics.
-        """
-        recommendations = []
-        
-        if metrics["failed_logins"] > 100:
-            recommendations.append("Consider implementing additional authentication measures")
-        
-        if metrics["total_checks"] > 0:
-            threat_rate = metrics["suspicious_urls"] / metrics["total_checks"]
-            if threat_rate > 0.1:  # More than 10% threats
-                recommendations.append("High threat detection rate - review security policies")
-        
-        if not recommendations:
-            recommendations.append("Security metrics are within normal ranges")
-        
-        return recommendations
-    
-    def cleanup_expired_sessions(self) -> int:
-        """
-        Clean up expired sessions and return count of cleaned sessions.
-        """
-        expired_sessions = self.db.query(UserSession).filter(
-            or_(
-                UserSession.expires_at < datetime.now(timezone.utc),
-                and_(
-                    UserSession.last_activity_at.isnot(None),
-                    UserSession.last_activity_at < datetime.now(timezone.utc) - timedelta(hours=self.session_config["max_idle_hours"])
-                )
-            )
-        ).all()
-        
-        count = len(expired_sessions)
-        
-        for session in expired_sessions:
-            session.is_active = False
-        
-        self.db.commit()
-        
-        return count

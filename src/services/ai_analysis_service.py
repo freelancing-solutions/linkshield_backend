@@ -2,8 +2,8 @@
 """
 LinkShield Backend AI Analysis Service
 
-Service for managing AI-powered content analysis with database integration.
-Handles content analysis, quality scoring, and intelligent insights storage.
+Pure AI analysis service for content processing and quality scoring.
+Database operations are handled by controllers.
 """
 
 import hashlib
@@ -11,14 +11,8 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 
-from sqlalchemy import select, and_, or_, desc, func
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.config.database import get_db_session
 from src.config.settings import get_settings
 from src.models.ai_analysis import (
-    AIAnalysis,
-    ContentSimilarity,
     ProcessingStatus,
     AnalysisType
 )
@@ -31,11 +25,11 @@ class AIAnalysisException(HTTPException):
 
 class AIAnalysisService:
     """
-    Service for AI-powered content analysis with database integration.
+    Pure AI analysis service for content processing and quality scoring.
+    Database operations are handled by controllers.
     """
     
-    def __init__(self, db_session: Optional[AsyncSession] = None):
-        self.db_session = db_session if db_session else anext(get_db_session)
+    def __init__(self):
         self.settings = get_settings()
         self.ai_service = AIService()
         self._initialized = False
@@ -58,23 +52,19 @@ class AIAnalysisService:
         self,
         url: str,
         content: str,
-        user_id: Optional[str] = None,
-        check_id: Optional[str] = None,
         analysis_types: Optional[List[AnalysisType]] = None
-    ) -> AIAnalysis:
+    ) -> Dict[str, Any]:
         """
-        Perform comprehensive AI analysis on content and store results.
+        Perform comprehensive AI analysis on content and return results.
+        Database operations are handled by controllers.
         
         Args:
-            db: Database session
             url: URL being analyzed
             content: Content to analyze
-            user_id: Optional user ID
-            check_id: Optional URL check ID
             analysis_types: Specific analysis types to perform
         
         Returns:
-            AIAnalysis: Analysis results
+            Dict containing analysis results and metadata
         """
         if not self._initialized:
             await self.initialize()
@@ -83,178 +73,49 @@ class AIAnalysisService:
         content_hash = self._generate_content_hash(content)
         domain = urlparse(url).netloc
         
-        # Check if analysis already exists
-        existing_analysis = await self._get_existing_analysis(content_hash)
-        if existing_analysis and existing_analysis.processing_status == ProcessingStatus.COMPLETED:
-            # Update associations if needed
-            if check_id and not existing_analysis.check_id:
-                existing_analysis.check_id = check_id
-            if user_id and not existing_analysis.user_id:
-                existing_analysis.user_id = user_id
-            await self.db_session.commit()
-            return existing_analysis
-        
-        # Create new analysis record
-        analysis = AIAnalysis(
-            user_id=user_id,
-            check_id=check_id,
-            url=url,
-            content_hash=content_hash,
-            domain=domain,
-            content_length=len(content),
-            processing_status=ProcessingStatus.PROCESSING,
-            analysis_types=[at.value for at in analysis_types] if analysis_types else None
-        )
-        
-        self.db_session.add(analysis)
-        await self.db_session.commit()
-        await self.db_session.refresh(analysis)
-        
         try:
             # Perform AI analysis
             start_time = datetime.now(timezone.utc)
             ai_results = await self.ai_service.analyze_content(content, url)
             processing_time = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
             
-            # Extract and store analysis results
-            await self._store_analysis_results(analysis, ai_results, processing_time)
-            
-            # Update status
-            analysis.processing_status = ProcessingStatus.COMPLETED
-            analysis.processed_at = datetime.now(timezone.utc)
-            
-            await self.db_session.commit()
-            await self.db_session.refresh(analysis)
-            
-            # Update model metrics
-            await self._update_model_metrics(db, ai_results, processing_time, success=True)
-            
-            return analysis
+            # Return structured analysis data
+            return {
+                "content_hash": content_hash,
+                "domain": domain,
+                "content_length": len(content),
+                "processing_status": ProcessingStatus.COMPLETED.value,
+                "processing_time_ms": processing_time,
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+                "analysis_types": [at.value for at in analysis_types] if analysis_types else None,
+                "ai_results": ai_results,
+                "content_summary": ai_results.get('content_summary'),
+                "quality_metrics": ai_results.get('quality_analysis', {}),
+                "overall_quality_score": ai_results.get('quality_analysis', {}).get('overall_score', 0),
+                "readability_score": ai_results.get('quality_analysis', {}).get('readability_score', 0),
+                "trustworthiness_score": ai_results.get('quality_analysis', {}).get('trustworthiness_score', 0),
+                "professionalism_score": ai_results.get('quality_analysis', {}).get('professionalism_score', 0),
+                "topic_categories": ai_results.get('topic_analysis'),
+                "sentiment_analysis": ai_results.get('sentiment_analysis'),
+                "seo_metrics": ai_results.get('seo_analysis'),
+                "language": ai_results.get('language'),
+                "model_versions": ai_results.get('model_versions', {})
+            }
             
         except Exception as e:
-            # Handle analysis failure
-            analysis.processing_status = ProcessingStatus.FAILED
-            analysis.error_message = str(e)
-            analysis.retry_count += 1
-            
-            await self.db_session.commit()
-            await self._update_model_metrics(db, {}, 0, success=False)
-            
-            raise AIServiceError(f"AI analysis failed: {str(e)}")
+            # Return error data
+            return {
+                "content_hash": content_hash,
+                "domain": domain,
+                "content_length": len(content),
+                "processing_status": ProcessingStatus.FAILED.value,
+                "error_message": str(e),
+                "processed_at": datetime.now(timezone.utc).isoformat()
+            }
     
-    async def _get_existing_analysis(self,content_hash: str) -> Optional[AIAnalysis]:
+    def calculate_similarity(self, analysis1_data: Dict[str, Any], analysis2_data: Dict[str, Any]) -> float:
         """
-        Get existing analysis by content hash.
-        """
-        result = await self.db_session.execute(
-            select(AIAnalysis).where(AIAnalysis.content_hash == content_hash)
-        )
-        return result.scalar_one_or_none()
-    
-    async def _store_analysis_results(self, analysis: AIAnalysis, ai_results: Dict[str, Any], processing_time: int) -> None:
-        """
-        Store AI analysis results in the database model.
-        """
-        # Extract content summary
-        if 'content_summary' in ai_results:
-            analysis.content_summary = ai_results['content_summary']
-        
-        # Store quality metrics
-        quality_data = ai_results.get('quality_analysis', {})
-        analysis.quality_metrics = quality_data
-        analysis.overall_quality_score = quality_data.get('overall_score', 0)
-        analysis.readability_score = quality_data.get('readability_score', 0)
-        analysis.trustworthiness_score = quality_data.get('trustworthiness_score', 0)
-        analysis.professionalism_score = quality_data.get('professionalism_score', 0)
-        
-        # Store topic classification
-        if 'topic_analysis' in ai_results:
-            analysis.topic_categories = ai_results['topic_analysis']
-        
-        # Store sentiment analysis
-        if 'sentiment_analysis' in ai_results:
-            analysis.sentiment_analysis = ai_results['sentiment_analysis']
-        
-        # Store SEO metrics
-        if 'seo_analysis' in ai_results:
-            analysis.seo_metrics = ai_results['seo_analysis']
-        
-        # Store language detection
-        if 'language' in ai_results:
-            analysis.language = ai_results['language']
-        
-        # Store processing metadata
-        analysis.processing_time_ms = processing_time
-        analysis.model_versions = ai_results.get('model_versions', {})
-    
-    async def find_similar_content(
-        self,
-        analysis_id: str,
-        similarity_threshold: float = 0.8,
-        limit: int = 10
-    ) -> List[ContentSimilarity]:
-        """
-        Find similar content based on analysis results.
-        
-        Args:
-            db: Database session
-            analysis_id: Source analysis ID
-            similarity_threshold: Minimum similarity score
-            limit: Maximum number of results
-        
-        Returns:
-            List of similar content matches
-        """
-        # Get source analysis
-        source_analysis = await self.db_session.get(AIAnalysis, analysis_id)
-        if not source_analysis:
-            return []
-        
-        # Find potential matches based on domain, topic, or quality score
-        similar_analyses = await self.db_session.execute(
-            select(AIAnalysis)
-            .where(
-                and_(
-                    AIAnalysis.id != analysis_id,
-                    AIAnalysis.processing_status == ProcessingStatus.COMPLETED,
-                    or_(
-                        AIAnalysis.domain == source_analysis.domain,
-                        func.abs(AIAnalysis.overall_quality_score - source_analysis.overall_quality_score) < 20
-                    )
-                )
-            )
-            .limit(limit * 2)  # Get more candidates for similarity calculation
-        )
-        
-        candidates = similar_analyses.scalars().all()
-        similarities = []
-        
-        for candidate in candidates:
-            # Calculate similarity score (simplified implementation)
-            similarity_score = await self._calculate_similarity(
-                source_analysis, candidate
-            )
-            
-            if similarity_score >= similarity_threshold:
-                # Create or update similarity record
-                similarity = ContentSimilarity(
-                    source_analysis_id=analysis_id,
-                    target_analysis_id=str(candidate.id),
-                    similarity_score=similarity_score,
-                    similarity_type="semantic",
-                    confidence_score=int(similarity_score * 100),
-                    algorithm_version="1.0"
-                )
-                
-                self.db_session.add(similarity)
-                similarities.append(similarity)
-        
-        await self.db_session.commit()
-        return similarities[:limit]
-    
-    async def _calculate_similarity(self, analysis1: AIAnalysis, analysis2: AIAnalysis) -> float:
-        """
-        Calculate similarity score between two analyses.
+        Calculate similarity score between two analysis data sets.
         
         This is a simplified implementation. In production, you would use
         vector embeddings and cosine similarity.
@@ -263,112 +124,98 @@ class AIAnalysisService:
         factors = 0
         
         # Domain similarity
-        if analysis1.domain == analysis2.domain:
+        if analysis1_data.get("domain") == analysis2_data.get("domain"):
             score += 0.3
         factors += 1
         
         # Quality score similarity
-        if analysis1.overall_quality_score and analysis2.overall_quality_score:
-            quality_diff = abs(analysis1.overall_quality_score - analysis2.overall_quality_score)
+        quality1 = analysis1_data.get("overall_quality_score", 0)
+        quality2 = analysis2_data.get("overall_quality_score", 0)
+        if quality1 and quality2:
+            quality_diff = abs(quality1 - quality2)
             quality_similarity = max(0, 1 - (quality_diff / 100))
             score += quality_similarity * 0.2
         factors += 1
         
         # Language similarity
-        if analysis1.language == analysis2.language:
+        if analysis1_data.get("language") == analysis2_data.get("language"):
             score += 0.1
         factors += 1
         
         # Topic similarity (simplified)
-        if analysis1.topic_categories and analysis2.topic_categories:
+        if analysis1_data.get("topic_categories") and analysis2_data.get("topic_categories"):
             # This would be more sophisticated with actual topic vectors
             score += 0.4
         factors += 1
         
         return score / factors if factors > 0 else 0.0
     
-    async def get_user_analysis_history(
-        self,
-        user_id: str,
-        limit: int = 50,
-        offset: int = 0
-    ) -> List[AIAnalysis]:
+    def process_analysis_metrics(self, analysis_data_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Get user's AI analysis history.
-        """
-        result = await self.db_session.execute(
-            select(AIAnalysis)
-            .where(AIAnalysis.user_id == user_id)
-            .order_by(desc(AIAnalysis.created_at))
-            .limit(limit)
-            .offset(offset)
-        )
-        return result.scalars().all()
-    
-    async def get_domain_analysis_stats(
-        self,
-        db: AsyncSession,
-        domain: str
-    ) -> Dict[str, Any]:
-        """
-        Get analysis statistics for a domain.
-        """
-        result = await self.db_session.execute(
-            select(
-                func.count(AIAnalysis.id).label('total_analyses'),
-                func.avg(AIAnalysis.overall_quality_score).label('avg_quality'),
-                func.avg(AIAnalysis.trustworthiness_score).label('avg_trustworthiness'),
-                func.count(
-                    AIAnalysis.id.filter(AIAnalysis.processing_status == ProcessingStatus.COMPLETED)
-                ).label('completed_analyses')
-            )
-            .where(AIAnalysis.domain == domain)
-        )
+        Process analysis metrics from a list of analysis data.
         
-        stats = result.first()
+        Args:
+            analysis_data_list: List of analysis data dictionaries
+            
+        Returns:
+            Aggregated metrics
+        """
+        if not analysis_data_list:
+            return {
+                'total_analyses': 0,
+                'avg_quality_score': 0,
+                'avg_trustworthiness_score': 0,
+                'completed_analyses': 0,
+                'success_rate': 0
+            }
+        
+        total_analyses = len(analysis_data_list)
+        completed_analyses = sum(1 for data in analysis_data_list 
+                               if data.get('processing_status') == ProcessingStatus.COMPLETED.value)
+        
+        quality_scores = [data.get('overall_quality_score', 0) 
+                         for data in analysis_data_list 
+                         if data.get('overall_quality_score')]
+        
+        trustworthiness_scores = [data.get('trustworthiness_score', 0) 
+                                for data in analysis_data_list 
+                                if data.get('trustworthiness_score')]
         
         return {
-            'domain': domain,
-            'total_analyses': stats.total_analyses or 0,
-            'avg_quality_score': float(stats.avg_quality or 0),
-            'avg_trustworthiness_score': float(stats.avg_trustworthiness or 0),
-            'completed_analyses': stats.completed_analyses or 0,
-            'success_rate': (stats.completed_analyses / stats.total_analyses * 100) if stats.total_analyses else 0
+            'total_analyses': total_analyses,
+            'avg_quality_score': sum(quality_scores) / len(quality_scores) if quality_scores else 0,
+            'avg_trustworthiness_score': sum(trustworthiness_scores) / len(trustworthiness_scores) if trustworthiness_scores else 0,
+            'completed_analyses': completed_analyses,
+            'success_rate': (completed_analyses / total_analyses * 100) if total_analyses else 0
         }
     
-    async def _update_model_metrics(
+    def format_similarity_data(
         self,
-        ai_results: Dict[str, Any],
-        processing_time: int,
-        success: bool
-    ) -> None:
+        source_analysis_id: str,
+        target_analysis_id: str,
+        similarity_score: float,
+        similarity_type: str = "semantic",
+        algorithm_version: str = "1.0"
+    ) -> Dict[str, Any]:
         """
-        Update AI model performance metrics.
+        Format similarity data for storage.
+        
+        Args:
+            source_analysis_id: Source analysis ID
+            target_analysis_id: Target analysis ID
+            similarity_score: Calculated similarity score
+            similarity_type: Type of similarity calculation
+            algorithm_version: Version of similarity algorithm
+            
+        Returns:
+            Formatted similarity data
         """
-        # This would track metrics for different models used
-        # Implementation depends on specific model tracking requirements
-        pass
-    
-    async def retry_failed_analysis(
-        self,
-        analysis_id: str
-    ) -> AIAnalysis:
-        """
-        Retry a failed AI analysis.
-        """
-        analysis = await self.db_session.get(AIAnalysis, analysis_id)
-        if not analysis or analysis.processing_status != ProcessingStatus.FAILED:
-            raise ValueError("Analysis not found or not in failed state")
-        
-        if analysis.retry_count >= 3:
-            raise ValueError("Maximum retry attempts exceeded")
-        
-        # Reset status and retry
-        analysis.processing_status = ProcessingStatus.PENDING
-        analysis.error_message = None
-        
-        await self.db_session.commit()
-        
-        # Re-analyze (this would need the original content)
-        # For now, just update the status
-        return analysis
+        return {
+            "source_analysis_id": source_analysis_id,
+            "target_analysis_id": target_analysis_id,
+            "similarity_score": similarity_score,
+            "similarity_type": similarity_type,
+            "confidence_score": int(similarity_score * 100),
+            "algorithm_version": algorithm_version,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }

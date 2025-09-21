@@ -313,11 +313,12 @@ class BaseController(WebhookController):
             bool: True if within rate limit, False if exceeded
         """
         try:
-            return await self.security_service.check_rate_limit(
-                f"user:{user_id}:{operation}",
-                limit,
-                window_seconds
+            is_allowed, limit_info = self.security_service.check_rate_limit(
+                identifier=f"user:{user_id}:{operation}",
+                limit_type=operation,
+                ip_address="127.0.0.1"  # Default IP for internal operations
             )
+            return is_allowed
         except Exception as e:
             self.logger.error(f"Rate limit check failed: {str(e)}")
             # Fail open - allow operation if rate limit check fails

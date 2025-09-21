@@ -151,7 +151,7 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
             
             try:
                 # Verify token and get user
-                security_service = SecurityService(db_session=db)
+                security_service = SecurityService()
                 token_data = security_service.verify_jwt_token(token)
                 
                 if not token_data:

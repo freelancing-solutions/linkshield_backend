@@ -9,6 +9,7 @@ from src.services.ai_analysis_service import AIAnalysisService
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 from src.services.url_analysis_service import URLAnalysisService
+from src.services.background_tasks import background_email_service
 from src.models import User
 
 async def get_email_service():
@@ -55,17 +56,24 @@ async def get_rate_limits(user: Optional[User], db: AsyncSession = Depends(get_d
         )
 
 
+async def get_background_email_service():
+    """
+    Get BackgroundEmailService instance (pure task queuing service).
+    """
+    return background_email_service
+
+
 async def get_ai_service() -> AIService:
     """
     Get AIService instance (pure business logic, no database dependency).
     """
     return AIService()
 
-async def get_ai_analysis_service(db_session: AsyncSession = Depends(get_db_session)) -> AIAnalysisService:
+async def get_ai_analysis_service() -> AIAnalysisService:
     """
-    Get AI analysis service instance.
+    Get AI analysis service instance (pure business logic, no database dependency).
     """
-    return AIAnalysisService(db_session=db_session)
+    return AIAnalysisService()
 
 async def get_url_analysis_service(ai_service: AIService = Depends(get_ai_service)) -> URLAnalysisService:
     """

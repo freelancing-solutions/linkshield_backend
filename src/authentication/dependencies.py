@@ -25,8 +25,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     Get current authenticated user.
     """
     try:
-        auth_service = AuthService(db_session=db)
-        security_service = SecurityService(dbdb)
+        # Initialize services without database session
+        security_service = SecurityService()
         
         # Verify JWT token
         token_data = security_service.verify_jwt_token(credentials.credentials)
@@ -36,13 +36,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         if not user_id or not session_id:
             raise HTTPException(status_code=401, detail="Invalid token")
         
-        # Validate session
-        is_valid, session = security_service.validate_session(session_id, user_id)
+        # Validate session using database operations directly
+        is_valid, session = await _validate_user_session_in_db(db, session_id, user_id)
         if not is_valid:
             raise HTTPException(status_code=401, detail="Session expired")
         
-        # Get user
-        user = db.query(User).filter(User.id == user_id).first()
+        # Get user from database
+        user = await _get_user_by_id(db, user_id)
         if not user or not user.is_active:
             raise HTTPException(status_code=401, detail="User not found or inactive")
         
@@ -95,6 +95,65 @@ async def get_admin_user(
         )
     
     return current_user
+
+
+async def _get_user_by_id(db: AsyncSession, user_id: str) -> Optional[User]:
+    """
+    Get user from database by ID.
+    
+    Args:
+        db: Database session
+        user_id: User ID to lookup
+        
+    Returns:
+        Optional[User]: User if found, None otherwise
+    """
+    from sqlalchemy import select
+    result = await db.execute(select(User).filter(User.id == user_id))
+    return result.scalar_one_or_none()
+
+
+async def _validate_user_session_in_db(db: AsyncSession, session_id: str, user_id: str) -> tuple[bool, Optional]:
+    """
+    Validate user session in database.
+    
+    Args:
+        db: Database session
+        session_id: Session ID to validate
+        user_id: User ID for session
+        
+    Returns:
+        Tuple[bool, Optional]: (is_valid, session_object)
+    """
+    from sqlalchemy import select
+    from src.models.user import UserSession
+    from datetime import datetime, timezone
+    
+    # Get session from database
+    result = await db.execute(
+        select(UserSession).filter(
+            UserSession.id == session_id,
+            UserSession.user_id == user_id,
+            UserSession.is_active == True
+        )
+    )
+    session = result.scalar_one_or_none()
+    
+    if not session:
+        return False, None
+    
+    # Check if session is expired
+    if session.expires_at < datetime.now(timezone.utc):
+        # Mark session as inactive
+        session.is_active = False
+        await db.commit()
+        return False, None
+    
+    # Update last activity
+    session.last_activity = datetime.now(timezone.utc)
+    await db.commit()
+    
+    return True, session
 
 async def check_admin_permissions(user: User) -> None:
     """

@@ -48,6 +48,8 @@ class UserController(BaseController):
     - Profile management
     - Password management
     - API key management
+    - Session validation and management
+    - API key validation and management
     - Session management
     - Email verification
     - Account settings
@@ -1159,11 +1161,12 @@ class UserController(BaseController):
                 )
             
             # Check rate limit
-            if not self.security_service.check_rate_limit(
-                f"verification_resend:{user.id}",
-                max_attempts=3,
-                window_minutes=15
-            ):
+            is_allowed, limit_info = self.security_service.check_rate_limit(
+                identifier=f"verification_resend:{user.id}",
+                limit_type="verification_resend",
+                ip_address="127.0.0.1"  # Default IP for internal operations
+            )
+            if not is_allowed:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Too many verification email requests"
@@ -1367,3 +1370,191 @@ class UserController(BaseController):
             self.logger.info(
                 f"Sending password reset email to {user.email} with token {token}"
             )
+
+    # Session validation methods (moved from SecurityService)
+    async def _validate_user_session(
+        self,
+        session_id: str,
+        user_id: str
+    ) -> Tuple[bool, Optional[UserSession]]:
+        """Validate user session with database lookup.
+        
+        Args:
+            session_id: Session ID to validate
+            user_id: User ID to validate against
+            
+        Returns:
+            Tuple of (is_valid, session_object)
+        """
+        try:
+            async with self.get_db_session() as db:
+                # Get session from database
+                session = db.query(UserSession).filter(
+                    and_(
+                        UserSession.id == session_id,
+                        UserSession.user_id == user_id,
+                        UserSession.is_active == True
+                    )
+                ).first()
+                
+                if not session:
+                    return False, None
+                
+                # Convert to dict for SecurityService validation
+                session_data = {
+                    "id": str(session.id),
+                    "user_id": str(session.user_id),
+                    "is_active": session.is_active,
+                    "expires_at": session.expires_at,
+                    "last_activity_at": session.last_activity_at
+                }
+                
+                # Use SecurityService for validation logic
+                is_valid, validation_result = self.security_service.validate_session_data(
+                    session_data, user_id
+                )
+                
+                if not is_valid:
+                    # Mark session as inactive if validation failed
+                    session.is_active = False
+                    session.ended_at = datetime.now(timezone.utc)
+                    db.commit()
+                    return False, None
+                
+                return True, session
+                
+        except Exception as e:
+            self.logger.error(f"Session validation error: {str(e)}")
+            return False, None
+
+    async def _validate_user_api_key(
+        self,
+        api_key: str,
+        required_permissions: List[str] = None
+    ) -> Tuple[bool, Optional[APIKey]]:
+        """Validate user API key with database lookup.
+        
+        Args:
+            api_key: API key to validate
+            required_permissions: List of required permissions
+            
+        Returns:
+            Tuple of (is_valid, api_key_object)
+        """
+        try:
+            # Hash the provided API key for comparison
+            api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            
+            async with self.get_db_session() as db:
+                # Get API key from database
+                key_obj = db.query(APIKey).filter(
+                    and_(
+                        APIKey.key_hash == api_key_hash,
+                        APIKey.is_active == True
+                    )
+                ).first()
+                
+                if not key_obj:
+                    return False, None
+                
+                # Convert to dict for SecurityService validation
+                api_key_data = {
+                    "id": str(key_obj.id),
+                    "is_active": key_obj.is_active,
+                    "expires_at": key_obj.expires_at,
+                    "permissions": key_obj.permissions or []
+                }
+                
+                # Use SecurityService for validation logic
+                is_valid, validation_result = self.security_service.validate_api_key_data(
+                    api_key_data, required_permissions or []
+                )
+                
+                if not is_valid:
+                    return False, None
+                
+                # Update last used timestamp
+                key_obj.last_used_at = datetime.now(timezone.utc)
+                db.commit()
+                
+                return True, key_obj
+                
+        except Exception as e:
+            self.logger.error(f"API key validation error: {str(e)}")
+            return False, None
+
+    async def _update_session_activity(
+        self,
+        session_id: str
+    ) -> bool:
+        """Update session last activity timestamp.
+        
+        Args:
+            session_id: Session ID to update
+            
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        try:
+            async with self.get_db_session() as db:
+                session = db.query(UserSession).filter(
+                    UserSession.id == session_id
+                ).first()
+                
+                if session:
+                    session.last_activity_at = datetime.now(timezone.utc)
+                    db.commit()
+                    return True
+                    
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Session activity update error: {str(e)}")
+            return False
+
+    async def _cleanup_expired_sessions(
+        self,
+        user_id: Optional[str] = None
+    ) -> int:
+        """Clean up expired sessions.
+        
+        Args:
+            user_id: Optional user ID to limit cleanup to specific user
+            
+        Returns:
+            Number of sessions cleaned up
+        """
+        try:
+            async with self.get_db_session() as db:
+                query = db.query(UserSession).filter(
+                    UserSession.is_active == True
+                )
+                
+                if user_id:
+                    query = query.filter(UserSession.user_id == user_id)
+                
+                sessions = query.all()
+                cleaned_count = 0
+                
+                for session in sessions:
+                    session_data = {
+                        "expires_at": session.expires_at,
+                        "last_activity_at": session.last_activity_at
+                    }
+                    
+                    # Check if session is expired using SecurityService
+                    if (self.security_service.validate_session_expiry(session_data) or
+                        self.security_service.validate_session_idle_timeout(session_data)):
+                        
+                        session.is_active = False
+                        session.ended_at = datetime.now(timezone.utc)
+                        cleaned_count += 1
+                
+                if cleaned_count > 0:
+                    db.commit()
+                
+                return cleaned_count
+                
+        except Exception as e:
+            self.logger.error(f"Session cleanup error: {str(e)}")
+            return 0
