@@ -7,17 +7,13 @@ topic classification, sentiment analysis, and intelligent insights.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, Path
-from pydantic import BaseModel, validator
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+from fastapi import APIRouter, Depends, status, Request, Query, Path
+from pydantic import BaseModel, field_validator, Field
 
-
-from src.authentication.auth_service import get_current_user, get_optional_user
+from src.authentication.dependencies import get_current_user, get_optional_user
 
 from src.controllers.depends import get_ai_analysis_controller
 from src.controllers import AIAnalysisController
@@ -26,9 +22,7 @@ from src.models.user import User
 
 # Initialize router and rate limiter
 router = APIRouter(prefix="/ai-analysis", tags=["AI Analysis"])
-limiter = Limiter(key_func=get_remote_address)
-router.state.limiter = limiter
-router.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 
 # Request/Response Models
@@ -43,7 +37,7 @@ class AIAnalysisRequest(BaseModel):
         description="Specific analysis types to perform"
     )
     
-    @validator('url')
+    @field_validator('url')
     def validate_url(cls, v):
         if not v.startswith(('http://', 'https://')):
             raise ValueError('URL must start with http:// or https://')
@@ -124,7 +118,6 @@ class AnalysisHistoryResponse(BaseModel):
     summary="Analyze Content with AI",
     description="Perform comprehensive AI analysis on web content including quality scoring, topic classification, and sentiment analysis."
 )
-@limiter.limit("10/minute")
 async def analyze_content(
     request: Request,
     analysis_request: AIAnalysisRequest,
@@ -172,9 +165,7 @@ async def get_analysis(
 
 
 @router.get("/analysis/{analysis_id}/similar", response_model=List[SimilarContentResponse], summary="Find Similar Content", description="Find content similar to the analyzed content.")
-@limiter.limit("20/minute")
 async def find_similar_content(
-    request: Request,
     analysis_id: str,
     similarity_threshold: float = Query(0.8, ge=0.0, le=1.0, description="Minimum similarity score"),
     limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
@@ -221,9 +212,7 @@ async def get_analysis_history(
     summary="Get Domain Analysis Statistics",
     description="Get analysis statistics for a specific domain."
 )
-@limiter.limit("30/minute")
 async def get_domain_stats(
-    request: Request,
     domain: str,
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
     current_user: Optional[User] = Depends(get_optional_user)
@@ -257,14 +246,8 @@ async def retry_analysis(
     )
 
 
-@router.get(
-    "/status",
-    summary="Get AI Analysis Service Status",
-    description="Get the current status of the AI analysis service."
-)
-async def get_service_status(
-    controller: AIAnalysisController = Depends(get_ai_analysis_controller)
-):
+@router.get("/status",summary="Get AI Analysis Service Status",description="Get the current status of the AI analysis service.")
+async def get_service_status(controller: AIAnalysisController = Depends(get_ai_analysis_controller)):
     """
     Get AI analysis service status.
     """
