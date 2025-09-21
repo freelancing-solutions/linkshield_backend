@@ -1003,7 +1003,7 @@ class AdminController(BaseController):
                     task = await task_tracking_service.create_task(
                         db=db,
                         task_type=TaskType.ADMIN_USER_EXPORT,
-                        priority=TaskPriority.MEDIUM,
+                        priority=TaskPriority.NORMAL,
                         user_id=None,  # Admin operation
                         metadata={
                             "page": page,

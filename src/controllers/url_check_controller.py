@@ -26,6 +26,7 @@ from src.services.url_analysis_service import (
     URLAnalysisService, URLAnalysisError, InvalidURLError
 )
 from src.services.ai_service import AIService
+from src.services.email_service import EmailService
 from src.services.security_service import (
     SecurityService, AuthenticationError, RateLimitError
 )

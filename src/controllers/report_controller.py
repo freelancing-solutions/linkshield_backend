@@ -169,7 +169,7 @@ class ReportController(BaseController):
                         },
                         user_id=user.id,
                         callback_url=callback_url,
-                        priority=TaskPriority.HIGH if priority == ReportPriority.HIGH else TaskPriority.MEDIUM,
+                        priority=TaskPriority.HIGH if priority == ReportPriority.HIGH else TaskPriority.NORMAL,
                         args=(
                         str(report.id),
                         normalized_url,

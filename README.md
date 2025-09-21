@@ -20,7 +20,7 @@ A comprehensive URL security analysis API built with FastAPI, providing real-tim
 - **Cache**: Redis for session storage and rate limiting
 - **Authentication**: JWT tokens with bcrypt password hashing
 - **AI/ML**: OpenAI GPT integration for content analysis
-- **Background Tasks**: Celery for async processing
+- **Background Tasks**: FastAPI BackgroundTasks for async processing
 - **Monitoring**: Prometheus metrics and health checks
 
 ## Project Structure

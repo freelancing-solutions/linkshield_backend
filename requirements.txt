@@ -72,8 +72,7 @@ pyopenssl
 certifi
 
 # Background Tasks
-celery
-kombu
+# Celery removed - using FastAPI BackgroundTasks instead
 
 # API Documentation
 fastapi-users

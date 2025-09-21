@@ -27,7 +27,7 @@ from src.models.email import EmailLog, EmailType, EmailRequest
 from src.services.security_service import SecurityService
 from src.authentication.auth_service import AuthService
 from src.services.email_service import EmailService
-from src.services.background_tasks import BackgroundEmailService
+from src.services.background_email_service import BackgroundEmailService
 
 
 class InvalidCredentialsError(Exception):

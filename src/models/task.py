@@ -16,15 +16,8 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
-from src.models.base import BaseModel
+from src.config.database import Base
 
-# Import base model from existing models
-try:
-    from src.models.base import Base
-except ImportError:
-    # Fallback if base model doesn't exist
-    from sqlalchemy.ext.declarative import declarative_base
-    Base = declarative_base()
 
 
 class TaskStatus(str, Enum):
@@ -64,7 +57,7 @@ class TaskPriority(str, Enum):
     CRITICAL = "critical"
 
 
-class BackgroundTask(BaseModel):
+class BackgroundTask(Base):
     """
     Database model for tracking FastAPI BackgroundTasks.
     
@@ -138,7 +131,7 @@ class BackgroundTask(BaseModel):
                              comment="Whether completion notification was sent")
     
     # Metadata and tags
-    metadata = Column(JSON, nullable=True,
+    task_metadata = Column(JSON, nullable=True,
                      comment="Additional task metadata and custom fields")
     tags = Column(JSON, nullable=True,
                  comment="Task tags for categorization and filtering")
@@ -199,10 +192,10 @@ class BackgroundTask(BaseModel):
             message: Optional progress message
         """
         self.progress_percentage = max(0, min(100, percentage))
-        if message and self.metadata:
-            if 'progress_messages' not in self.metadata:
-                self.metadata['progress_messages'] = []
-            self.metadata['progress_messages'].append({
+        if message and self.task_metadata:
+            if 'progress_messages' not in self.task_metadata:
+                self.task_metadata['progress_messages'] = []
+            self.task_metadata['progress_messages'].append({
                 'timestamp': datetime.now(timezone.utc).isoformat(),
                 'percentage': percentage,
                 'message': message
@@ -286,7 +279,7 @@ class BackgroundTask(BaseModel):
             'correlation_id': self.correlation_id,
             'webhook_url': self.webhook_url,
             'notification_sent': self.notification_sent,
-            'metadata': self.metadata,
+            'metadata': self.task_metadata,
             'tags': self.tags,
             'worker_id': self.worker_id,
             'queue_name': self.queue_name,
@@ -303,7 +296,7 @@ class BackgroundTask(BaseModel):
         return data
 
 
-class TaskLog(BaseModel):
+class TaskLog(Base):
     """
     Model for storing detailed task execution logs.
     
@@ -343,7 +336,7 @@ class TaskLog(BaseModel):
         return f"<TaskLog(id={self.id}, task_id={self.task_id}, level={self.level}, timestamp={self.timestamp})>"
 
 
-class TaskDependency(BaseModel):
+class TaskDependency(Base):
     """
     Model for tracking task dependencies and execution order.
     

@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from src.config.database import get_db
 from src.config.settings import get_settings
 from src.services.security_service import SecurityService
-from src.services.auth_service import AuthService
+from src.authentication.auth_service import AuthService
 from src.services.email_service import EmailService
 from .webhook_controller import WebhookController
 from src.models.user import User

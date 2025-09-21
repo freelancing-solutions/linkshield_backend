@@ -23,7 +23,7 @@ from src.services.security_service import SecurityService, AuthenticationError, 
 from src.authentication.auth_service import AuthService,  InvalidCredentialsError
 from src.controllers.user_controller import UserController
 from src.services.email_service import EmailService
-from src.services.background_tasks import BackgroundEmailService
+from src.services.background_email_service import BackgroundEmailService
 from src.services.depends import (
     get_security_service, get_auth_service, get_email_service, 
     get_background_email_service

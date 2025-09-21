@@ -314,13 +314,8 @@ class Settings(BaseSettings):
     CORS_ALLOW_METHODS: List[str] = Field(default=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     CORS_ALLOW_HEADERS: List[str] = Field(default=["*"])
     
-    # Celery Configuration
-    CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/1", env="LINKSHIELD_CELERY_BROKER_URL")
-    CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/2", env="LINKSHIELD_CELERY_RESULT_BACKEND")
-    CELERY_TASK_SERIALIZER: str = Field(default="json")
-    CELERY_RESULT_SERIALIZER: str = Field(default="json")
-    CELERY_ACCEPT_CONTENT: List[str] = Field(default=["json"])
-    CELERY_TIMEZONE: str = Field(default="UTC")
+    # Background Tasks Configuration
+    # Using FastAPI BackgroundTasks instead of Celery
     
     # AI Analysis Configuration
     AI_ANALYSIS_ENABLED: bool = Field(default=True, env="LINKSHIELD_AI_ANALYSIS_ENABLED")

@@ -152,7 +152,7 @@ class WebhookController(ABC):
         task_type: TaskType,
         task_data: Dict[str, Any],
         user_id: Optional[int] = None,
-        priority: TaskPriority = TaskPriority.MEDIUM,
+        priority: TaskPriority = TaskPriority.NORMAL,
         callback_url: Optional[str] = None,
         depends_on: Optional[List[str]] = None
     ) -> str:
@@ -362,7 +362,7 @@ class WebhookController(ABC):
         task_type: TaskType,
         task_data: Dict[str, Any],
         user_id: Optional[int] = None,
-        priority: TaskPriority = TaskPriority.MEDIUM,
+        priority: TaskPriority = TaskPriority.NORMAL,
         callback_url: Optional[str] = None,
         *args,
         **kwargs
