@@ -14,13 +14,14 @@ from fastapi import APIRouter, Depends, status, Request, Query, Path
 from pydantic import BaseModel, field_validator, Field
 
 from src.authentication.dependencies import get_current_user, get_optional_user
+from src.security.rate_limiting import limiter, ai_analysis_key_func
 
 from src.controllers.depends import get_ai_analysis_controller
 from src.controllers import AIAnalysisController
 from src.models.ai_analysis import AnalysisType
 from src.models.user import User
 
-# Initialize router and rate limiter
+# Initialize router
 router = APIRouter(prefix="/ai-analysis", tags=["AI Analysis"])
 
 
@@ -118,6 +119,7 @@ class AnalysisHistoryResponse(BaseModel):
     summary="Analyze Content with AI",
     description="Perform comprehensive AI analysis on web content including quality scoring, topic classification, and sentiment analysis."
 )
+@limiter.limit("10/minute", key_func=ai_analysis_key_func)
 async def analyze_content(
     request: Request,
     analysis_request: AIAnalysisRequest,
@@ -150,6 +152,7 @@ async def analyze_content(
     summary="Get Analysis Results",
     description="Retrieve AI analysis results by analysis ID."
 )
+@limiter.limit("20/minute", key_func=ai_analysis_key_func)
 async def get_analysis(
     analysis_id: str,
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
@@ -165,6 +168,7 @@ async def get_analysis(
 
 
 @router.get("/analysis/{analysis_id}/similar", response_model=List[SimilarContentResponse], summary="Find Similar Content", description="Find content similar to the analyzed content.")
+@limiter.limit("30/minute", key_func=ai_analysis_key_func)
 async def find_similar_content(
     analysis_id: str,
     similarity_threshold: float = Query(0.8, ge=0.0, le=1.0, description="Minimum similarity score"),
@@ -190,6 +194,7 @@ async def find_similar_content(
     summary="Get Analysis History",
     description="Get user's AI analysis history."
 )
+@limiter.limit("20/minute", key_func=ai_analysis_key_func)
 async def get_analysis_history(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -212,6 +217,7 @@ async def get_analysis_history(
     summary="Get Domain Analysis Statistics",
     description="Get analysis statistics for a specific domain."
 )
+@limiter.limit("30/minute", key_func=ai_analysis_key_func)
 async def get_domain_stats(
     domain: str,
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
@@ -230,8 +236,8 @@ async def get_domain_stats(
     "/analysis/{analysis_id}/retry",
     response_model=AIAnalysisResponse,
     summary="Retry Failed Analysis",
-    description="Retry a failed AI analysis."
-)
+    description="Retry a failed AI analysis.")
+@limiter.limit("10/minute", key_func=ai_analysis_key_func)
 async def retry_analysis(
     analysis_id: str,
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
@@ -246,7 +252,11 @@ async def retry_analysis(
     )
 
 
-@router.get("/status",summary="Get AI Analysis Service Status",description="Get the current status of the AI analysis service.")
+@router.get(
+    "/status",
+    summary="Get AI Analysis Service Status",
+    description="Get the current status of the AI analysis service.")
+@limiter.limit("30/minute", key_func=ai_analysis_key_func)
 async def get_service_status(controller: AIAnalysisController = Depends(get_ai_analysis_controller)):
     """
     Get AI analysis service status.
