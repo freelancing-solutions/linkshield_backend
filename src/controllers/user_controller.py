@@ -13,17 +13,17 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from fastapi import HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
-from pydantic import ValidationError
+from sqlalchemy import and_, desc
+
 
 from src.controllers.base_controller import BaseController
 from src.models.user import (
     User, UserSession, APIKey, PasswordResetToken,
-    EmailVerificationToken, UserRole, SubscriptionPlan
+    EmailVerificationToken
 )
-from src.models.subscription import UserSubscription, SubscriptionPlan
+
 from src.services.security_service import (
-    SecurityService, AuthenticationError, RateLimitError
+    SecurityService
 )
 from src.authentication.auth_service import (
     AuthService, InvalidCredentialsError

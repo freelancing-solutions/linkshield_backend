@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from src.config.settings import get_settings
-from src.controllers.health_controller import HealthController
+from src.controllers import HealthController
+from src.controllers.depends import get_health_controller
 
 # Get settings instance
 settings = get_settings()
@@ -48,8 +49,6 @@ class ServiceStatus(BaseModel):
 # Store application start time
 APP_START_TIME = time.time()
 
-async def get_health_controller() -> HealthController:
-    return HealthController()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(controller:HealthController = Depends(get_health_controller)) -> HealthResponse:

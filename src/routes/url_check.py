@@ -6,27 +6,28 @@ API routes for URL analysis, security scanning, and threat detection.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel, HttpUrl, Field, validator
-from sqlalchemy import and_, or_, desc
 
-from src.config.database import get_db_session, AsyncSession
+
+
 from src.config.settings import get_settings
-from src.models.url_check import URLCheck, ScanResult, URLReputation, CheckStatus, ThreatLevel, ScanType
+from src.models.url_check import CheckStatus, ThreatLevel, ScanType
 from src.models.user import User
-from src.services.url_analysis_service import URLAnalysisService, URLAnalysisError, InvalidURLError
-from src.services.ai_service import AIService
-from src.services.security_service import SecurityService, AuthenticationError, RateLimitError
-from src.services.depends import get_auth_service, get_security_service, get_email_service, get_rate_limits
-from src.authentication.dependencies import get_admin_user,get_current_user, get_optional_user
+
+
+
+
+from src.authentication.dependencies import get_current_user, get_optional_user
 from src.controllers.url_check_controller import URLCheckController
 from src.controllers.depends import get_url_check_controller
 
-from src.utils import utc_datetimes
+from src.utils import utc_datetime
+
 # Initialize router
 router = APIRouter(prefix="/api/v1/url-check", tags=["URL Analysis"])
 security = HTTPBearer()

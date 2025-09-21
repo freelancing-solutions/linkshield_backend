@@ -11,11 +11,13 @@ from src.controllers.health_controller import HealthController
 from src.controllers.report_controller import ReportController
 from src.controllers.url_check_controller import URLCheckController
 from src.controllers.user_controller import UserController
+from src.controllers.admin_controller import AdminController
 
 __all__ = [
     "BaseController",
     "HealthController", 
     "ReportController",
     "URLCheckController",
-    "UserController"
+    "UserController",
+    "AdminController"
 ]
