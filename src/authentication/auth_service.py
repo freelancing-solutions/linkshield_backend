@@ -73,11 +73,11 @@ class AuthService:
     
     def __init__(
         self, 
-        get_db_session: AsyncSession, 
+        db_session: AsyncSession, 
         email_service: EmailService,
         security_service: SecurityService
     ):
-        self.db = get_db_session
+        self.db_session = db_session
         self.email_service = email_service
         self.security_service = security_service
         self.settings = get_settings()
@@ -112,7 +112,7 @@ class AuthService:
             raise AuthenticationError(f"Invalid email format: {str(e)}")
         
         # Check if user already exists
-        existing_user = self.db.query(User).filter(User.email == email).first()
+        existing_user = self.db_session.query(User).filter(User.email == email).first()
         if existing_user:
             raise AuthenticationError("User with this email already exists")
         
@@ -143,8 +143,8 @@ class AuthService:
             user_agent=user_agent
         )
         
-        self.db.add(user)
-        self.db.flush()  # Get user ID
+        self.db_session.add(user)
+        self.db_session.flush()  # Get user ID
         
         # Create email verification token
         verification_token = self._create_email_verification_token(user.id)
@@ -156,7 +156,7 @@ class AuthService:
             verification_token
         )
         
-        self.db.commit()
+        self.db_session.commit()
         
         return user, verification_token
     
@@ -174,7 +174,7 @@ class AuthService:
             Tuple of (User, session_token)
         """
         # Find user by email
-        user = self.db.query(User).filter(User.email == email).first()
+        user = self.db_session.query(User).filter(User.email == email).first()
         if not user:
             raise InvalidCredentialsError("Invalid email or password")
         
@@ -228,7 +228,7 @@ class AuthService:
         # Create session
         session_token = self._create_user_session(user.id, ip_address, user_agent)
         
-        self.db.commit()
+        self.db_session.commit()
         
         return user, session_token
     
@@ -251,7 +251,7 @@ class AuthService:
                 return None
             
             # Find session in database
-            session = self.db.query(UserSession).filter(
+            session = self.db_session.query(UserSession).filter(
                 and_(
                     UserSession.id == session_id,
                     UserSession.user_id == user_id,
@@ -265,7 +265,7 @@ class AuthService:
             
             # Update session activity
             session.last_activity = datetime.now(timezone.utc)
-            self.db.commit()
+            self.db_session.commit()
             
             return session.user
             
@@ -288,14 +288,14 @@ class AuthService:
             session_id = payload.get("session_id")
             
             if session_id:
-                session = self.db.query(UserSession).filter(
+                session = self.db_session.query(UserSession).filter(
                     UserSession.id == session_id
                 ).first()
                 
                 if session:
                     session.is_active = False
                     session.logged_out_at = datetime.now(timezone.utc)
-                    self.db.commit()
+                    self.db_session.commit()
                     return True
             
         except jwt.InvalidTokenError:
@@ -307,7 +307,7 @@ class AuthService:
         """
         Verify user email with verification token.
         """
-        verification = self.db.query(EmailVerificationToken).filter(
+        verification = self.db_session.query(EmailVerificationToken).filter(
             and_(
                 EmailVerificationToken.token == token,
                 EmailVerificationToken.is_used == False,
@@ -327,7 +327,7 @@ class AuthService:
         verification.is_used = True
         verification.used_at = datetime.now(timezone.utc)
         
-        self.db.commit()
+        self.db_session.commit()
         
         return True
     
@@ -335,7 +335,7 @@ class AuthService:
         """
         Request password reset for user.
         """
-        user = self.db.query(User).filter(User.email == email).first()
+        user = self.db_session.query(User).filter(User.email == email).first()
         if not user:
             # Don't reveal if email exists
             return True
@@ -350,7 +350,7 @@ class AuthService:
             reset_token
         )
         
-        self.db.commit()
+        self.db_session.commit()
         
         return True
     
@@ -358,7 +358,7 @@ class AuthService:
         """
         Reset user password with reset token.
         """
-        reset_token = self.db.query(PasswordResetToken).filter(
+        reset_token = self.db_session.query(PasswordResetToken).filter(
             and_(
                 PasswordResetToken.token == token,
                 PasswordResetToken.is_used == False,
@@ -386,14 +386,14 @@ class AuthService:
         reset_token.used_at = datetime.now(timezone.utc)
         
         # Invalidate all user sessions
-        self.db.query(UserSession).filter(
+        self.db_session.query(UserSession).filter(
             and_(
                 UserSession.user_id == user.id,
                 UserSession.is_active == True
             )
         ).update({"is_active": False})
         
-        self.db.commit()
+        self.db_session.commit()
         
         return True
     
@@ -401,7 +401,7 @@ class AuthService:
         """
         Change user password (requires current password).
         """
-        user = self.db.query(User).filter(User.id == user_id).first()
+        user = self.db_session.query(User).filter(User.id == user_id).first()
         if not user:
             return False
         
@@ -420,7 +420,7 @@ class AuthService:
         user.password_hash = self._hash_password(new_password)
         user.password_changed_at = datetime.now(timezone.utc)
         
-        self.db.commit()
+        self.db_session.commit()
         
         return True
     
@@ -439,8 +439,8 @@ class AuthService:
             permissions=permissions
         )
         
-        self.db.add(api_key)
-        self.db.commit()
+        self.db_session.add(api_key)
+        self.db_session.commit()
         
         return key
     
@@ -453,7 +453,7 @@ class AuthService:
         
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         
-        api_key_record = self.db.query(APIKey).filter(
+        api_key_record = self.db_session.query(APIKey).filter(
             and_(
                 APIKey.key_hash == key_hash,
                 APIKey.is_active == True,
@@ -470,7 +470,7 @@ class AuthService:
         # Update last used
         api_key_record.last_used_at = datetime.now(timezone.utc)
         api_key_record.usage_count += 1
-        self.db.commit()
+        self.db_session.commit()
         
         return api_key_record.user
     
@@ -478,7 +478,7 @@ class AuthService:
         """
         Revoke API key.
         """
-        api_key = self.db.query(APIKey).filter(
+        api_key = self.db_session.query(APIKey).filter(
             and_(
                 APIKey.id == api_key_id,
                 APIKey.user_id == user_id
@@ -490,7 +490,7 @@ class AuthService:
         
         api_key.is_active = False
         api_key.revoked_at = datetime.now(timezone.utc)
-        self.db.commit()
+        self.db_session.commit()
         
         return True
     
@@ -498,7 +498,7 @@ class AuthService:
         """
         Get active sessions for user.
         """
-        return self.db.query(UserSession).filter(
+        return self.db_session.query(UserSession).filter(
             and_(
                 UserSession.user_id == user_id,
                 UserSession.is_active == True,
@@ -510,7 +510,7 @@ class AuthService:
         """
         Revoke specific user session.
         """
-        session = self.db.query(UserSession).filter(
+        session = self.db_session.query(UserSession).filter(
             and_(
                 UserSession.id == session_id,
                 UserSession.user_id == user_id
@@ -522,7 +522,7 @@ class AuthService:
         
         session.is_active = False
         session.logged_out_at = datetime.now(timezone.utc)
-        self.db.commit()
+        self.db_session.commit()
         
         return True
     
@@ -530,7 +530,7 @@ class AuthService:
         """
         Revoke all user sessions except optionally one.
         """
-        query = self.db.query(UserSession).filter(
+        query = self.db_session.query(UserSession).filter(
             and_(
                 UserSession.user_id == user_id,
                 UserSession.is_active == True
@@ -546,7 +546,7 @@ class AuthService:
             "logged_out_at": datetime.now(timezone.utc)
         })
         
-        self.db.commit()
+        self.db_session.commit()
         
         return count
     
@@ -613,8 +613,8 @@ class AuthService:
             expires_at=datetime.now(timezone.utc) + self.session_duration
         )
         
-        self.db.add(session)
-        self.db.flush()  # Get session ID
+        self.db_session.add(session)
+        self.db_session.flush()  # Get session ID
         
         # Create JWT token
         payload = {
@@ -640,7 +640,7 @@ class AuthService:
             expires_at=datetime.now(timezone.utc) + self.email_verification_duration
         )
         
-        self.db.add(verification)
+        self.db_session.add(verification)
         
         return token
     
@@ -656,6 +656,6 @@ class AuthService:
             expires_at=datetime.now(timezone.utc) + self.password_reset_duration
         )
         
-        self.db.add(reset_token)
+        self.db_session.add(reset_token)
         
         return token

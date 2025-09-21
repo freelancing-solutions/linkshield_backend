@@ -55,8 +55,7 @@ async def health_check(controller:HealthController = Depends(get_health_controll
     """
     Basic health check endpoint.
     Returns overall API health status and basic information.
-    
-    Delegates business logic to HealthController.
+        
     """
     return await controller.get_basic_health()
 

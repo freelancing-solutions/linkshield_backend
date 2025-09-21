@@ -10,12 +10,12 @@ import asyncio
 import json
 import re
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Tuple
 from urllib.parse import urlparse
 
-import aiohttp
+
 import openai
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+from transformers import pipeline
 
 from src.config.settings import get_settings
 

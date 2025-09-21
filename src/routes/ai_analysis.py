@@ -202,15 +202,9 @@ async def get_analysis(
     return AIAnalysisResponse.from_orm(analysis)
 
 
-@router.get(
-    "/analysis/{analysis_id}/similar",
-    response_model=List[SimilarContentResponse],
-    summary="Find Similar Content",
-    description="Find content similar to the analyzed content."
-)
+@router.get("/analysis/{analysis_id}/similar", response_model=List[SimilarContentResponse], summary="Find Similar Content", description="Find content similar to the analyzed content.")
 @limiter.limit("20/minute")
-async def find_similar_content(
-    request: Request,
+async def find_similar_content(request: Request,
     analysis_id: str,
     similarity_threshold: float = Query(0.8, ge=0.0, le=1.0, description="Minimum similarity score"),
     limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
