@@ -6,15 +6,16 @@ and bulk processing operations.
 """
 
 import uuid
+import aiohttp
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, status, BackgroundTasks
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc, func
-from pydantic import ValidationError
 
+from sqlalchemy import and_,  desc, func
+from pydantic import ValidationError
+from src.config.database import AsyncSession
 from src.controllers.base_controller import BaseController
 from src.models.url_check import (
     URLCheck, ScanResult, URLReputation,
@@ -29,6 +30,7 @@ from src.services.security_service import (
     SecurityService, AuthenticationError, RateLimitError
 )
 from src.authentication.auth_service import AuthService
+from src.utils import utc_datetime
 
 
 class URLCheckController(BaseController):
@@ -45,7 +47,7 @@ class URLCheckController(BaseController):
     
     def __init__(
         self,
-        db_session: Session,
+        db_session: AsyncSession,
         security_service: SecurityService = None,
         auth_service: AuthService = None,
         url_analysis_service: URLAnalysisService = None,
@@ -140,8 +142,8 @@ class URLCheckController(BaseController):
                 scan_types=scan_types,
                 priority=priority,
                 callback_url=callback_url,
-                created_at=datetime.utcnow(),
-                scan_started_at=datetime.utcnow()
+                created_at=utc_datetime(),
+                scan_started_at=utc_datetime()
             )
             
             self.db_session.add(url_check)
@@ -253,8 +255,8 @@ class URLCheckController(BaseController):
                         scan_types=scan_types,
                         priority=False,  # Bulk requests are not prioritized
                         callback_url=callback_url,
-                        created_at=datetime.utcnow(),
-                        scan_started_at=datetime.utcnow()
+                        created_at=utc_datetime(),
+                        scan_started_at=utc_datetime()
                     )
                     
                     self.db_session.add(url_check)
@@ -490,7 +492,7 @@ class URLCheckController(BaseController):
         
         if reputation:
             # Update last seen timestamp
-            reputation.last_seen = datetime.utcnow()
+            reputation.last_seen = utc_datetime()
             await self.db_session.commit()
         
         self.log_operation(
@@ -518,7 +520,7 @@ class URLCheckController(BaseController):
         Returns:
             Dict: URL check statistics
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = utc_datetime() - timedelta(days=days)
         
         # Base query for user's checks in the time period
         base_query = (
@@ -670,7 +672,7 @@ class URLCheckController(BaseController):
         Returns:
             URLCheck: Recent check if found, None otherwise
         """
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time = utc_datetime() - timedelta(hours=hours)
         
         query = (
             self.db_session.query(URLCheck)
@@ -733,7 +735,7 @@ class URLCheckController(BaseController):
             url_check.threat_level = analysis_results.get('threat_level')
             url_check.confidence_score = analysis_results.get('confidence_score')
             url_check.analysis_results = analysis_results
-            url_check.scan_completed_at = datetime.now(timezone.utc)
+            url_check.scan_completed_at = utc_datetime()
             
             # Create scan result records
             for scan_result_data in analysis_results.get('scan_results', []):
@@ -746,7 +748,7 @@ class URLCheckController(BaseController):
                     threat_types=scan_result_data.get('threat_types', []),
                     confidence_score=scan_result_data['confidence_score'],
                     metadata=scan_result_data.get('metadata', {}),
-                    created_at=datetime.utcnow()
+                    created_at=utc_datetime()
                 )
                 self.db_session.add(scan_result)
             
@@ -783,7 +785,7 @@ class URLCheckController(BaseController):
                 if url_check:
                     url_check.status = CheckStatus.FAILED
                     url_check.error_message = str(e)
-                    url_check.scan_completed_at = datetime.utcnow()
+                    url_check.scan_completed_at = utc_datetime()
                     await self.db_session.commit()
             except Exception as commit_error:
                 self.logger.error(f"Failed to update URL check status: {str(commit_error)}")
@@ -870,14 +872,14 @@ class URLCheckController(BaseController):
                     reputation_score=50,  # Neutral starting score
                     total_checks=0,
                     malicious_count=0,
-                    first_seen=datetime.utcnow(),
-                    last_seen=datetime.utcnow()
+                    first_seen=utc_datetime(),
+                    last_seen=utc_datetime()
                 )
                 self.db_session.add(reputation)
             
             # Update reputation metrics
             reputation.total_checks += 1
-            reputation.last_seen = datetime.utcnow()
+            reputation.last_seen = utc_datetime()
             reputation.last_threat_level = threat_level
             
             if threat_level in [ThreatLevel.HIGH, ThreatLevel.CRITICAL]:
@@ -906,15 +908,30 @@ class URLCheckController(BaseController):
         try:
             # This would implement actual webhook sending
             # For now, just log the notification
-            self.log_operation(
-                "Webhook notification sent",
-                details={
-                    "webhook_url": webhook_url,
-                    "check_id": str(url_check.id),
-                    "url": url_check.normalized_url,
-                    "status": url_check.status.value
+            payload = {
+                "event": "url_check_completed",
+                "data": {
+                    "id": str(url_check.id),
+                    "url": url_check.original_url,
+                    "threat_level": url_check.threat_level.value if url_check.threat_level else None,
+                    "confidence_score": url_check.confidence_score,
+                    "status": url_check.status.value,
+                    "completed_at": url_check.scan_completed_at.isoformat() if url_check.scan_completed_at else None
                 }
-            )
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=payload, timeout=10) as response:
+                    if response.status != 200:
+                        self.log_operation(
+                            "Webhook notification sent",
+                            details={
+                                "webhook_url": webhook_url,
+                                "check_id": str(url_check.id),
+                                "url": url_check.normalized_url,
+                                "status": url_check.status.value
+                            }
+                        )
+            
         except Exception as e:
             self.logger.error(f"Webhook notification failed: {str(e)}")
     
@@ -930,15 +947,34 @@ class URLCheckController(BaseController):
             url_checks: List of completed URL checks
         """
         try:
-            # This would implement actual bulk webhook sending
-            # For now, just log the notification
-            self.log_operation(
-                "Bulk webhook notification sent",
-                details={
-                    "webhook_url": webhook_url,
-                    "total_checks": len(url_checks),
-                    "check_ids": [str(uc.id) for uc in url_checks]
+            payload = {
+                "event": "bulk_url_check_completed",
+                "data": {
+                    "total_urls": len(results),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "results": [
+                        {
+                            "id": str(result.id),
+                            "url": result.original_url,
+                            "threat_level": result.threat_level.value if result.threat_level else None,
+                            "status": result.status.value
+                        }
+                        for result in results
+                    ]
                 }
-            )
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=payload, timeout=30) as response:
+                    if response.status != 200:
+                        self.log_operation(
+                            "Bulk webhook notification sent",
+                            details={
+                                "webhook_url": webhook_url,
+                                "total_checks": len(url_checks),
+                                "check_ids": [str(uc.id) for uc in url_checks]
+                            }
+                        )
+
         except Exception as e:
             self.logger.error(f"Bulk webhook notification failed: {str(e)}")

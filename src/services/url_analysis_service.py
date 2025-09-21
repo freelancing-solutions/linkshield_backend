@@ -16,10 +16,11 @@ from urllib.parse import urlparse, urljoin
 
 import aiohttp
 import requests
-from sqlalchemy.orm import Session
+
 from sqlalchemy import and_, or_
 
 from src.config.settings import get_settings
+from src.config.database import AsyncSession
 from src.models.url_check import (
     URLCheck, ScanResult, URLReputation, 
     CheckStatus, ThreatLevel, ScanType
@@ -27,6 +28,7 @@ from src.models.url_check import (
 from src.models.user import User
 from src.services.ai_service import AIService
 from src.services.security_service import SecurityService
+from src.utils.utils import utc_datetime
 
 
 class URLAnalysisError(Exception):
@@ -55,8 +57,8 @@ class URLAnalysisService:
     URL analysis service for comprehensive security scanning.
     """
     
-    def __init__(self, db_session: Session, ai_service: AIService, security_service: SecurityService):
-        self.db = db_session
+    def __init__(self, db_session: AsyncSession, ai_service: AIService, security_service: SecurityService):
+        self.db_session = db_session
         self.ai_service = ai_service
         self.security_service = security_service
         self.settings = get_settings()
@@ -126,14 +128,14 @@ class URLAnalysisService:
             status=CheckStatus.PENDING
         )
         
-        self.db.add(url_check)
-        self.db.flush()  # Get ID
+        self.db_session.add(url_check)
+        self.db_session.flush()  # Get ID
         
         try:
             # Update status to scanning
             url_check.status = CheckStatus.SCANNING
             url_check.scan_started_at = datetime.now(timezone.utc)
-            self.db.commit()
+            self.db_session.commit()
             
             # Perform analysis
             analysis_results = await self._perform_comprehensive_analysis(
@@ -148,7 +150,7 @@ class URLAnalysisService:
             url_check.status = CheckStatus.COMPLETED
             url_check.threat_level = threat_level
             url_check.confidence_score = confidence_score
-            url_check.scan_completed_at = datetime.now(timezone.utc)
+            url_check.scan_completed_at = utc_datetime()
             url_check.analysis_results = analysis_results
             
             # Create scan results
@@ -163,19 +165,19 @@ class URLAnalysisService:
                     raw_response=result.get("raw_response"),
                     metadata=result.get("metadata", {})
                 )
-                self.db.add(scan_result)
+                self.db_session.add(scan_result)
             
             # Update or create URL reputation
             self._update_url_reputation(normalized_url, threat_level, confidence_score)
             
-            self.db.commit()
+            self.db_session.commit()
             
         except Exception as e:
             # Handle scan failure
             url_check.status = CheckStatus.FAILED
             url_check.error_message = str(e)
-            url_check.scan_completed_at = datetime.now(timezone.utc)
-            self.db.commit()
+            url_check.scan_completed_at = utc_datetime()
+            self.db_session.commit()
             raise URLAnalysisError(f"Analysis failed: {str(e)}")
         
         return url_check
@@ -439,7 +441,7 @@ class URLAnalysisService:
         domain = self._extract_domain(url)
         
         # Check existing reputation
-        reputation = self.db.query(URLReputation).filter(
+        reputation = self.db_session.query(URLReputation).filter(
             URLReputation.domain == domain
         ).first()
         
@@ -715,9 +717,9 @@ class URLAnalysisService:
         """
         Get recent check for URL if available.
         """
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time = utc_datetime() - timedelta(hours=hours)
         
-        return self.db.query(URLCheck).filter(
+        return self.db_session.query(URLCheck).filter(
             and_(
                 URLCheck.normalized_url == url,
                 URLCheck.status == CheckStatus.COMPLETED,
@@ -731,16 +733,16 @@ class URLAnalysisService:
         """
         domain = self._extract_domain(url)
         
-        reputation = self.db.query(URLReputation).filter(
+        reputation = self.db_session.query(URLReputation).filter(
             URLReputation.domain == domain
         ).first()
         
         if not reputation:
             reputation = URLReputation(
                 domain=domain,
-                first_seen=datetime.now(timezone.utc)
+                first_seen=utc_datetime()
             )
-            self.db.add(reputation)
+            self.db_session.add(reputation)
         
         # Update reputation statistics
         reputation.total_checks += 1
@@ -767,7 +769,7 @@ class URLAnalysisService:
         if not normalized_url:
             return []
         
-        return self.db.query(URLCheck).filter(
+        return self.db_session.query(URLCheck).filter(
             URLCheck.normalized_url == normalized_url
         ).order_by(URLCheck.created_at.desc()).limit(limit).all()
     
@@ -775,6 +777,6 @@ class URLAnalysisService:
         """
         Get reputation information for domain.
         """
-        return self.db.query(URLReputation).filter(
+        return self.db_session.query(URLReputation).filter(
             URLReputation.domain == domain.lower()
         ).first()

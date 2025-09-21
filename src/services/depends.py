@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
-from src.authentication import auth_service
+
+from typing import Optional
+from fastapi import Depends, HTTPException
 from src.authentication.auth_service import AuthService
 from src.config.database import AsyncSession, get_db_session
 from src.services.ai_service import AIService
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 from src.services.url_analysis_service import URLAnalysisService
-
+from src.models import User
 
 async def get_email_service(db_session: AsyncSession = Depends(get_db_session)):
     """
@@ -50,7 +51,7 @@ async def get_rate_limits(user: Optional[User], db: AsyncSession = Depends(get_d
 async def get_ai_service() -> AIService:
     """
     """
-    returm AIService()
+    return AIService()
 
-async def get_url_analysis_service(db_session: AsyncSession = Depends(get_db_session), ai_service:AIService = Depends(get_ai_service) -> URLAnalysisService):
+async def get_url_analysis_service(db_session: AsyncSession = Depends(get_db_session), ai_service:AIService = Depends(get_ai_service)) -> URLAnalysisService:
     return URLAnalysisService(db_session=db_session, ai_service=ai_service)

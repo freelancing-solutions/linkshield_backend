@@ -18,10 +18,9 @@ from email import encoders
 from typing import Dict, List, Optional, Any, Union
 
 import resend
-from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc
 
-from src.config.database import get_db_session
+from src.config.database import get_db_session, AsyncSession
 from src.config.settings import settings
 from src.models.email import (
     EmailRequest, BulkEmailRequest, EmailTemplate, EmailLog, EmailStats,
@@ -58,7 +57,7 @@ class EmailService:
     - Statistics and analytics
     """
     
-    def __init__(self, db_session: Optional[Session] = None):
+    def __init__(self, db_session: Optional[AsyncSession] = None):
         """
         Initialize the email service.
         
@@ -629,17 +628,3 @@ class EmailService:
             "failed_retries": failed_retries,
             "results": retry_results
         }
-
-
-# Singleton instance for dependency injection
-email_service = EmailService()
-
-
-def get_email_service() -> EmailService:
-    """
-    Dependency injection function for EmailService.
-    
-    Returns:
-        EmailService instance
-    """
-    return email_service

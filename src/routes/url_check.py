@@ -12,7 +12,6 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, HttpUrl, Field, validator
-from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
 
 from src.config.database import get_db_session, AsyncSession
@@ -27,7 +26,7 @@ from src.authentication.dependencies import get_admin_user,get_current_user, get
 from src.controllers.url_check_controller import URLCheckController
 from src.controllers.depends import get_url_check_controller
 
-
+from src.utils import utc_datetimes
 # Initialize router
 router = APIRouter(prefix="/api/v1/url-check", tags=["URL Analysis"])
 security = HTTPBearer()
@@ -169,7 +168,7 @@ async def check_url(
     Delegates business logic to URLCheckController.
     """
     
-    return await controller.check_url(request, background_tasks, user, db)
+    return await controller.check_url(request, background_tasks, user)
 
 @router.post("/bulk-check", response_model=List[URLCheckResponse], summary="Analyze multiple URLs")
 async def bulk_check_urls(
@@ -189,8 +188,8 @@ async def bulk_check_urls(
     
     Delegates business logic to URLCheckController.
     """
-    controller = URLCheckController()
-    return await controller.bulk_check_urls(request, background_tasks, user, db)
+
+    return await controller.bulk_check_urls(request, background_tasks, user)
 
 
 @router.get("/check/{check_id}", response_model=URLCheckResponse, summary="Get URL check results")
@@ -206,7 +205,7 @@ async def get_url_check(
     Delegates business logic to URLCheckController.
     """
     
-    return await controller.get_url_check(check_id, user, db)
+    return await controller.get_url_check(check_id, user)
 
 
 @router.get("/check/{check_id}/results", response_model=List[ScanResultResponse], summary="Get detailed scan results")
@@ -222,7 +221,7 @@ async def get_scan_results(
     Delegates business logic to URLCheckController.
     """
     
-    return await controller.get_scan_results(check_id, user, db)
+    return await controller.get_scan_results(check_id, user)
 
 
 @router.get("/history", response_model=URLHistoryResponse, summary="Get URL check history")
@@ -243,7 +242,7 @@ async def get_url_history(
     Delegates business logic to URLCheckController.
     """
     
-    return await controller.get_url_history(url, domain, threat_level, status, page, page_size, user, db)
+    return await controller.get_url_history(url, domain, threat_level, status, page, page_size, user)
 
 
 @router.get("/reputation/{domain}", response_model=URLReputationResponse, summary="Get domain reputation")
@@ -257,9 +256,8 @@ async def get_domain_reputation(
     Get reputation information for a specific domain.
     
     Delegates business logic to URLCheckController.
-    """
-    
-    return await controller.get_domain_reputation(domain, user, db)
+    """    
+    return await controller.get_domain_reputation(domain, user)
 
 
 @router.get("/stats", summary="Get URL check statistics")
@@ -273,68 +271,5 @@ async def get_url_check_stats(
     Get URL check statistics for the authenticated user.
     
     Delegates business logic to URLCheckController.
-    """
-    
-    return await controller.get_url_check_stats(days, user, db)
-
-
-# Background task functions
-async def send_webhook_notification(webhook_url: str, url_check: URLCheck):
-    """
-    Send webhook notification for completed URL check.
-    """
-    import aiohttp
-    
-    try:
-        payload = {
-            "event": "url_check_completed",
-            "data": {
-                "id": str(url_check.id),
-                "url": url_check.original_url,
-                "threat_level": url_check.threat_level.value if url_check.threat_level else None,
-                "confidence_score": url_check.confidence_score,
-                "status": url_check.status.value,
-                "completed_at": url_check.scan_completed_at.isoformat() if url_check.scan_completed_at else None
-            }
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(webhook_url, json=payload, timeout=10) as response:
-                if response.status != 200:
-                    print(f"Webhook failed: {response.status}")
-    
-    except Exception as e:
-        print(f"Webhook notification failed: {str(e)}")
-
-
-async def send_bulk_webhook_notification(webhook_url: str, results: List[URLCheckResponse]):
-    """
-    Send webhook notification for bulk URL check completion.
-    """
-    import aiohttp
-    
-    try:
-        payload = {
-            "event": "bulk_url_check_completed",
-            "data": {
-                "total_urls": len(results),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "results": [
-                    {
-                        "id": str(result.id),
-                        "url": result.original_url,
-                        "threat_level": result.threat_level.value if result.threat_level else None,
-                        "status": result.status.value
-                    }
-                    for result in results
-                ]
-            }
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(webhook_url, json=payload, timeout=30) as response:
-                if response.status != 200:
-                    print(f"Bulk webhook failed: {response.status}")
-    
-    except Exception as e:
-        print(f"Bulk webhook notification failed: {str(e)}")
+    """    
+    return await controller.get_url_check_stats(days, user)    

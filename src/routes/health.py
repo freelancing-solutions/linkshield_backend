@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from typing import Dict, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from src.config.settings import get_settings

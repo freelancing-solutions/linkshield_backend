@@ -12,9 +12,6 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel,  Field, validator
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc, func
-
 
 from src.config.settings import get_settings
 from src.models.report import (
@@ -26,7 +23,7 @@ from src.models.report import (
     ReportStatus, 
     ReportPriority, 
     VoteType)
-from src.models.user import User, UserRole
+from src.models.user import User
 
 from src.controllers.depends import get_report_controller
 
@@ -218,8 +215,8 @@ async def create_report(
     request: ReportCreateRequest,
     background_tasks: BackgroundTasks,
     controller: ReportController = Depends(get_report_controller),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    user: User = Depends(get_current_user)
+    
 ):
     """
     Create a new security report for a URL.
@@ -242,7 +239,7 @@ async def create_report(
 
     """
 
-    return await controller.create_report(request, background_tasks, user, db)
+    return await controller.create_report(request, background_tasks, user)
 
 
 @router.get("/", response_model=ReportListResponse, summary="List reports")
@@ -261,8 +258,8 @@ async def list_reports(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     controller:ReportController = Depends(get_report_controller),
-    user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db)
+    user: Optional[User] = Depends(get_optional_user)
+    
 ):
     """
     List reports with filtering and pagination.
@@ -271,8 +268,7 @@ async def list_reports(
     """
     return await controller.list_reports(
         report_type, status, priority, domain, tag, reporter_id, assignee_id,
-        created_after, created_before, sort_by, sort_order, page, page_size, user, db
-    )
+        created_after, created_before, sort_by, sort_order, page, page_size, user)
 
 
 @router.get("/{report_id}", response_model=ReportResponse, summary="Get report details")
@@ -293,8 +289,8 @@ async def update_report(
     report_id: uuid.UUID = Path(..., description="Report ID"),
     request: ReportUpdateRequest = ...,
     controller: ReportController = Depends(get_report_controller),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    user: User = Depends(get_current_user)
+
 ):
     """
     Update a report. Only the reporter or admins can update reports.

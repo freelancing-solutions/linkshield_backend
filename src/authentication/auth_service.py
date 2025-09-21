@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
 from src.config.settings import get_settings
+from src.config.database import AsyncSession
 from src.models.user import (
     User, UserSession, APIKey, PasswordResetToken, 
     EmailVerificationToken, UserStatus, UserRole
