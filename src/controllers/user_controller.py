@@ -68,10 +68,8 @@ class UserController(BaseController):
             security_service: Security service for validation
             auth_service: Authentication service
             email_service: Email service for sending emails
-            background_email_service: Background email service for async operations
         """
         super().__init__(security_service, auth_service, email_service)
-        self.background_email_service = background_email_service
         
         # Rate limits
         self.registration_rate_limit = 5  # per hour
@@ -181,17 +179,10 @@ class UserController(BaseController):
             verification_token = await self._create_email_verification_token(user)
             
             # Queue verification email for background sending
-            if self.background_email_service:
-                self.background_email_service.queue_verification_email(
-                    email,
-                    full_name.split()[0] if full_name else "User",  # First name
-                    verification_token.token
-                )
-            elif background_tasks:
+            if background_tasks:
                 background_tasks.add_task(
                     self._send_verification_email,
-                    email,
-                    full_name,
+                    user,
                     verification_token.token
                 )
             
@@ -582,13 +573,7 @@ class UserController(BaseController):
                 reset_token = await self._create_password_reset_token(user)
                 
                 # Queue password reset email for background sending
-                if self.background_email_service:
-                    self.background_email_service.queue_password_reset_email(
-                        email,
-                        user.full_name.split()[0] if user.full_name else "User",  # First name
-                        reset_token.token
-                    )
-                elif background_tasks:
+                if background_tasks:
                     background_tasks.add_task(
                         self._send_password_reset_email,
                         user,

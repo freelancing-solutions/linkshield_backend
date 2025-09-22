@@ -10,11 +10,9 @@ import aiohttp
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
-
 from fastapi import HTTPException, status, BackgroundTasks
 
-from sqlalchemy import and_,  desc, func
-
+from sqlalchemy import and_,  desc, func, select
 from src.controllers.base_controller import BaseController
 from src.models.url_check import (
     URLCheck, ScanResult, URLReputation,
@@ -323,11 +321,11 @@ class URLCheckController(BaseController):
             HTTPException: If check not found or access denied
         """
         async with self.get_db_session() as session:
-            url_check = (
-                session.query(URLCheck)
-                .filter(URLCheck.id == check_id)
-                .first()
-            )
+            # Use async ORM API instead of sync session.query
+            
+            stmt = select(URLCheck).where(URLCheck.id == check_id)
+            result = await session.execute(stmt)
+            url_check = result.scalar_one_or_none()
             
             if not url_check:
                 raise HTTPException(
@@ -373,12 +371,15 @@ class URLCheckController(BaseController):
         
         # Get scan results
         async with self.get_db_session() as session:
-            scan_results = (
-                session.query(ScanResult)
-                .filter(ScanResult.url_check_id == check_id)
+            # Use async ORM API instead of sync session.query
+            from sqlalchemy import select
+            stmt = (
+                select(ScanResult)
+                .where(ScanResult.url_check_id == check_id)
                 .order_by(ScanResult.created_at.desc())
-                .all()
             )
+            result = await session.execute(stmt)
+            scan_results = result.scalars().all()
             
             self.log_operation(
                 "Scan results retrieved",

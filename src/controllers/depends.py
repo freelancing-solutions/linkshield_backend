@@ -14,8 +14,19 @@ from src.services.ai_service import AIService
 from src.services.depends import get_security_service, get_auth_service, get_url_analysis_service, get_ai_analysis_service, get_ai_service, get_email_service, get_admin_service
 
 
-async def get_health_controller() -> HealthController:
-    return HealthController()
+async def get_health_controller(
+    security_service: SecurityService = Depends(get_security_service),
+    auth_service: AuthService = Depends(get_auth_service),
+    email_service: EmailService = Depends(get_email_service)
+) -> HealthController:
+    """
+    Get health controller instance with required dependencies.
+    """
+    return HealthController(
+        security_service=security_service,
+        auth_service=auth_service,
+        email_service=email_service
+    )
 
 
 async def get_report_controller(

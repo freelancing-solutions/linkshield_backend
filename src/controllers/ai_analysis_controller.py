@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from starlette.requests import Request
 
 from src.controllers import BaseController
@@ -34,12 +35,34 @@ class AIAnalysisController(BaseController):
             auth_service: AuthService,
             email_service: EmailService
     ):
-        super().__init__()
+        """
+        Initialize the AI analysis controller.
+        
+        Args:
+            ai_analysis_service: AI analysis service for processing
+            ai_service: AI service for analysis operations
+            security_service: Security service for validation
+            auth_service: Authentication service
+            email_service: Email service for notifications
+            
+        Raises:
+            ValueError: If any required service is None
+        """
+        # Validate required services
+        if ai_analysis_service is None:
+            raise ValueError("ai_analysis_service cannot be None")
+        if ai_service is None:
+            raise ValueError("ai_service cannot be None")
+        if security_service is None:
+            raise ValueError("security_service cannot be None")
+        if auth_service is None:
+            raise ValueError("auth_service cannot be None")
+        if email_service is None:
+            raise ValueError("email_service cannot be None")
+            
+        super().__init__(security_service, auth_service, email_service)
         self.ai_analysis_service = ai_analysis_service
         self.ai_service = ai_service
-        self.security_service = security_service
-        self.auth_service = auth_service
-        self.email_service = email_service
 
     async def analyze_content(
             self,
@@ -281,9 +304,12 @@ class AIAnalysisController(BaseController):
 
     async def get_analysis(self, analysis_id: str) -> Optional[AIAnalysis]:
         """Get analysis by ID."""
-        with self.get_db_session() as db:
-            analysis = db.query(AIAnalysis).filter(AIAnalysis.id == analysis_id).first()
-            return analysis
+        async with self.get_db_session() as db:
+            # Use async ORM API instead of sync db.query
+            
+            stmt = select(AIAnalysis).where(AIAnalysis.id == analysis_id)
+            result = await db.execute(stmt)
+            return result.scalar_one_or_none()
 
 
     async def get_analysis_history(

@@ -25,12 +25,32 @@ class HealthController(BaseController):
     external service validation, and application metrics.
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        security_service,
+        auth_service,
+        email_service
+    ):
         """
         Initialize the health controller.
+        
+        Args:
+            security_service: Security service for validation
+            auth_service: Authentication service
+            email_service: Email service for notifications
+            
+        Raises:
+            ValueError: If any required service is None
         """
-        super().__init__()
-        self.settings = get_settings()
+        # Validate required services
+        if security_service is None:
+            raise ValueError("security_service cannot be None")
+        if auth_service is None:
+            raise ValueError("auth_service cannot be None")
+        if email_service is None:
+            raise ValueError("email_service cannot be None")
+            
+        super().__init__(security_service, auth_service, email_service)
         self.app_start_time = time.time()
 
     def _create_http_exception(self, status_code: int, detail: str) -> Exception:

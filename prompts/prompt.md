@@ -1,201 +1,183 @@
-I have created the following plan after thorough exploration and analysis of the codebase. Follow the below plan verbatim. Trust the files and references. Do not re-verify what's written in the plan. Explore only when absolutely necessary. First implement all the proposed file changes and then I'll review all the changes together at the end.
-
-### Observations
-
-The LinkShield Backend API has significant inconsistencies between its documentation and actual implementation. The main issues are:
-
-1. **Double-prefixed URLs**: Route files define `/api/v1/...` prefixes, but `app.py` adds another `/api` prefix, creating URLs like `/api/api/v1/user/register`
-2. **Inconsistent router prefixes**: Different routers use different patterns - some use `/api/v1/`, others use custom prefixes like `/ai-analysis` or `/admin`
-3. **Documentation mismatch**: All documentation assumes `/api/v1/...` paths, but actual endpoints would be at different locations
-4. **Test expectations**: The test file expects `/health` endpoint, confirming the intended structure
-
-The codebase is well-structured with clear separation between routes, controllers, models, and services. The documentation is comprehensive but outdated.
-
-### Approach
-
-I will standardize the API to use a consistent `/api/v1/` prefix across all endpoints by:
-
-1. **Removing double prefixes**: Either remove prefixes from individual routers OR from the main app inclusion
-2. **Standardizing all endpoints**: Ensure all routers follow the same `/api/v1/` pattern
-3. **Updating documentation**: Systematically update all endpoint documentation to reflect the corrected URLs
-4. **Maintaining backward compatibility**: Document the breaking changes clearly
-
-This approach prioritizes consistency and follows REST API versioning best practices while minimizing code changes.
-
-### Reasoning
-
-I explored the codebase structure by examining the main FastAPI application file, individual route modules, and documentation files. I identified that route files define their own `/api/v1/` prefixes but the main app adds another `/api` prefix when including routers. I also checked the test files to understand expected endpoint behavior and reviewed the comprehensive documentation structure to understand the scope of updates needed.
-
-## Mermaid Diagram
-
-sequenceDiagram
-    participant Dev as Developer
-    participant Code as Route Files
-    participant App as FastAPI App
-    participant Docs as Documentation
-    participant Tests as Test Suite
-    
-    Note over Dev,Tests: API Endpoint Standardization Process
-    
-    Dev->>Code: Remove double prefixes from router definitions
-    Code->>App: Update router inclusions in app.py
-    App->>App: Standardize all endpoints to /api/v1/ pattern
-    
-    Dev->>Docs: Update API documentation files
-    Docs->>Docs: Correct all endpoint URLs and examples
-    Docs->>Docs: Update cURL commands and SDK examples
-    
-    Dev->>Tests: Update test endpoints to match new structure
-    Tests->>App: Verify endpoints respond at correct URLs
-    
-    Dev->>Docs: Create changelog documenting breaking changes
-    
-    Note over Dev,Tests: Result: Consistent /api/v1/ endpoints across code and docs
-
-## Proposed File Changes
-
-### app.py(MODIFY)
-
-References: 
-
-- src\routes\user.py
-- src\routes\url_check.py
-- src\routes\report.py
-- src\routes\tasks.py
-- src\routes\health.py(MODIFY)
-- src\routes\ai_analysis.py(MODIFY)
-- src\routes\admin.py(MODIFY)
-
-Remove the `/api` prefix from all router inclusions to eliminate double-prefixing. Update lines 117-123 to include routers without the `prefix="/api"` parameter. This will make the actual endpoints match the documented `/api/v1/...` structure. Also update the health router inclusion to use `/api/v1` prefix to maintain consistency.
-
-### src\routes\health.py(MODIFY)
-
-References: 
-
-- app.py(MODIFY)
-
-Add `/api/v1` prefix to the health router to maintain consistency with other endpoints. Update line 24 to `router = APIRouter(prefix="/api/v1", tags=["Health"])`. This ensures health endpoints follow the same versioning pattern as other API endpoints.
-
-### src\routes\ai_analysis.py(MODIFY)
-
-References: 
-
-- app.py(MODIFY)
-
-Update the router prefix from `/ai-analysis` to `/api/v1/ai-analysis` to follow the consistent API versioning pattern. Modify line 25 to use the standardized prefix format.
-
-### src\routes\admin.py(MODIFY)
-
-References: 
-
-- app.py(MODIFY)
-
-Update the router prefix from `/admin` to `/api/v1/admin` to follow the consistent API versioning pattern. Modify line 30 to use the standardized prefix format and update the tags to follow consistent naming conventions.
-
-### docs\api\README.md(MODIFY)
-
-References: 
-
-- docs\api\endpoints\url-analysis.md(MODIFY)
-- docs\api\endpoints\user-management.md(MODIFY)
-- docs\api\endpoints\ai-analysis.md(MODIFY)
-
-Update all API endpoint examples and base URLs to reflect the corrected `/api/v1/` structure. Remove any references to incorrect double-prefixed URLs. Update the Quick Start section examples (lines 52-78) to use the correct endpoint paths. Verify all cross-references to endpoint documentation files are accurate.
-
-### docs\api\endpoints\url-analysis.md(MODIFY)
-
-References: 
-
-- src\routes\url_check.py
-
-Update all endpoint URLs from the incorrect `/api/v1/url-check` base to the correct `/api/v1/url-check` structure (removing any double-prefixed references). Update all cURL examples, JavaScript/TypeScript client examples, and Python client examples to use the correct endpoint URLs. Ensure all endpoint paths in the documentation match the actual implementation.
-
-### docs\api\endpoints\user-management.md(MODIFY)
-
-References: 
-
-- src\routes\user.py
-
-Update all endpoint URLs to use the correct `/api/v1/user` base path. Update all cURL examples, JavaScript/TypeScript client examples, and Python client examples throughout the file to use the correct endpoint URLs. Ensure consistency with the actual route implementation in `src/routes/user.py`.
-
-### docs\api\endpoints\ai-analysis.md(MODIFY)
-
-References: 
-
-- src\routes\ai_analysis.py(MODIFY)
-
-Update the base URL from `/ai-analysis` to `/api/v1/ai-analysis` to reflect the standardized API structure. Update all endpoint examples, cURL commands, and client SDK examples throughout the file to use the correct versioned paths.
-
-### docs\api\endpoints\admin-dashboard.md(MODIFY)
-
-References: 
-
-- src\routes\admin.py(MODIFY)
-
-Update all admin endpoint URLs from `/admin` to `/api/v1/admin` to follow the consistent API versioning pattern. Update any examples, cURL commands, and integration guides to use the correct endpoint paths.
-
-### docs\api\endpoints\admin-user-management.md(MODIFY)
-
-References: 
-
-- src\routes\admin.py(MODIFY)
-
-Update all admin user management endpoint URLs to use the `/api/v1/admin` base path. Ensure all examples and documentation reflect the standardized API structure.
-
-### docs\api\endpoints\admin-system-monitoring.md(MODIFY)
-
-References: 
-
-- src\routes\admin.py(MODIFY)
-
-Update all admin system monitoring endpoint URLs to use the `/api/v1/admin` base path. Update any monitoring examples and integration guides to use the correct endpoint paths.
-
-### docs\api\endpoints\admin-configuration.md(MODIFY)
-
-References: 
-
-- src\routes\admin.py(MODIFY)
-
-Update all admin configuration endpoint URLs to use the `/api/v1/admin` base path. Ensure all configuration examples and API calls use the correct endpoint structure.
-
-### docs\api\endpoints\health-monitoring.md(MODIFY)
-
-References: 
-
-- src\routes\health.py(MODIFY)
-
-Update all health monitoring endpoint URLs to use the `/api/v1/health` base path instead of `/api/health`. Update all examples, monitoring setup guides, and integration documentation to reflect the versioned API structure.
-
-### docs\api\endpoints\reports.md(MODIFY)
-
-References: 
-
-- src\routes\report.py
-
-Update all report endpoint URLs to use the correct `/api/v1/reports` base path. Update all examples, cURL commands, and client integration guides to use the correct endpoint structure.
-
-### README.md(MODIFY)
-
-References: 
-
-- app.py(MODIFY)
-
-Update all API endpoint examples in the README to use the correct `/api/v1/` structure. Update the API Endpoints section (lines 148-177) to reflect the actual endpoint paths. Update the Usage Examples section (lines 178-203) to use the correct endpoint URLs in cURL examples.
-
-### tests\test_app.py(MODIFY)
-
-References: 
-
-- src\routes\health.py(MODIFY)
-- app.py(MODIFY)
-
-Update the health endpoint test to use `/api/v1/health` instead of `/health` to match the standardized API structure. Update line 26 to test the correct endpoint path. Add additional tests for other main endpoints to verify the correct URL structure.
-
-### docs\CHANGELOG.md(NEW)
-
-References: 
-
-- app.py(MODIFY)
-- docs\api\README.md(MODIFY)
-
-Create a changelog file documenting the API endpoint standardization changes. Include a clear section marking this as a breaking change, listing the old vs new endpoint URLs, and providing migration guidance for existing API consumers. Include version information and date of changes.
+I have the following verification comments after thorough review and exploration of the codebase. Implement the comments by following the instructions in the comments verbatim.
+
+---
+## Comment 1: BaseController get_db_session uses undefined db_session_factory causing runtime failure.
+
+Update `BaseController` to properly provide an async DB session.
+
+Option A (use existing dependency):
+- Modify `get_db_session()` in `e:/projects/linkshield_backend/src/controllers/base_controller.py` to create the session via the existing `get_db` function:
+
+```python
+from src.config.database import get_db
+
+@asynccontextmanager
+async def get_db_session(self):
+    session_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    self.validate_session_usage()
+    self.log_operation("Database session started", details={"session_id": session_id, "controller": self.__class__.__name__}, level="debug")
+    async with get_db() as session:
+        try:
+            await session.execute(text("SELECT 1"))
+            yield session
+            await session.commit()
+            duration = time.time() - start_time
+            self.log_operation("Database session committed", details={"session_id": session_id, "duration_ms": round(duration*1000,2), "controller": self.__class__.__name__}, level="debug")
+        except Exception as e:
+            try:
+                await session.rollback()
+                duration = time.time() - start_time
+                self.log_operation("Database session rolled back", details={"session_id": session_id, "duration_ms": round(duration*1000,2), "error": str(e), "error_type": type(e).__name__, "controller": self.__class__.__name__}, level="warning")
+            except Exception as rollback_error:
+                self.logger.error(f"Failed to rollback session {session_id}: {rollback_error}")
+            raise
+        finally:
+            try:
+                await session.close()
+                duration = time.time() - start_time
+                self.log_operation("Database session closed", details={"session_id": session_id, "total_duration_ms": round(duration*1000,2), "controller": self.__class__.__name__}, level="debug")
+            except Exception as close_error:
+                self.logger.error(f"Failed to close session {session_id}: {close_error}")
+```
+
+Option B (inject factory):
+- Add a constructor param to `BaseController.__init__` like `db_session_factory: Callable[[], AsyncSession]` and assign `self.db_session_factory = db_session_factory`. Ensure all controller constructors pass this factory.
+
+### Referred Files
+- e:\projects\linkshield_backend\src\controllers\base_controller.py
+---
+## Comment 2: Missing imports in BaseController: `time` and `sqlalchemy.text` used but not imported.
+
+Add missing imports to `e:/projects/linkshield_backend/src/controllers/base_controller.py` top-level imports:
+
+```python
+import time
+from sqlalchemy import text
+```
+
+Ensure there are no conflicting names and rerun tests.
+
+### Referred Files
+- e:\projects\linkshield_backend\src\controllers\base_controller.py
+---
+## Comment 3: AIAnalysisController.get_analysis uses sync ORM API (`db.query`) with AsyncSession.
+
+Refactor `get_analysis` in `e:/projects/linkshield_backend/src/controllers/ai_analysis_controller.py` to async ORM usage:
+
+```python
+from sqlalchemy import select
+
+async def get_analysis(self, analysis_id: str) -> Optional[AIAnalysis]:
+    async with self.get_db_session() as db:
+        result = await db.execute(select(AIAnalysis).where(AIAnalysis.id == analysis_id))
+        return result.scalars().one_or_none()
+```
+
+Remove any `db.query(...)` usages in this controller.
+
+### Referred Files
+- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
+---
+## Comment 4: Async session manager auto-commits on exit, but controllers also commit inside blocks.
+
+Choose a single transaction pattern and apply consistently:
+
+Option A (context manager commits):
+- Remove explicit `commit()` calls inside `async with self.get_db_session()` across controllers (`ai_analysis_controller.py`, `url_check_controller.py`, `report_controller.py`, `admin_controller.py`, `user_controller.py`). Keep `await session.refresh(entity)` as needed.
+
+
+Implement one approach project-wide to avoid mixed patterns.
+
+### Referred Files
+- e:\projects\linkshield_backend\src\controllers\base_controller.py
+- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
+- e:\projects\linkshield_backend\src\controllers\url_check_controller.py
+- e:\projects\linkshield_backend\src\controllers\report_controller.py
+- e:\projects\linkshield_backend\src\controllers\admin_controller.py
+- e:\projects\linkshield_backend\src\controllers\user_controller.py
+---
+## Comment 5: Helper ensure_consistent_commit_rollback is unused; plan intent not fully realized.
+
+Search controllers for `commit()` calls and replace with the standardized helper. Example for `ai_analysis_controller.py`:
+
+```python
+# Before
+await db.commit()
+
+# After
+await self.ensure_consistent_commit_rollback(db, operation="update analysis with results")
+```
+
+Do this consistently across `url_check_controller.py`, `report_controller.py`, `admin_controller.py`, and `user_controller.py` if you choose the explicit-commit pattern.
+
+### Referred Files
+- e:\projects\linkshield_backend\src\controllers\base_controller.py
+- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
+- e:\projects\linkshield_backend\src\controllers\url_check_controller.py
+- e:\projects\linkshield_backend\src\controllers\report_controller.py
+- e:\projects\linkshield_backend\src\controllers\admin_controller.py
+- e:\projects\linkshield_backend\src\controllers\user_controller.py
+---
+## Comment 6: URLCheckController uses sync SQLAlchemy APIs with AsyncSession; will break at runtime.
+
+Refactor `e:/projects/linkshield_backend/src/controllers/url_check_controller.py` to async SQLAlchemy patterns. Examples:
+
+1) get_url_check:
+```python
+from sqlalchemy import select
+async with self.get_db_session() as session:
+    result = await session.execute(select(URLCheck).where(URLCheck.id == check_id))
+    url_check = result.scalars().one_or_none()
+```
+
+2) get_scan_results:
+```python
+result = await session.execute(
+    select(ScanResult)
+    .where(ScanResult.url_check_id == check_id)
+    .order_by(ScanResult.created_at.desc())
+)
+scan_results = result.scalars().all()
+```
+
+3) Counts:
+```python
+from sqlalchemy import func, select
+result = await session.execute(
+    select(func.count()).select_from(
+        select(URLCheck).where(URLCheck.user_id == user.id).subquery()
+    )
+)
+total_count = result.scalar_one()
+```
+
+4) Commits:
+- Replace `session.commit()` with `await session.commit()` or rely on context manager per chosen pattern.
+
+### Referred Files
+- e:\projects\linkshield_backend\src\controllers\url_check_controller.py
+- e:\projects\linkshield_backend\src\controllers\base_controller.py
+---
+## Comment 7: AIAnalysisController commits inside context manager; duplicate commits likely.
+
+In `e:/projects/linkshield_backend/src/controllers/ai_analysis_controller.py`, remove explicit `await db.commit()` calls if keeping auto-commit in `get_db_session()`. Keep `await db.refresh(analysis)` where needed. Alternatively, disable auto-commit in the context manager and use `await self.ensure_consistent_commit_rollback(db, operation="<describe>")` at commit points.
+
+### Referred Files
+- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
+- e:\projects\linkshield_backend\src\controllers\base_controller.py
+---
+## Comment 8: BaseController’s connectivity check runs every session; consider gating to reduce overhead.
+
+Optionally update `get_db_session()` in `e:/projects/linkshield_backend/src/controllers/base_controller.py`:
+
+```python
+if getattr(self.settings, "DEBUG", False):
+    await session.execute(text("SELECT 1"))
+```
+
+Alternatively, add a lightweight ping interval or sampling mechanism for production.
+
+### Referred Files
+- e:\projects\linkshield_backend\src\controllers\base_controller.py
+---

@@ -6,13 +6,15 @@ statistics, and template management.
 """
 
 import uuid
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc, func
+from sqlalchemy import and_, or_, desc, func, select
+
 from pydantic import ValidationError
 
 from src.controllers.base_controller import BaseController
@@ -139,7 +141,13 @@ class ReportController(BaseController):
                 )
                 
                 db.add(report)
-                db.commit()
+                # Use consistent commit/rollback helper instead of manual commit
+                await self.ensure_consistent_commit_rollback(
+                    db, 
+                    "create_report", 
+                    session_id=None, 
+                    start_time=time.time()
+                )
                 db.refresh(report)
                 
                 # Log the operation
@@ -270,8 +278,9 @@ class ReportController(BaseController):
         skip, limit = self.validate_pagination(page - 1, page_size)
         
         async with self.get_db_session() as db:
-            # Build query
-            query = db.query(Report)
+            # Build query using async ORM API instead of sync db.query
+            
+            query = select(Report)
             filters_applied = {}
             
             # Apply filters
@@ -436,7 +445,13 @@ class ReportController(BaseController):
                 
                 report.updated_at = utc_datetime()
                 
-                db.commit()
+                # Use consistent commit/rollback helper instead of manual commit
+                await self.ensure_consistent_commit_rollback(
+                    db, 
+                    "update_report", 
+                    session_id=None, 
+                    start_time=time.time()
+                )
                 db.refresh(report)
                 
                 self.log_operation(

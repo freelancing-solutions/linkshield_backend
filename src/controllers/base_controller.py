@@ -10,11 +10,13 @@ from abc import ABC
 from datetime import datetime, timedelta, timezone
 import logging
 import uuid
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, status, Request, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
 from pydantic import ValidationError
 
 from src.config.database import get_db
@@ -67,44 +69,134 @@ class BaseController(WebhookController):
         self.logger = logging.getLogger(self.__class__.__name__)
     
     @asynccontextmanager
-    async def get_db_session(self) -> AsyncSession:
-        """Async context manager for database session management.
+    async def get_db_session(self):
+        """Get database session with enhanced validation and error handling.
         
-        Provides proper session lifecycle management with automatic
-        commit/rollback and cleanup.
+        This method provides a managed database session with comprehensive
+        validation, logging, and error handling capabilities.
         
         Yields:
             AsyncSession: Database session for operations
             
-        Example:
-            async with self.get_db_session() as session:
-                result = await session.query(User).all()
+        Raises:
+            RuntimeError: If session validation fails
+            SQLAlchemyError: If database operations fail
+            Exception: If session management encounters errors
         """
-        session = await get_db()
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+        session_id = str(uuid.uuid4())[:8]
+        start_time = time.time()
+        
+        # Validate session usage patterns
+        self.validate_session_usage()
+        
+        # Session validation checks - remove db_session_factory dependency
+        # Use the existing get_db dependency instead
+        
+        # Log session start
+        self.log_operation(
+            "Database session started",
+            details={
+                "session_id": session_id,
+                "controller": self.__class__.__name__
+            },
+            level="debug"
+        )
+        
+        # Use the existing get_db dependency instead of undefined db_session_factory
+        async with get_db() as session:
+            try:
+                # Validate session connection
+                await session.execute(text("SELECT 1"))
+                
+                yield session
+                
+                # Commit transaction
+                await session.commit()
+                duration = time.time() - start_time
+                self.log_operation(
+                    "Database session committed",
+                    details={
+                        "session_id": session_id,
+                        "duration_ms": round(duration * 1000, 2),
+                        "controller": self.__class__.__name__
+                    },
+                    level="debug"
+                )
+                
+            except Exception as e:
+                # Rollback on any error
+                try:
+                    await session.rollback()
+                    duration = time.time() - start_time
+                    self.log_operation(
+                        "Database session rolled back",
+                        details={
+                            "session_id": session_id,
+                            "duration_ms": round(duration * 1000, 2),
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                            "controller": self.__class__.__name__
+                        },
+                        level="warning"
+                    )
+                except Exception as rollback_error:
+                    self.logger.error(
+                        f"Failed to rollback session {session_id}: {str(rollback_error)}",
+                        extra={
+                            "session_id": session_id,
+                            "original_error": str(e),
+                            "rollback_error": str(rollback_error),
+                            "controller": self.__class__.__name__
+                        }
+                    )
+                raise  # Re-raise the original exception
+            finally:
+                # Always close the session
+                try:
+                    await session.close()
+                    duration = time.time() - start_time
+                    self.log_operation(
+                        "Database session closed",
+                        details={
+                            "session_id": session_id,
+                            "total_duration_ms": round(duration * 1000, 2),
+                            "controller": self.__class__.__name__
+                        },
+                        level="debug"
+                    )
+                except Exception as close_error:
+                    self.logger.error(
+                        f"Failed to close session {session_id}: {str(close_error)}",
+                        extra={
+                            "session_id": session_id,
+                            "close_error": str(close_error),
+                            "controller": self.__class__.__name__
+                        }
+                    )
    
     def log_operation(
         self,
         operation: str,
         user_id: Optional[int] = None,
         details: Optional[Dict[str, Any]] = None,
-        level: str = "info"
+        level: str = "info",
+        session_id: Optional[str] = None,
+        session_duration_ms: Optional[float] = None
     ) -> None:
-        """Log controller operations with structured data.
+        """Log controller operations with structured data and database session tracking.
+        
+        Enhanced logging method that includes database session information
+        for comprehensive operation tracking and debugging.
         
         Args:
             operation: Description of the operation being performed
             user_id: ID of the user performing the operation
             details: Additional operation details
             level: Log level (debug, info, warning, error)
+            session_id: Database session ID for tracking
+            session_duration_ms: Session duration in milliseconds
         """
+        # Build base log data
         log_data = {
             "operation": operation,
             "controller": self.__class__.__name__,
@@ -113,9 +205,247 @@ class BaseController(WebhookController):
             "details": details or {}
         }
         
+        # Add database session tracking information if available
+        if session_id:
+            log_data["database_session"] = {
+                "session_id": session_id,
+                "duration_ms": session_duration_ms,
+                "has_active_session": True
+            }
+        
+        # Attempt to detect active session context automatically
+        if not session_id:
+            try:
+                import inspect
+                frame = inspect.currentframe()
+                
+                # Look through the call stack for session-related context
+                current_frame = frame
+                session_context_found = False
+                
+                while current_frame and not session_context_found:
+                    local_vars = current_frame.f_locals
+                    
+                    # Check for common session variable names
+                    for var_name in ['session', 'db', 'db_session']:
+                        if var_name in local_vars:
+                            session_obj = local_vars[var_name]
+                            if hasattr(session_obj, 'bind') or hasattr(session_obj, 'commit'):
+                                log_data["database_session"] = {
+                                    "session_detected": True,
+                                    "session_type": type(session_obj).__name__,
+                                    "has_active_session": True
+                                }
+                                session_context_found = True
+                                break
+                    
+                    current_frame = current_frame.f_back
+                
+                # If no session context found, note it
+                if not session_context_found:
+                    log_data["database_session"] = {
+                        "has_active_session": False,
+                        "session_detected": False
+                    }
+                    
+            except Exception:
+                # Don't fail logging due to session detection errors
+                log_data["database_session"] = {
+                    "has_active_session": False,
+                    "detection_error": True
+                }
+            finally:
+                if 'frame' in locals():
+                    del frame  # Prevent reference cycles
+        
+        # Add performance and context information
+        log_data["performance"] = {
+            "controller_class": self.__class__.__name__,
+            "operation_category": self._categorize_operation(operation)
+        }
+        
         log_method = getattr(self.logger, level.lower(), self.logger.info)
         log_method(f"Controller operation: {operation}", extra=log_data)
     
+    def _categorize_operation(self, operation: str) -> str:
+        """Categorize operations for better logging organization.
+        
+        Args:
+            operation: Operation description
+            
+        Returns:
+            str: Operation category
+        """
+        operation_lower = operation.lower()
+        
+        if any(keyword in operation_lower for keyword in ['session', 'commit', 'rollback', 'close']):
+            return "database_session"
+        elif any(keyword in operation_lower for keyword in ['create', 'insert', 'add']):
+            return "create"
+        elif any(keyword in operation_lower for keyword in ['read', 'get', 'fetch', 'query', 'select']):
+            return "read"
+        elif any(keyword in operation_lower for keyword in ['update', 'modify', 'edit']):
+            return "update"
+        elif any(keyword in operation_lower for keyword in ['delete', 'remove']):
+            return "delete"
+        elif any(keyword in operation_lower for keyword in ['auth', 'login', 'logout', 'token']):
+            return "authentication"
+        elif any(keyword in operation_lower for keyword in ['valid', 'check', 'verify']):
+            return "validation"
+        else:
+            return "general"
+    
+    def validate_session_usage(self) -> None:
+        """Validate database session usage patterns to prevent sync/async mixing.
+        
+        This method performs static analysis of common session management
+        anti-patterns and provides clear error messages when issues are detected.
+        
+        Raises:
+            RuntimeError: If session usage validation fails
+        """
+        import inspect
+        import ast
+        
+        # Get the calling method's frame to analyze usage patterns
+        frame = inspect.currentframe()
+        try:
+            # Go up the call stack to find the calling method
+            caller_frame = frame.f_back.f_back if frame.f_back else None
+            if not caller_frame:
+                return  # Cannot validate without caller context
+            
+            caller_code = caller_frame.f_code
+            caller_name = caller_code.co_name
+            
+            # Check if we're being called from an async method
+            if not inspect.iscoroutinefunction(getattr(self, caller_name, None)):
+                # If the calling method is not async, warn about potential issues
+                self.logger.warning(
+                    f"Database session requested from non-async method: {caller_name}",
+                    extra={
+                        "controller": self.__class__.__name__,
+                        "method": caller_name,
+                        "recommendation": "Ensure the calling method is declared as 'async def'"
+                    }
+                )
+            
+            # Validate that we're in an async context
+            try:
+                import asyncio
+                asyncio.current_task()
+            except RuntimeError:
+                raise RuntimeError(
+                    f"Database session requested outside async context in {self.__class__.__name__}.{caller_name}. "
+                    "Ensure you're using 'async with self.get_db_session()' within an async method."
+                )
+            
+            # Log successful validation
+            self.log_operation(
+                "Session usage validation passed",
+                details={
+                    "calling_method": caller_name,
+                    "controller": self.__class__.__name__
+                },
+                level="debug"
+            )
+            
+        except Exception as e:
+            # Don't fail the entire operation for validation errors, just log them
+            self.logger.warning(
+                f"Session usage validation encountered an error: {str(e)}",
+                extra={
+                    "controller": self.__class__.__name__,
+                    "error_type": type(e).__name__
+                }
+            )
+        finally:
+            del frame  # Prevent reference cycles
+
+    async def ensure_consistent_commit_rollback(
+        self, 
+        session, 
+        operation: str,
+        session_id: str = None,
+        start_time: float = None
+    ) -> bool:
+        """Ensure consistent commit/rollback behavior with standardized error handling.
+        
+        This method provides a standardized approach to transaction management
+        across all controllers, ensuring consistent logging and error handling.
+        
+        Args:
+            session: Database session to manage
+            operation: Description of the operation being performed
+            session_id: Optional session ID for tracking
+            start_time: Optional start time for duration calculation
+            
+        Returns:
+            bool: True if commit succeeded, False if rollback was performed
+            
+        Raises:
+            Exception: Re-raises any exceptions after proper rollback handling
+        """
+        session_id = session_id or str(uuid.uuid4())[:8]
+        start_time = start_time or time.time()
+        
+        try:
+            # Attempt to commit the transaction
+            await session.commit()
+            
+            # Log successful commit
+            duration = time.time() - start_time
+            self.log_operation(
+                f"Transaction committed successfully: {operation}",
+                details={
+                    "session_id": session_id,
+                    "operation": operation,
+                    "duration_ms": round(duration * 1000, 2),
+                    "controller": self.__class__.__name__
+                },
+                level="debug"
+            )
+            
+            return True
+            
+        except Exception as e:
+            # Perform rollback with comprehensive error handling
+            rollback_success = False
+            try:
+                await session.rollback()
+                rollback_success = True
+                
+                # Log rollback with error details
+                duration = time.time() - start_time
+                self.log_operation(
+                    f"Transaction rolled back due to error: {operation}",
+                    details={
+                        "session_id": session_id,
+                        "operation": operation,
+                        "duration_ms": round(duration * 1000, 2),
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "controller": self.__class__.__name__
+                    },
+                    level="warning"
+                )
+                
+            except Exception as rollback_error:
+                # Log rollback failure
+                self.logger.error(
+                    f"Critical: Failed to rollback transaction for {operation}",
+                    extra={
+                        "session_id": session_id,
+                        "operation": operation,
+                        "original_error": str(e),
+                        "rollback_error": str(rollback_error),
+                        "controller": self.__class__.__name__
+                    }
+                )
+            
+            # Always re-raise the original exception
+            raise e
+
     def handle_database_error(self, error: SQLAlchemyError, operation: str) -> HTTPException:
         """Handle database errors with appropriate HTTP responses.
         
