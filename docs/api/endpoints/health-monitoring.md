@@ -1,21 +1,18 @@
-# Health Monitoring Endpoints
+# Health Monitoring API Documentation
 
 ## Overview
 
-The LinkShield backend provides comprehensive health monitoring endpoints for system status checks, readiness probes, liveness probes, and application metrics. These endpoints are essential for monitoring, alerting, and ensuring system reliability in production environments.
+The Health Monitoring API provides comprehensive health check endpoints for monitoring the status and performance of the LinkShield service. These endpoints are designed for use by monitoring systems, load balancers, and operational teams to ensure service availability and performance.
 
-## Base URL
-
-All health monitoring endpoints are available under:
-```
-/api/health
-```
+**Base URL**: `/api/v1/health`  
+**Authentication**: Not required for basic endpoints  
+**Content-Type**: `application/json`
 
 ## Endpoints
 
 ### 1. Basic Health Check
 
-**Endpoint:** `GET /api/health`
+**Endpoint:** `GET /api/v1/health`
 
 **Description:** Returns basic health status of the application with essential system information.
 
@@ -51,7 +48,7 @@ All health monitoring endpoints are available under:
 
 ### 2. Detailed Health Check
 
-**Endpoint:** `GET /api/health/detailed`
+**Endpoint:** `GET /api/v1/health/detailed`
 
 **Description:** Comprehensive health check including database connectivity, Redis status, and external service configuration.
 
@@ -116,7 +113,7 @@ All health monitoring endpoints are available under:
 
 ### 3. Readiness Probe
 
-**Endpoint:** `GET /api/health/ready`
+**Endpoint:** `GET /api/v1/health/ready`
 
 **Description:** Kubernetes-style readiness probe to determine if the service is ready to accept traffic.
 
@@ -140,7 +137,7 @@ All health monitoring endpoints are available under:
 
 ### 4. Liveness Probe
 
-**Endpoint:** `GET /api/health/live`
+**Endpoint:** `GET /api/v1/health/live`
 
 **Description:** Kubernetes-style liveness probe to determine if the service is alive and functioning.
 
@@ -292,13 +289,13 @@ spec:
   - name: linkshield-backend
     livenessProbe:
       httpGet:
-        path: /api/health/live
+        path: /api/v1/health/live
         port: 8000
       initialDelaySeconds: 30
       periodSeconds: 10
     readinessProbe:
       httpGet:
-        path: /api/health/ready
+        path: /api/v1/health/ready
         port: 8000
       initialDelaySeconds: 5
       periodSeconds: 5

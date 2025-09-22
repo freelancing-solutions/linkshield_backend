@@ -21,7 +21,7 @@ from src.controllers.depends import get_health_controller
 settings = get_settings()
 
 # Create router
-router = APIRouter()
+router = APIRouter(prefix="/api/v1", tags=["Health"])
 
 
 class HealthResponse(BaseModel):

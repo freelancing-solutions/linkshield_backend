@@ -4,7 +4,7 @@
 
 The Admin Configuration Management API provides comprehensive system configuration capabilities for LinkShield administrators. These endpoints allow administrators to manage system settings, security policies, feature flags, notification preferences, integration settings, and performance parameters.
 
-**Base URL**: `/api/admin/configuration`  
+**Base URL**: `/api/v1/admin/configuration`  
 **Authentication**: Required (Admin or Super Admin role)  
 **Content-Type**: `application/json`
 
@@ -37,12 +37,12 @@ The system supports six main configuration categories:
 
 Retrieve all configuration categories and their current values.
 
-**Endpoint**: `GET /api/admin/configuration`
+**Endpoint**: `GET /api/v1/admin/configuration`
 
 #### Request
 
 ```http
-GET /api/admin/configuration HTTP/1.1
+GET /api/v1/admin/configuration HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -132,7 +132,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Retrieve configuration settings for a specific category.
 
-**Endpoint**: `GET /api/admin/configuration/{category}`
+**Endpoint**: `GET /api/v1/admin/configuration/{category}`
 
 #### Path Parameters
 
@@ -152,7 +152,7 @@ Retrieve configuration settings for a specific category.
 #### Request
 
 ```http
-GET /api/admin/configuration/security_policies HTTP/1.1
+GET /api/v1/admin/configuration/security_policies HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -207,7 +207,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Update configuration settings for a specific category.
 
-**Endpoint**: `PUT /api/admin/configuration/{category}`
+**Endpoint**: `PUT /api/v1/admin/configuration/{category}`
 
 #### Request Body Schema
 
@@ -225,7 +225,7 @@ Update configuration settings for a specific category.
 #### Request
 
 ```http
-PUT /api/admin/configuration/security_policies HTTP/1.1
+PUT /api/v1/admin/configuration/security_policies HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json
@@ -277,7 +277,7 @@ Content-Type: application/json
 
 Update a single configuration setting within a category.
 
-**Endpoint**: `PATCH /api/admin/configuration/{category}/{setting}`
+**Endpoint**: `PATCH /api/v1/admin/configuration/{category}/{setting}`
 
 #### Path Parameters
 
@@ -298,7 +298,7 @@ Update a single configuration setting within a category.
 #### Request
 
 ```http
-PATCH /api/admin/configuration/system_settings/maintenance_mode HTTP/1.1
+PATCH /api/v1/admin/configuration/system_settings/maintenance_mode HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json
@@ -334,7 +334,7 @@ Content-Type: application/json
 
 Reset a configuration category to default values.
 
-**Endpoint**: `POST /api/admin/configuration/{category}/reset`
+**Endpoint**: `POST /api/v1/admin/configuration/{category}/reset`
 
 #### Request Body Schema
 
@@ -348,7 +348,7 @@ Reset a configuration category to default values.
 #### Request
 
 ```http
-POST /api/admin/configuration/feature_flags/reset HTTP/1.1
+POST /api/v1/admin/configuration/feature_flags/reset HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json
@@ -633,7 +633,7 @@ Validate configuration settings before applying changes.
 #### Get All Configurations
 
 ```bash
-curl -X GET "https://api.linkshield.com/api/admin/configuration" \
+curl -X GET "https://api.linkshield.com/api/v1/admin/configuration" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json"
 ```
@@ -641,7 +641,7 @@ curl -X GET "https://api.linkshield.com/api/admin/configuration" \
 #### Update Security Policies
 
 ```bash
-curl -X PUT "https://api.linkshield.com/api/admin/configuration/security_policies" \
+curl -X PUT "https://api.linkshield.com/api/v1/admin/configuration/security_policies" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -656,7 +656,7 @@ curl -X PUT "https://api.linkshield.com/api/admin/configuration/security_policie
 #### Enable Maintenance Mode
 
 ```bash
-curl -X PATCH "https://api.linkshield.com/api/admin/configuration/system_settings/maintenance_mode" \
+curl -X PATCH "https://api.linkshield.com/api/v1/admin/configuration/system" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

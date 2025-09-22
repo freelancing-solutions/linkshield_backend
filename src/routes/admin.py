@@ -27,7 +27,7 @@ from src.models.user import User
 security = HTTPBearer()
 
 # Create router with admin prefix
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 
 
 # Request/Response Models

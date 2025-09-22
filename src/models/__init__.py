@@ -22,7 +22,7 @@ from .report import Report, ReportVote, ReportTemplate, ReportStatistics
 
 # AI analysis models
 from .ai_analysis import AIAnalysis, ContentSimilarity, AIModelMetrics, ProcessingStatus, AnalysisType
-
+from .admin import GlobalConfig, AdminAction, AdminSession, ConfigCategory
 __all__ = [
     # User models
     "User",
@@ -57,4 +57,7 @@ __all__ = [
     "AIModelMetrics",
     "ProcessingStatus",
     "AnalysisType",
+
+    # Config Models.
+    "GlobalConfig", "AdminAction", "AdminSession", "ConfigCategory"
 ]

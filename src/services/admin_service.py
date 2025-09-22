@@ -166,36 +166,7 @@ class AdminService:
             }
         except Exception as e:
             raise AdminServiceError(f"Failed to process traffic analytics: {str(e)}")
-            ).group_by(URLCheck.domain).order_by(desc('count')).limit(10).all()
-            
-            # Threat distribution
-            threat_types = self.db.query(
-                ScanResult.threat_type,
-                func.count(ScanResult.id).label('count')
-            ).join(URLCheck).filter(
-                URLCheck.created_at >= start_date,
-                ScanResult.threat_type.isnot(None)
-            ).group_by(ScanResult.threat_type).all()
-            
-            return {
-                "period_days": days,
-                "daily_traffic": [
-                    {
-                        "date": str(date),
-                        "checks": checks,
-                        "unique_users": unique_users
-                    }
-                    for date, checks, unique_users in daily_traffic
-                ],
-                "top_domains": [
-                    {"domain": domain, "count": count}
-                    for domain, count in top_domains
-                ],
-                "threat_distribution": [
-                    {"type": threat_type, "count": count}
-                    for threat_type, count in threat_types
-                ]
-            }
+    
         except SQLAlchemyError as e:
             raise AdminServiceError(f"Failed to get traffic analytics: {str(e)}")
     

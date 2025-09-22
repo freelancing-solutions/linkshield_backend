@@ -21,16 +21,17 @@ from src.services.email_service import EmailService
 from src.models.user import User, UserRole, UserSession
 from src.models.url_check import URLCheck, ScanResult, ThreatLevel
 from src.models.ai_analysis import AIAnalysis, AnalysisType, ProcessingStatus
-from src.models.admin import AdminAction, AdminSession
+from src.models.admin import AdminAction, AdminSession, ActionType
 from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
-from src.models.configuration import Configuration
+from src.models  import GlobalConfig
+from src.utils import utc_datetime
 
 
 class AdminController(BaseController):
     """
     Controller for admin dashboard operations.
     
-    Handles system statistics, configuration management, user administration,
+    Handles system statistics, GlobalConfig management, user administration,
     and system health monitoring for administrative users.
     """
     
@@ -54,6 +55,13 @@ class AdminController(BaseController):
         self.admin_service = admin_service
     
     # Dashboard Statistics Methods
+    def _create_http_exception(self,status_code : int, detail: str):
+        """
+
+        :return:
+        """
+        # TODO - Log the Error
+        return HTTPException(status_code=status_code, detail=detail)
     
     async def get_dashboard_statistics(self) -> Dict[str, Any]:
         """
@@ -80,9 +88,9 @@ class AdminController(BaseController):
                 
                 # Query subscription statistics
                 subscription_stats = await db.query(
-                    User.subscription_tier,
+                    User.subscription_plan,
                     db.func.count(User.id).label('count')
-                ).group_by(User.subscription_tier).all()
+                ).group_by(User.subscription_plan).all()
                 
                 # Query URL check statistics
                 total_checks = await db.query(URLCheck).count()
@@ -108,7 +116,7 @@ class AdminController(BaseController):
                     'active': active_users,
                     'verified': verified_users,
                     'role_distribution': {role.name: role.count for role in role_stats},
-                    'subscription_distribution': {sub.subscription_tier: sub.count for sub in subscription_stats}
+                    'subscription_distribution': {sub.subscription_plan: sub.count for sub in subscription_stats}
                 }
                 
                 url_checks_data = {
@@ -175,14 +183,12 @@ class AdminController(BaseController):
             filters: User filters to apply
             callback_url: Optional webhook URL for completion notification
         """
-        task_tracking_service = get_task_tracking_service()
-        webhook_service = get_webhook_service()
-        
+
         try:
             # Get database session using context manager
             async with self.get_db_session() as db:
                 # Update task status to running
-                await task_tracking_service.update_task_status(
+                await self.update_task_status(
                     db=db,
                     task_id=task_id,
                     status=TaskStatus.RUNNING,
@@ -195,7 +201,7 @@ class AdminController(BaseController):
                 users_data = await self.admin_service.get_users(page, limit, filters)
                 
                 # Update progress
-                await task_tracking_service.update_task_status(
+                await self.update_task_status(
                     db=db,
                     task_id=task_id,
                     status=TaskStatus.RUNNING,
@@ -213,7 +219,7 @@ class AdminController(BaseController):
                 }
                 
                 # Update progress
-                await task_tracking_service.update_task_status(
+                await self.update_task_status(
                     db=db,
                     task_id=task_id,
                     status=TaskStatus.RUNNING,
@@ -221,7 +227,7 @@ class AdminController(BaseController):
                 )
                 
                 # Complete task
-                await task_tracking_service.update_task_status(
+                await self.update_task_status(
                     db=db,
                     task_id=task_id,
                     status=TaskStatus.COMPLETED,
@@ -231,7 +237,7 @@ class AdminController(BaseController):
                 
                 # Send webhook notification if callback URL provided
                 if callback_url:
-                    await webhook_service.send_webhook(
+                    await self.webhook_service.send_webhook(
                         url=callback_url,
                         event_type="ADMIN_USER_EXPORT_COMPLETED",
                         data={
@@ -241,25 +247,25 @@ class AdminController(BaseController):
                             "export_data": export_data
                         }
                     )
-                
+
                 self.logger.info(f"User export completed successfully (task: {task_id})")
-            
+
         except Exception as e:
             self.logger.error(f"User export failed (task: {task_id}): {str(e)}")
-            
+
             # Update task status to failed
             try:
                 async with self.get_db_session() as db:
-                    await task_tracking_service.update_task_status(
+                    await self.update_task_status(
                         db=db,
                         task_id=task_id,
                         status=TaskStatus.FAILED,
                         error_message=str(e)
                     )
-                    
+
                     # Send failure webhook notification
                     if callback_url:
-                        await webhook_service.send_webhook(
+                        await self.webhook_service.send_webhook(
                             url=callback_url,
                             event_type="ADMIN_USER_EXPORT_FAILED",
                             data={
@@ -270,7 +276,7 @@ class AdminController(BaseController):
                         )
             except Exception as webhook_error:
                 self.logger.error(f"Failed to send failure notification (task: {task_id}): {webhook_error}")
-    
+
     async def _export_logs_async(
         self,
         task_id: str,
@@ -280,29 +286,26 @@ class AdminController(BaseController):
     ) -> None:
         """
         Export system logs asynchronously in the background.
-        
+
         Args:
             task_id: ID of the background task
             level: Log level filter
             limit: Number of log entries to export
             callback_url: Optional webhook URL for completion notification
         """
-        task_tracking_service = get_task_tracking_service()
-        webhook_service = get_webhook_service()
-        
         try:
             # Get database session using context manager
             async with self.get_db_session() as db:
                 # Update task status to running
-                await task_tracking_service.update_task_status(
+                await self.update_task_status(
                     db=db,
                     task_id=task_id,
                     status=TaskStatus.RUNNING,
                     progress=10
                 )
-                
+
                 self.logger.info(f"Starting async log export (task: {task_id})")
-                
+
                 # Simulate log processing (in real implementation, read from log files/service)
                 # This would involve reading from actual log files or a logging service
                 logs = []
@@ -314,17 +317,17 @@ class AdminController(BaseController):
                         "module": "system",
                         "request_id": str(uuid.uuid4())
                     })
-                    
+
                     # Update progress periodically
                     if i % 100 == 0:
                         progress = min(10 + (i / limit) * 80, 90)
-                        await task_tracking_service.update_task_status(
+                        await self.update_task_status(
                             db=db,
                             task_id=task_id,
                             status=TaskStatus.RUNNING,
                             progress=int(progress)
                         )
-                
+
                 # Prepare export data
                 export_data = {
                     "logs": logs,
@@ -332,19 +335,19 @@ class AdminController(BaseController):
                     "count": len(logs),
                     "exported_at": datetime.now(timezone.utc).isoformat()
                 }
-                
+
                 # Complete task
-                await task_tracking_service.update_task_status(
+                await self.update_task_status(
                     db=db,
                     task_id=task_id,
                     status=TaskStatus.COMPLETED,
                     progress=100,
                     result=export_data
                 )
-                
+
                 # Send webhook notification if callback URL provided
                 if callback_url:
-                    await webhook_service.send_webhook(
+                    await self.webhook_service.send_webhook(
                         url=callback_url,
                         event_type="ADMIN_LOG_EXPORT_COMPLETED",
                         data={
@@ -354,25 +357,25 @@ class AdminController(BaseController):
                             "export_data": export_data
                         }
                     )
-                
+
                 self.logger.info(f"Log export completed successfully (task: {task_id})")
-            
+
         except Exception as e:
             self.logger.error(f"Log export failed (task: {task_id}): {str(e)}")
-            
+
             # Update task status to failed
             try:
                 async with self.get_db_session() as db:
-                    await task_tracking_service.update_task_status(
+                    await self.update_task_status(
                         db=db,
                         task_id=task_id,
                         status=TaskStatus.FAILED,
                         error_message=str(e)
                     )
-                    
+
                     # Send failure webhook notification
                     if callback_url:
-                        await webhook_service.send_webhook(
+                        await self.webhook_service.send_webhook(
                             url=callback_url,
                             event_type="ADMIN_LOG_EXPORT_FAILED",
                             data={
@@ -609,22 +612,22 @@ class AdminController(BaseController):
                 
                 # Query active users by subscription tier
                 active_users_by_subscription = await db.query(
-                    User.subscription_tier,
+                    User.subscription_plan,
                     db.func.count(User.id).label('count')
                 ).filter(
                     User.is_active == True,
                     User.last_login_at >= datetime.now(timezone.utc) - timedelta(days=30)
-                ).group_by(User.subscription_tier).all()
+                ).group_by(User.subscription_plan).all()
                 
                 # Query top users by activity (most URL checks in last 30 days)
                 top_users = await db.query(
                     User.id,
                     User.email,
-                    User.subscription_tier,
+                    User.subscription_plan,
                     db.func.count(URLCheck.id).label('check_count')
                 ).join(URLCheck).filter(
                     URLCheck.created_at >= datetime.now(timezone.utc) - timedelta(days=30)
-                ).group_by(User.id, User.email, User.subscription_tier).order_by(
+                ).group_by(User.id, User.email, User.subscription_plan).order_by(
                     db.func.count(URLCheck.id).desc()
                 ).limit(10).all()
                 
@@ -646,7 +649,7 @@ class AdminController(BaseController):
                 
                 subscription_data = [
                     {
-                        'subscription_tier': sub.subscription_tier,
+                        'subscription_plan': sub.subscription_plan,
                         'count': sub.count
                     } for sub in active_users_by_subscription
                 ]
@@ -655,7 +658,7 @@ class AdminController(BaseController):
                     {
                         'user_id': str(user.id),
                         'email': user.email,
-                        'subscription_tier': user.subscription_tier,
+                        'subscription_plan': user.subscription_plan,
                         'check_count': user.check_count
                     } for user in top_users
                 ]
@@ -690,20 +693,20 @@ class AdminController(BaseController):
                 detail="Internal server error"
             )
     
-    # Configuration Management Methods
+    # GlobalConfig Management Methods
     
     async def get_configuration(self, category: Optional[str] = None) -> Dict[str, Any]:
         """
-        Get system configuration settings.
+        Get system GlobalConfig settings.
         
         Args:
             category: Optional category filter
             
         Returns:
-            Dict containing configuration settings
+            Dict containing GlobalConfig settings
         """
         try:
-            self.logger.info(f"Fetching configuration (category: {category})")
+            self.logger.info(f"Fetching GlobalConfig (category: {category})")
             
             # Validate category if provided
             if category:
@@ -714,15 +717,15 @@ class AdminController(BaseController):
                         detail=f"Invalid category. Must be one of: {valid_categories}"
                     )
             
-            # Fetch configuration data from database
+            # Fetch GlobalConfig data from database
             async with self.get_db_session() as db:
-                query = db.query(Configuration)
+                query = db.query(GlobalConfig)
                 if category:
-                    query = query.filter(Configuration.category == category)
+                    query = query.filter(GlobalConfig.category == category)
                 
-                config_records = await query.filter(Configuration.is_active == True).all()
+                config_records = await query.filter(GlobalConfig.is_active == True).all()
                 
-                # Prepare configuration data
+                # Prepare GlobalConfig data
                 configuration_data = {}
                 for config in config_records:
                     if config.category not in configuration_data:
@@ -737,7 +740,7 @@ class AdminController(BaseController):
             # Process configuration using AdminService
             configuration = self.admin_service.process_configuration(configuration_data, category)
             
-            self.logger.info("Configuration retrieved successfully")
+            self.logger.info("GlobalConfig retrieved successfully")
             return {
                 "success": True,
                 "data": {
@@ -767,7 +770,7 @@ class AdminController(BaseController):
         Update a configuration setting.
         
         Args:
-            key: Configuration key
+            key: GlobalConfig key
             value: New value
             current_user: Current admin user
             
@@ -781,26 +784,26 @@ class AdminController(BaseController):
             if not key or not key.strip():
                 raise HTTPException(
                     status_code=400,
-                    detail="Configuration key cannot be empty"
+                    detail="GlobalConfig key cannot be empty"
                 )
             
             if value is None:
                 raise HTTPException(
                     status_code=400,
-                    detail="Configuration value cannot be null"
+                    detail="GlobalConfig value cannot be null"
                 )
             
             # Update configuration in database
             async with self.get_db_session() as db:
                 # Find existing configuration
-                config = await db.query(Configuration).filter(
-                    Configuration.key == key.strip()
+                config = await db.query(GlobalConfig).filter(
+                    GlobalConfig.key == key.strip()
                 ).first()
                 
                 if not config:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"Configuration key '{key}' not found"
+                        detail=f"GlobalConfig key '{key}' not found"
                     )
                 
                 # Update configuration
@@ -843,16 +846,16 @@ class AdminController(BaseController):
             # Process updated configuration using AdminService
             updated_config = self.admin_service.process_configuration_update(updated_config_data)
             
-            self.logger.info(f"Configuration key '{key}' updated successfully")
+            self.logger.info(f"GlobalConfig key '{key}' updated successfully")
             return {
                 "success": True,
                 "data": updated_config,
-                "message": f"Configuration '{key}' updated successfully",
+                "message": f"GlobalConfig '{key}' updated successfully",
                 "timestamp": datetime.now(timezone.utc)
             }
         
         except ConfigurationError as e:
-            self.logger.warning(f"Configuration validation error: {e}")
+            self.logger.warning(f"GlobalConfig validation error: {e}")
             raise self._create_http_exception(
                 status_code=400,
                 detail=str(e)
@@ -923,7 +926,7 @@ class AdminController(BaseController):
                 if status:
                     query = query.filter(User.status == status)
                 if subscription:
-                    query = query.filter(User.subscription_tier == subscription)
+                    query = query.filter(User.subscription_plan == subscription)
                 if is_active is not None:
                     query = query.filter(User.is_active == is_active)
                 if search:
@@ -953,7 +956,7 @@ class AdminController(BaseController):
                         'username': user.username,
                         'first_name': user.first_name,
                         'last_name': user.last_name,
-                        'subscription_tier': user.subscription_tier,
+                        'subscription_plan': user.subscription_plan,
                         'status': user.status,
                         'is_active': user.is_active,
                         'created_at': user.created_at.isoformat() if user.created_at else None,
@@ -997,12 +1000,10 @@ class AdminController(BaseController):
             
             if should_process_async:
                 # Create background task for async processing
-                task_tracking_service = get_task_tracking_service()
-                
                 async with self.get_db_session() as db:
-                    task = await task_tracking_service.create_task(
+                    task = await self.create_task(
                         db=db,
-                        task_type=TaskType.ADMIN_USER_EXPORT,
+                        task_type=TaskType.DATA_EXPORT,
                         priority=TaskPriority.NORMAL,
                         user_id=None,  # Admin operation
                         metadata={
@@ -1107,15 +1108,16 @@ class AdminController(BaseController):
                 # Update user status
                 user.status = status
                 user.is_active = status == "active"
-                user.updated_at = datetime.now(timezone.utc)
+                user.updated_at = utc_datetime()
                 
                 await db.commit()
                 await db.refresh(user)
                 
                 # Log admin action
+                #TODO-  Revise Admin Action not Accurate Arguments do not match
                 admin_action = AdminAction(
                     user_id=current_user.id,
-                    action_type="user_status_update",
+                    action_type=ActionType.UPDATE.value,
                     resource_type="user",
                     resource_id=str(user.id),
                     details={
@@ -1136,7 +1138,7 @@ class AdminController(BaseController):
                     'username': user.username,
                     'first_name': user.first_name,
                     'last_name': user.last_name,
-                    'subscription_tier': user.subscription_tier,
+                    'subscription_plan': user.subscription_plan,
                     'status': user.status,
                     'is_active': user.is_active,
                     'created_at': user.created_at.isoformat() if user.created_at else None,
@@ -1313,12 +1315,10 @@ class AdminController(BaseController):
             
             if should_process_async:
                 # Create background task for async log processing
-                task_tracking_service = get_task_tracking_service()
-                
                 async with self.get_db_session() as db:
-                    task = await task_tracking_service.create_task(
+                    task = await self.create_task(
                         db=db,
-                        task_type=TaskType.ADMIN_LOG_EXPORT,
+                        task_type=TaskType.DATA_EXPORT.value,
                         priority=TaskPriority.LOW,
                         user_id=None,  # Admin operation
                         metadata={

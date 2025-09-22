@@ -4,7 +4,7 @@
 
 The Admin User Management API provides comprehensive user administration capabilities for LinkShield administrators. These endpoints allow administrators to view, search, filter, manage user accounts, handle user status changes, and perform bulk operations on user data.
 
-**Base URL**: `/api/admin/users`  
+**Base URL**: `/api/v1/admin/users`  
 **Authentication**: Required (Admin or Super Admin role)  
 **Content-Type**: `application/json`
 
@@ -26,7 +26,7 @@ Authorization: Bearer <jwt_token>
 
 Retrieve a paginated list of users with optional filtering and sorting.
 
-**Endpoint**: `GET /api/admin/users`
+**Endpoint**: `GET /api/v1/admin/users`
 
 #### Query Parameters
 
@@ -47,7 +47,7 @@ Retrieve a paginated list of users with optional filtering and sorting.
 #### Request
 
 ```http
-GET /api/admin/users?page=1&per_page=25&status=active&subscription=pro&sort_by=last_active HTTP/1.1
+GET /api/v1/admin/users?page=1&per_page=25&status=active&subscription=pro&sort_by=last_active HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -128,7 +128,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Retrieve detailed information about a specific user.
 
-**Endpoint**: `GET /api/admin/users/{user_id}`
+**Endpoint**: `GET /api/v1/admin/users/{user_id}`
 
 #### Path Parameters
 
@@ -139,7 +139,7 @@ Retrieve detailed information about a specific user.
 #### Request
 
 ```http
-GET /api/admin/users/user_12345 HTTP/1.1
+GET /api/v1/admin/users/user_12345 HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -239,7 +239,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Update a user's account status (active, inactive, suspended).
 
-**Endpoint**: `PATCH /api/admin/users/{user_id}/status`
+**Endpoint**: `PATCH /api/v1/admin/users/{user_id}/status`
 
 #### Path Parameters
 
@@ -268,7 +268,7 @@ Update a user's account status (active, inactive, suspended).
 #### Request
 
 ```http
-PATCH /api/admin/users/user_12345/status HTTP/1.1
+PATCH /api/v1/admin/users/user_12345/status HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json
@@ -314,7 +314,7 @@ Content-Type: application/json
 
 Update a user's role (user, admin, super_admin).
 
-**Endpoint**: `PATCH /api/admin/users/{user_id}/role`
+**Endpoint**: `PATCH /api/v1/admin/users/{user_id}/role`
 
 #### Request Body Schema
 
@@ -335,7 +335,7 @@ Update a user's role (user, admin, super_admin).
 #### Request
 
 ```http
-PATCH /api/admin/users/user_12345/role HTTP/1.1
+PATCH /api/v1/admin/users/user_12345/role HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json
@@ -376,7 +376,7 @@ Content-Type: application/json
 
 Reset a user's password and optionally force password change on next login.
 
-**Endpoint**: `POST /api/admin/users/{user_id}/reset-password`
+**Endpoint**: `POST /api/v1/admin/users/{user_id}/reset-password`
 
 #### Request Body Schema
 
@@ -391,7 +391,7 @@ Reset a user's password and optionally force password change on next login.
 #### Request
 
 ```http
-POST /api/admin/users/user_12345/reset-password HTTP/1.1
+POST /api/v1/admin/users/user_12345/reset-password HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json
@@ -431,7 +431,7 @@ Content-Type: application/json
 
 Update a user's API usage quota.
 
-**Endpoint**: `PATCH /api/admin/users/{user_id}/quota`
+**Endpoint**: `PATCH /api/v1/admin/users/{user_id}/quota`
 
 #### Request Body Schema
 
@@ -446,7 +446,7 @@ Update a user's API usage quota.
 #### Request
 
 ```http
-PATCH /api/admin/users/user_12345/quota HTTP/1.1
+PATCH /api/v1/admin/users/user_12345/quota HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json
@@ -484,7 +484,7 @@ Content-Type: application/json
 
 Retrieve a user's activity history and audit trail.
 
-**Endpoint**: `GET /api/admin/users/{user_id}/activity`
+**Endpoint**: `GET /api/v1/admin/users/{user_id}/activity`
 
 #### Query Parameters
 
@@ -500,7 +500,7 @@ Retrieve a user's activity history and audit trail.
 #### Request
 
 ```http
-GET /api/admin/users/user_12345/activity?page=1&per_page=25&activity_type=login HTTP/1.1
+GET /api/v1/admin/users/user_12345/activity?page=1&per_page=25&activity_type=login HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -567,7 +567,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Perform bulk operations on multiple users.
 
-**Endpoint**: `POST /api/admin/users/bulk`
+**Endpoint**: `POST /api/v1/admin/users/bulk`
 
 #### Request Body Schema
 
@@ -593,7 +593,7 @@ Perform bulk operations on multiple users.
 #### Request
 
 ```http
-POST /api/admin/users/bulk HTTP/1.1
+POST /api/v1/admin/users/bulk HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 Content-Type: application/json
@@ -651,7 +651,7 @@ Content-Type: application/json
 
 Advanced user search with multiple criteria.
 
-**Endpoint**: `POST /api/admin/users/search`
+**Endpoint**: `POST /api/v1/admin/users/search`
 
 #### Request Body Schema
 

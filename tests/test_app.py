@@ -23,7 +23,7 @@ def test_health_endpoint():
     try:
         from app import app
         client = TestClient(app)
-        response = client.get("/health")
+        response = client.get("/api/v1/health")
         assert response.status_code == 200
     except Exception as e:
         pytest.fail(f"Health endpoint test failed: {e}")

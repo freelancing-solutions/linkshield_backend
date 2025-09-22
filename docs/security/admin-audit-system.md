@@ -71,8 +71,8 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.audit_service = audit_service
         self.excluded_paths = [
-            "/api/admin/health",
-            "/api/admin/monitoring/health",
+            "/api/v1/admin/health",
+            "/api/v1/admin/monitoring/health",
             "/docs",
             "/openapi.json"
         ]
@@ -472,10 +472,10 @@ class AuditSecurityService:
         }
         
         self.sensitive_endpoints = {
-            "/api/admin/users/*/delete",
-            "/api/admin/system/config",
-            "/api/admin/security/settings",
-            "/api/admin/audit/export"
+            "/api/v1/admin/users/*/delete",
+            "/api/v1/admin/system/config",
+            "/api/v1/admin/security/settings",
+            "/api/v1/admin/audit/export"
         }
     
     def check_audit_access(self, user_role: str, requested_access: AuditAccessLevel, 
@@ -978,12 +978,12 @@ audit_service = AdminAuditService()
 app.add_middleware(AdminAuditMiddleware, audit_service=audit_service)
 
 # Audit endpoints
-@app.get("/api/admin/audit/logs")
+@app.get("/api/v1/admin/audit/logs")
 async def get_audit_logs(filters: dict = None):
     """Get audit logs with filtering."""
     return await audit_service.search_audit_logs(filters or {})
 
-@app.get("/api/admin/audit/reports/{report_type}")
+@app.get("/api/v1/admin/audit/reports/{report_type}")
 async def generate_audit_report(report_type: str, start_date: str, end_date: str):
     """Generate compliance reports."""
     return await audit_service.generate_compliance_report(

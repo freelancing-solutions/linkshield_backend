@@ -11,7 +11,10 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 
+from fastapi import HTTPException
+
 from src.config.settings import get_settings
+from src.config.database import AsyncSession
 from src.models.ai_analysis import (
     ProcessingStatus,
     AnalysisType
@@ -41,7 +44,8 @@ class AIAnalysisService:
         if not self._initialized:
             await self.ai_service.initialize_models()
             self._initialized = True
-    
+
+
     def _generate_content_hash(self, content: str) -> str:
         """
         Generate SHA-256 hash for content deduplication.

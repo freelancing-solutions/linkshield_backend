@@ -114,13 +114,13 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 
 # Include routers
-app.include_router(health_router, prefix="/api", tags=["Health"])
-app.include_router(url_check_router, prefix="/api", tags=["URL Check"])
-app.include_router(user_router, prefix="/api", tags=["User"])
-app.include_router(report_router, prefix="/api", tags=["Report"])
-app.include_router(ai_analysis_router, tags=["AI Analysis"])
-app.include_router(admin_router, prefix="/api", tags=["Admin"])
-app.include_router(tasks_router, tags=["Task Management"])
+app.include_router(health_router)             # will be versioned in router
+app.include_router(url_check_router)
+app.include_router(user_router)
+app.include_router(report_router)
+app.include_router(ai_analysis_router)
+app.include_router(admin_router)
+app.include_router(tasks_router)
 
 
 # Root endpoint

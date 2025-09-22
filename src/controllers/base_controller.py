@@ -25,6 +25,7 @@ from src.services.email_service import EmailService
 from .webhook_controller import WebhookController
 from src.models.user import User
 from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
+from ..utils import utc_datetime
 
 
 class BaseController(WebhookController):
@@ -283,7 +284,7 @@ class BaseController(WebhookController):
         response = {
             "success": False,
             "message": message,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utc_datetime()
         }
         
         if error_code:

@@ -14,8 +14,7 @@ from urllib.parse import urlparse
 from fastapi import HTTPException, status, BackgroundTasks
 
 from sqlalchemy import and_,  desc, func
-from pydantic import ValidationError
-from src.config.database import AsyncSession
+
 from src.controllers.base_controller import BaseController
 from src.models.url_check import (
     URLCheck, ScanResult, URLReputation,
@@ -105,7 +104,7 @@ class URLCheckController(BaseController):
         if user:
             rate_limit = (
                 self.max_checks_per_hour_premium
-                if user.subscription_tier == "premium"
+                if user.subscription_plan == "premium"
                 else self.max_checks_per_hour_free
             )
             
@@ -219,7 +218,7 @@ class URLCheckController(BaseController):
         # Check rate limits (bulk requests count as multiple checks)
         rate_limit = (
             self.max_checks_per_hour_premium
-            if user.subscription_tier == "premium"
+            if user.subscription_plan == "premium"
             else self.max_checks_per_hour_free
         )
         
@@ -304,7 +303,7 @@ class URLCheckController(BaseController):
                 return url_checks
             
         except Exception as e:
-            raise self.handle_database_error(e, "bulk URL check creation")
+            raise self.handle_database_error(str(e), "bulk URL check creation")
     
     async def get_url_check(
         self,

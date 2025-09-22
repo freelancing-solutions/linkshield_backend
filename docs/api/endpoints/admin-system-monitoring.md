@@ -4,7 +4,7 @@
 
 The Admin System Monitoring API provides comprehensive system health monitoring and logging capabilities for LinkShield administrators. These endpoints allow administrators to monitor system performance, check service health, view system logs, and receive real-time alerts about system status.
 
-**Base URL**: `/api/admin/monitoring`  
+**Base URL**: `/api/v1/admin/monitoring`  
 **Authentication**: Required (Admin or Super Admin role)  
 **Content-Type**: `application/json`
 
@@ -26,12 +26,12 @@ Authorization: Bearer <jwt_token>
 
 Get overall system health status and key metrics.
 
-**Endpoint**: `GET /api/admin/monitoring/health`
+**Endpoint**: `GET /api/v1/admin/monitoring/health`
 
 #### Request
 
 ```http
-GET /api/admin/monitoring/health HTTP/1.1
+GET /api/v1/admin/monitoring/health HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -156,7 +156,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Get detailed health information for a specific system component.
 
-**Endpoint**: `GET /api/admin/monitoring/health/{component}`
+**Endpoint**: `GET /api/v1/admin/monitoring/health/{component}`
 
 #### Path Parameters
 
@@ -176,7 +176,7 @@ Get detailed health information for a specific system component.
 #### Request
 
 ```http
-GET /api/admin/monitoring/health/database HTTP/1.1
+GET /api/v1/admin/monitoring/health/database HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -240,7 +240,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Retrieve system logs with filtering and pagination.
 
-**Endpoint**: `GET /api/admin/monitoring/logs`
+**Endpoint**: `GET /api/v1/admin/monitoring/logs`
 
 #### Query Parameters
 
@@ -258,7 +258,7 @@ Retrieve system logs with filtering and pagination.
 #### Request
 
 ```http
-GET /api/admin/monitoring/logs?level=error&component=url_scanner&per_page=50 HTTP/1.1
+GET /api/v1/admin/monitoring/logs?level=error&component=url_scanner&per_page=50 HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -330,7 +330,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Get detailed system performance metrics over time.
 
-**Endpoint**: `GET /api/admin/monitoring/metrics`
+**Endpoint**: `GET /api/v1/admin/monitoring/metrics`
 
 #### Query Parameters
 
@@ -343,7 +343,7 @@ Get detailed system performance metrics over time.
 #### Request
 
 ```http
-GET /api/admin/monitoring/metrics?metric_type=cpu&time_range=1h&granularity=5m HTTP/1.1
+GET /api/v1/admin/monitoring/metrics?metric_type=cpu&time_range=1h&granularity=5m HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -396,7 +396,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Get performance analytics and trends over time.
 
-**Endpoint**: `GET /api/admin/monitoring/performance`
+**Endpoint**: `GET /api/v1/admin/monitoring/performance`
 
 #### Query Parameters
 
@@ -408,7 +408,7 @@ Get performance analytics and trends over time.
 #### Request
 
 ```http
-GET /api/admin/monitoring/performance?days=7&include_predictions=true HTTP/1.1
+GET /api/v1/admin/monitoring/performance?days=7&include_predictions=true HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -487,7 +487,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Get and manage system alerts.
 
-**Endpoint**: `GET /api/admin/monitoring/alerts`
+**Endpoint**: `GET /api/v1/admin/monitoring/alerts`
 
 #### Query Parameters
 
@@ -501,7 +501,7 @@ Get and manage system alerts.
 #### Request
 
 ```http
-GET /api/admin/monitoring/alerts?status=active&severity=high HTTP/1.1
+GET /api/v1/admin/monitoring/alerts?status=active&severity=high HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -553,7 +553,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Acknowledge a system alert.
 
-**Endpoint**: `POST /api/admin/monitoring/alerts/{alert_id}/acknowledge`
+**Endpoint**: `POST /api/v1/admin/monitoring/alerts/{alert_id}/acknowledge`
 
 #### Path Parameters
 
@@ -591,12 +591,12 @@ Acknowledge a system alert.
 
 Get public system status information (limited data for status page).
 
-**Endpoint**: `GET /api/admin/monitoring/status-page`
+**Endpoint**: `GET /api/v1/admin/monitoring/status-page`
 
 #### Request
 
 ```http
-GET /api/admin/monitoring/status-page HTTP/1.1
+GET /api/v1/admin/monitoring/status-page HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -692,7 +692,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 #### Check System Health
 
 ```bash
-curl -X GET "https://api.linkshield.com/api/admin/monitoring/health" \
+curl -X GET "https://api.linkshield.com/api/v1/admin/monitoring/health" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json"
 ```
@@ -700,7 +700,7 @@ curl -X GET "https://api.linkshield.com/api/admin/monitoring/health" \
 #### Get Error Logs
 
 ```bash
-curl -X GET "https://api.linkshield.com/api/admin/monitoring/logs?level=error&per_page=25" \
+curl -X GET "https://api.linkshield.com/api/v1/admin/monitoring/logs?level=error&per_page=25" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json"
 ```
@@ -708,7 +708,7 @@ curl -X GET "https://api.linkshield.com/api/admin/monitoring/logs?level=error&pe
 #### Acknowledge Alert
 
 ```bash
-curl -X POST "https://api.linkshield.com/api/admin/monitoring/alerts/alert_123/acknowledge" \
+curl -X POST "https://api.linkshield.com/api/v1/admin/monitoring/alerts/alert_123/acknowledge" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -722,7 +722,7 @@ curl -X POST "https://api.linkshield.com/api/admin/monitoring/alerts/alert_123/a
 ```javascript
 // Check system health
 const getSystemHealth = async () => {
-  const response = await fetch('/api/admin/monitoring/health', {
+  const response = await fetch('/api/v1/admin/monitoring/health', {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'
@@ -741,7 +741,7 @@ const getSystemLogs = async (level, component, page = 1) => {
     per_page: '50'
   });
   
-  const response = await fetch(`/api/admin/monitoring/logs?${params}`, {
+  const response = await fetch(`/api/v1/admin/monitoring/logs?${params}`, {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'
@@ -753,7 +753,7 @@ const getSystemLogs = async (level, component, page = 1) => {
 
 // Get performance metrics
 const getPerformanceMetrics = async (timeRange = '1h') => {
-  const response = await fetch(`/api/admin/monitoring/metrics?time_range=${timeRange}`, {
+  const response = await fetch(`/api/v1/admin/monitoring/metrics?time_range=${timeRange}`, {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'

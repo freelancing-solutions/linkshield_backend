@@ -22,7 +22,7 @@ from src.models.ai_analysis import AnalysisType
 from src.models.user import User
 
 # Initialize router
-router = APIRouter(prefix="/ai-analysis", tags=["AI Analysis"])
+router = APIRouter(prefix="/api/v1/ai-analysis", tags=["AI Analysis"])
 
 
 

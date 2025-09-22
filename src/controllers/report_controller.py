@@ -21,7 +21,7 @@ from src.models.report import (
     ReportType, ReportStatus, ReportPriority, VoteType
 )
 from src.models.user import User, UserRole
-from src.models.url_check import URLCheck, ThreatLevel
+from src.models.url_check import URLCheck, ThreatLevel, ScanType
 from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
 from src.services.security_service import SecurityService
 from src.authentication.auth_service import AuthService
@@ -617,7 +617,7 @@ class ReportController(BaseController):
                     )
                 
                 report.assignee_id = assignee_id
-                report.status = ReportStatus.IN_PROGRESS
+                report.status = ReportStatus.IN_PROGRESS.value
                 report.updated_at = utc_datetime()
                 
                 db.commit()
@@ -1067,15 +1067,12 @@ class ReportController(BaseController):
             priority: Report priority level
             callback_url: Optional webhook URL for completion notification
         """
-        task_tracking_service = get_task_tracking_service()
-        webhook_service = get_webhook_service()
-        
         try:
             # Get database session
             db = await self.get_db_session()
             
             # Update task status to running
-            await task_tracking_service.update_task_status(
+            await self.update_task_status(
                 db=db,
                 task_id=task_id,
                 status=TaskStatus.RUNNING,
@@ -1083,7 +1080,7 @@ class ReportController(BaseController):
             )
             
             # Perform URL analysis (placeholder for actual analysis logic)
-            await task_tracking_service.update_task_status(
+            await self.update_task_status(
                 db=db,
                 task_id=task_id,
                 status=TaskStatus.RUNNING,
@@ -1103,7 +1100,7 @@ class ReportController(BaseController):
             }
             
             # Complete the task
-            await task_tracking_service.complete_task(
+            await self.complete_task(
                 db=db,
                 task_id=task_id,
                 result=analysis_result
@@ -1119,7 +1116,7 @@ class ReportController(BaseController):
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
                 
-                await webhook_service.send_webhook(
+                await self.webhook_service.send_webhook(
                     url=callback_url,
                     payload=webhook_payload,
                     event_type="report_analysis_completed"
@@ -1142,7 +1139,7 @@ class ReportController(BaseController):
             
             try:
                 # Mark task as failed
-                await task_tracking_service.fail_task(
+                await self.fail_task(
                     db=db,
                     task_id=task_id,
                     error=str(e)
@@ -1159,7 +1156,7 @@ class ReportController(BaseController):
                         "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                     
-                    await webhook_service.send_webhook(
+                    await self.webhook_service.send_webhook(
                         url=callback_url,
                         payload=webhook_payload,
                         event_type="report_analysis_failed"
@@ -1185,15 +1182,12 @@ class ReportController(BaseController):
             url: Reported URL
             callback_url: Optional webhook URL for completion notification
         """
-        task_tracking_service = get_task_tracking_service()
-        webhook_service = get_webhook_service()
-        
         try:
             # Get database session
             db = await self.get_db_session()
             
             # Update task status to running
-            await task_tracking_service.update_task_status(
+            await self.update_task_status(
                 db=db,
                 task_id=task_id,
                 status=TaskStatus.RUNNING,
@@ -1212,7 +1206,7 @@ class ReportController(BaseController):
             }
             
             # Complete the task
-            await task_tracking_service.complete_task(
+            await self.complete_task(
                 db=db,
                 task_id=task_id,
                 result=notification_result
@@ -1228,7 +1222,7 @@ class ReportController(BaseController):
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
                 
-                await webhook_service.send_webhook(
+                await self.webhook_service.send_webhook(
                     url=callback_url,
                     payload=webhook_payload,
                     event_type="moderation_notification_completed"
@@ -1252,11 +1246,10 @@ class ReportController(BaseController):
             
             try:
                 # Mark task as failed
-                await task_tracking_service.fail_task(
-                    db=db,
+                await self.fail_task_with_webhook(
                     task_id=task_id,
-                    error=str(e)
-                )
+                    error_message=str(e),
+                    callback_url=callback_url)
                 
                 # Send failure webhook if callback URL provided
                 if callback_url:
@@ -1269,7 +1262,7 @@ class ReportController(BaseController):
                         "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                     
-                    await webhook_service.send_webhook(
+                    await self.webhook_service.send_webhook(
                         url=callback_url,
                         payload=webhook_payload,
                         event_type="moderation_notification_failed"

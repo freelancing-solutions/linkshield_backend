@@ -23,10 +23,9 @@ from src.services.security_service import SecurityService, AuthenticationError, 
 from src.authentication.auth_service import AuthService,  InvalidCredentialsError
 from src.controllers.user_controller import UserController
 from src.services.email_service import EmailService
-from src.services.background_email_service import BackgroundEmailService
+
 from src.services.depends import (
-    get_security_service, get_auth_service, get_email_service, 
-    get_background_email_service
+    get_security_service, get_auth_service, get_email_service
 )
 
 
@@ -40,16 +39,12 @@ settings = get_settings()
 def get_user_controller(
     security_service: SecurityService = Depends(get_security_service),
     auth_service: AuthService = Depends(get_auth_service),
-    email_service: EmailService = Depends(get_email_service),
-    background_email_service: BackgroundEmailService = Depends(get_background_email_service)
-) -> UserController:
+    email_service: EmailService = Depends(get_email_service) ) -> UserController:
     """Get UserController instance with refactored service dependencies."""
     return UserController(
         security_service=security_service,
         auth_service=auth_service,
-        email_service=email_service,
-        background_email_service=background_email_service
-    )
+        email_service=email_service)
 
 
 # Request/Response Models
@@ -321,7 +316,6 @@ async def register_user(
     request: UserRegistrationRequest,
     background_tasks: BackgroundTasks,
     req: Request,
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -340,14 +334,14 @@ async def register_user(
     5. Returns user profile
 
     """
-    return await controller.register_user(request, background_tasks, req, db)
+    return await controller.register_user(request, background_tasks, req)
 
 
 @router.post("/login", response_model=LoginResponse, summary="User login")
 async def login_user(
     request: UserLoginRequest,
     req: Request,
-    db: Session = Depends(get_db_session),
+    
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -359,21 +353,20 @@ async def login_user(
     - Device tracking
     - Rate limiting protection
     """
-    return await controller.login_user(request, req, db)
+    return await controller.login_user(request, req)
 
 
 @router.post("/logout", summary="User logout")
 async def logout_user(
     user: User = Depends(get_current_user),
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
     Logout user and invalidate session.
     
     """
-    return await controller.logout_user(user, credentials, db)
+    return await controller.logout_user(user, credentials)
 
 
 # Profile Management Routes
@@ -394,7 +387,6 @@ async def get_user_profile(
 async def update_user_profile(
     request: ProfileUpdateRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -402,14 +394,13 @@ async def update_user_profile(
     
     Delegates business logic to UserController.
     """
-    return await controller.update_user_profile(request, user, db)
+    return await controller.update_user_profile(request, user)
 
 
 @router.post("/change-password", summary="Change user password")
 async def change_password(
     request: PasswordChangeRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -417,7 +408,7 @@ async def change_password(
     
     Delegates business logic to UserController.
     """
-    return await controller.change_password(request, user, db)
+    return await controller.change_password(request, user)
 
 
 @router.post("/forgot-password", summary="Request password reset")
@@ -425,7 +416,6 @@ async def forgot_password(
     request: ForgotPasswordRequest,
     req: Request,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -433,13 +423,12 @@ async def forgot_password(
     
     Delegates business logic to UserController.
     """
-    return await controller.forgot_password(request, req, background_tasks, db)
+    return await controller.forgot_password(request, req, background_tasks)
 
 
 @router.post("/reset-password", summary="Reset password with token")
 async def reset_password(
     request: ResetPasswordRequest,
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -447,13 +436,12 @@ async def reset_password(
     
     Delegates business logic to UserController.
     """
-    return await controller.reset_password(request, db)
+    return await controller.reset_password(request)
 
 
 @router.post("/verify-email", summary="Verify email address")
 async def verify_email(
     request: EmailVerificationRequest,
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -461,14 +449,13 @@ async def verify_email(
     
     Delegates business logic to UserController.
     """
-    return await controller.verify_email(request, db)
+    return await controller.verify_email(request)
 
 
 @router.post("/resend-verification", summary="Resend email verification")
 async def resend_verification(
     request: ResendVerificationRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -476,14 +463,13 @@ async def resend_verification(
     
     Delegates business logic to UserController.
     """
-    return await controller.resend_verification(request, background_tasks, db)
+    return await controller.resend_verification(request, background_tasks)
 
 
 # API Key Management Routes
 @router.get("/api-keys", response_model=List[APIKeyResponse], summary="Get user API keys")
 async def get_api_keys(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -491,14 +477,13 @@ async def get_api_keys(
     
     Delegates business logic to UserController.
     """
-    return await controller.get_api_keys(user, db)
+    return await controller.get_api_keys(user)
 
 
 @router.post("/api-keys", response_model=APIKeyResponse, summary="Create new API key")
 async def create_api_key(
     request: CreateAPIKeyRequest,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -506,14 +491,13 @@ async def create_api_key(
     
     Delegates business logic to UserController.
     """
-    return await controller.create_api_key(request, user, db)
+    return await controller.create_api_key(request, user)
 
 
 @router.delete("/api-keys/{key_id}", summary="Delete API key")
 async def delete_api_key(
     key_id: str = Path(..., description="API key ID"),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -521,14 +505,13 @@ async def delete_api_key(
     
     Delegates business logic to UserController.
     """
-    return await controller.delete_api_key(key_id, user, db)
+    return await controller.delete_api_key(key_id, user)
 
 
 # Session Management Routes
 @router.get("/sessions", response_model=List[SessionResponse], summary="Get user sessions")
 async def get_user_sessions(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -536,14 +519,13 @@ async def get_user_sessions(
     
     Delegates business logic to UserController.
     """
-    return await controller.get_user_sessions(user, db)
+    return await controller.get_user_sessions(user)
 
 
 @router.delete("/sessions/{session_id}", summary="Delete user session")
 async def delete_user_session(
     session_id: str = Path(..., description="Session ID"),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -551,39 +533,26 @@ async def delete_user_session(
     
     Delegates business logic to UserController.
     """
-    return await controller.delete_user_session(session_id, user, db)
+    return await controller.delete_user_session(session_id, user)
 
 
 @router.delete("/sessions", summary="Terminate all sessions")
 async def terminate_all_sessions(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session)
+    controller: UserController = Depends(get_user_controller)
 ):
     """
     Terminate all user sessions except current one.
     """
     # Get current session ID from token (would need to be passed)
     # For now, terminate all sessions
-    db.query(UserSession).filter(
-        and_(
-            UserSession.user_id == user.id,
-            UserSession.is_active == True
-        )
-    ).update({
-        "is_active": False,
-        "ended_at": datetime.now(timezone.utc)
-    })
-    
-    db.commit()
-    
-    return {"message": "All sessions terminated successfully"}
+    pass
 
 
 # Email Verification Routes
 @router.post("/verify-email/{token}", summary="Verify email address")
 async def verify_email_with_token(
     token: str = Path(..., description="Verification token"),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -592,14 +561,13 @@ async def verify_email_with_token(
     Delegates business logic to UserController.
     """
     request = EmailVerificationRequest(token=token)
-    return await controller.verify_email(request, db)
+    return await controller.verify_email(request)
 
 
 @router.post("/resend-verification", summary="Resend verification email")
 async def resend_verification_email(
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db_session),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -608,7 +576,7 @@ async def resend_verification_email(
     Delegates business logic to UserController.
     """
     request = ResendVerificationRequest(email=user.email)
-    return await controller.resend_verification(request, background_tasks, db)
+    return await controller.resend_verification(request, background_tasks)
 
 
 # Helper functions for database operations

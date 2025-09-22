@@ -1,15 +1,11 @@
-"""Webhook controller class providing webhook and task tracking functionality.
+"""Enhanced Webhook controller with task processing functionality."""
 
-This module defines the WebhookController class that handles all webhook-related
-operations including task creation, progress tracking, and completion notifications.
-It serves as a base class for controllers that need webhook functionality.
-"""
-
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 from abc import ABC, abstractmethod
-from datetime import datetime
+
 import logging
 import uuid
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import HTTPException, status, BackgroundTasks
@@ -18,163 +14,99 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config.settings import get_settings
 from src.services.webhook_service import get_webhook_service
 from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
+from src.utils import utc_datetime
 
 
 class WebhookController(ABC):
-    """Base webhook controller class with task tracking and webhook functionality.
-    
-    This class provides:
-    - Background task creation and management
-    - Task progress tracking and status updates
-    - Webhook notification delivery
-    - Task completion and failure handling
-    - Integration with FastAPI BackgroundTasks
-    """
-    
+    """Enhanced webhook controller with complete task processing."""
+
     def __init__(self):
-        """Initialize webhook controller with common dependencies."""
         self.settings = get_settings()
+        self.webhook_service = get_webhook_service()
         self.logger = logging.getLogger(self.__class__.__name__)
-    
+
     @abstractmethod
     @asynccontextmanager
     async def get_db_session(self) -> AsyncSession:
-        """Abstract method for database session management.
-        
-        This method must be implemented by subclasses to provide
-        database session context management.
-        
-        Yields:
-            AsyncSession: Database session for operations
-        """
+        """Database session management."""
         pass
-    
-    # Task Tracking Service Methods (since TaskTrackingService is missing)
-    
-    async def create_task(self, db: AsyncSession, task: BackgroundTask) -> None:
-        """Create a new background task in the database.
-        
-        Args:
-            db: Database session
-            task: BackgroundTask instance to create
-        """
-        db.add(task)
-        await db.flush()
-    
+
+    # Core task processing wrapper
+    async def _execute_task_with_tracking(
+            self,
+            task_id: str,
+            task_func: Callable,
+            *args,
+            **kwargs
+    ) -> None:
+        """Execute task function with automatic tracking and webhook delivery."""
+        try:
+            # Mark task as running
+            await self.update_task_progress(task_id, 0, TaskStatus.RUNNING)
+
+            # Execute the actual task function
+            if asyncio.iscoroutinefunction(task_func):
+                result = await task_func(task_id, *args, **kwargs)
+            else:
+                result = task_func(task_id, *args, **kwargs)
+
+            # Complete task with results
+            await self.complete_task_with_webhook(task_id, result or {})
+
+        except Exception as e:
+            self.logger.error(f"Task {task_id} failed: {str(e)}")
+            await self.fail_task_with_webhook(task_id, str(e))
+
+    # Task creation and management
+    async def create_task(self, session: AsyncSession, task: BackgroundTask) -> None:
+        """Create a new background task in the database."""
+        session.add(task)
+        await session.commit()
+
     async def update_task_status(
-        self,
-        db: AsyncSession,
-        task_id: str,
-        status: TaskStatus,
-        progress: Optional[int] = None,
-        result_data: Optional[Dict[str, Any]] = None,
-        error_message: Optional[str] = None
+            self,
+            task_id: str,
+            status: TaskStatus,
+            progress: Optional[int] = None,
+            result_data: Optional[Dict[str, Any]] = None,
+            error_message: Optional[str] = None
     ) -> None:
-        """Update task status and progress.
-        
-        Args:
-            db: Database session
-            task_id: ID of the task to update
-            status: New task status
-            progress: Progress percentage (0-100)
-            result_data: Task result data
-            error_message: Error message if task failed
-        """
-        task = await db.get(BackgroundTask, task_id)
-        if task:
-            task.status = status
-            if progress is not None:
-                task.progress = progress
-            if result_data is not None:
-                task.result_data = result_data
-            if error_message is not None:
-                task.error_message = error_message
-            task.updated_at = datetime.utcnow()
-            await db.flush()
-    
-    async def get_task(self, db: AsyncSession, task_id: str) -> Optional[BackgroundTask]:
-        """Get a task by ID.
-        
-        Args:
-            db: Database session
-            task_id: ID of the task to retrieve
-            
-        Returns:
-            BackgroundTask instance or None if not found
-        """
-        return await db.get(BackgroundTask, task_id)
-    
-    async def complete_task(
-        self,
-        db: AsyncSession,
-        task_id: str,
-        result_data: Dict[str, Any]
-    ) -> None:
-        """Mark a task as completed.
-        
-        Args:
-            db: Database session
-            task_id: ID of the task to complete
-            result_data: Task result data
-        """
-        await self.update_task_status(
-            db=db,
-            task_id=task_id,
-            status=TaskStatus.COMPLETED,
-            progress=100,
-            result_data=result_data
-        )
-    
-    async def fail_task(
-        self,
-        db: AsyncSession,
-        task_id: str,
-        error_message: str
-    ) -> None:
-        """Mark a task as failed.
-        
-        Args:
-            db: Database session
-            task_id: ID of the task to fail
-            error_message: Error message describing the failure
-        """
-        await self.update_task_status(
-            db=db,
-            task_id=task_id,
-            status=TaskStatus.FAILED,
-            error_message=error_message
-        )
-    
-    # Webhook and Task Management Methods
-    
+        """Update task status and progress."""
+        async with self.get_db_session() as session:
+            task = await session.get(BackgroundTask, task_id)
+            if task:
+                task.status = status
+                if progress is not None:
+                    task.progress = progress
+                if result_data is not None:
+                    task.result_data = result_data
+                if error_message is not None:
+                    task.error_message = error_message
+                task.updated_at = utc_datetime()
+                await session.commit()
+
+    async def get_task(self, task_id: str) -> Optional[BackgroundTask]:
+        """Get a task by ID."""
+        async with self.get_db_session() as session:
+            return await session.get(BackgroundTask, task_id)
+
     async def create_background_task(
-        self,
-        task_type: TaskType,
-        task_data: Dict[str, Any],
-        user_id: Optional[int] = None,
-        priority: TaskPriority = TaskPriority.NORMAL,
-        callback_url: Optional[str] = None,
-        depends_on: Optional[List[str]] = None
+            self,
+            task_type: TaskType,
+            task_data: Dict[str, Any],
+            user_id: Optional[int] = None,
+            priority: TaskPriority = TaskPriority.NORMAL,
+            callback_url: Optional[str] = None,
+            depends_on: Optional[List[str]] = None
     ) -> str:
-        """Create a new background task for tracking.
-        
-        Args:
-            task_type: Type of the task
-            task_data: Task-specific data
-            user_id: ID of the user who initiated the task
-            priority: Task priority level
-            callback_url: Optional webhook URL for completion notification
-            depends_on: List of task IDs this task depends on
-            
-        Returns:
-            str: Task ID
-            
-        Raises:
-            HTTPException: If task creation fails
-        """
+        """Create a new background task for tracking."""
         try:
             task_id = str(uuid.uuid4())
-            
+
+            # Validate webhook URL if provided
+            if callback_url and not self._validate_webhook_url(callback_url):
+                raise HTTPException(400, "Invalid webhook URL format")
+
             task = BackgroundTask(
                 id=task_id,
                 task_type=task_type,
@@ -184,208 +116,147 @@ class WebhookController(ABC):
                 task_data=task_data,
                 callback_url=callback_url,
                 depends_on=depends_on or [],
-                created_at=datetime.utcnow()
+                created_at=utc_datetime()
             )
-            
+
             async with self.get_db_session() as session:
-                await self.create_task(db=session, task=task)
-            
-            self.logger.info(f"Created background task {task_id} of type {task_type.value}")
+                await self.create_task(session, task)
+
+            self.logger.info(f"Created task {task_id} of type {task_type.value}")
             return task_id
-            
+
         except Exception as e:
-            self.logger.error(f"Failed to create background task: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create background task"
-            )
-    
+            self.logger.error(f"Failed to create task: {str(e)}")
+            raise HTTPException(500, "Failed to create background task")
+
     async def update_task_progress(
-        self,
-        task_id: str,
-        progress: int,
-        status: Optional[TaskStatus] = None,
-        result_data: Optional[Dict[str, Any]] = None,
-        error_message: Optional[str] = None
+            self,
+            task_id: str,
+            progress: int,
+            status: Optional[TaskStatus] = None,
+            result_data: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Update background task progress and status.
-        
-        Args:
-            task_id: ID of the task to update
-            progress: Progress percentage (0-100)
-            status: New task status
-            result_data: Task result data
-            error_message: Error message if task failed
-            
-        Raises:
-            HTTPException: If task update fails
-        """
-        try:
-            async with self.get_db_session() as session:
-                await self.update_task_status(
-                    db=session,
-                    task_id=task_id,
-                    status=status or TaskStatus.RUNNING,
-                    progress=progress,
-                    result_data=result_data,
-                    error_message=error_message
-                )
-            
-            self.logger.info(f"Updated task {task_id} progress to {progress}%")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to update task progress: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update task progress"
-            )
-    
+        """Update task progress with validation."""
+        if not 0 <= progress <= 100:
+            raise ValueError("Progress must be between 0 and 100")
+
+        await self.update_task_status(
+            task_id=task_id,
+            status=status or TaskStatus.RUNNING,
+            progress=progress,
+            result_data=result_data
+        )
+
+        self.logger.info(f"Task {task_id} progress: {progress}%")
+
     async def complete_task_with_webhook(
-        self,
-        task_id: str,
-        result_data: Dict[str, Any],
-        callback_url: Optional[str] = None
+            self,
+            task_id: str,
+            result_data: Dict[str, Any],
+            callback_url: Optional[str] = None
     ) -> None:
-        """Complete a background task and send webhook notification.
-        
-        Args:
-            task_id: ID of the task to complete
-            result_data: Task result data
-            callback_url: Optional webhook URL override
-            
-        Raises:
-            HTTPException: If task completion fails
-        """
+        """Complete task and send webhook notification."""
         try:
-            webhook_service = get_webhook_service()
-            
-            async with self.get_db_session() as session:
-                # Update task status to completed
-                await self.update_task_status(
-                    db=session,
-                    task_id=task_id,
-                    status=TaskStatus.COMPLETED,
-                    progress=100,
-                    result_data=result_data
-                )
-                
-                # Get task details for webhook
-                task = await self.get_task(db=session, task_id=task_id)
-                if not task:
-                    self.logger.error(f"Task {task_id} not found for webhook notification")
-                    return
-                
-                # Send webhook notification if callback URL is provided
-                webhook_url = callback_url or task.callback_url
-                if webhook_url:
-                    webhook_payload = {
-                        "task_id": task_id,
-                        "task_type": task.task_type.value,
-                        "status": "completed",
-                        "result": result_data,
-                        "completed_at": datetime.utcnow().isoformat()
-                    }
-                    
-                    await webhook_service.send_webhook(
+            # Update task status
+            await self.update_task_status(
+                task_id=task_id,
+                status=TaskStatus.COMPLETED,
+                progress=100,
+                result_data=result_data
+            )
+
+            # Get task for webhook
+            task = await self.get_task(task_id)
+            if not task:
+                self.logger.error(f"Task {task_id} not found for webhook")
+                return
+
+            # Send webhook if URL provided
+            webhook_url = callback_url or task.callback_url
+            if webhook_url:
+                payload = {
+                    "task_id": task_id,
+                    "task_type": task.task_type.value,
+                    "status": "completed",
+                    "result": result_data,
+                    "completed_at": utc_datetime().isoformat()
+                }
+
+                try:
+                    await self.webhook_service.send_webhook(
                         url=webhook_url,
-                        payload=webhook_payload,
+                        payload=payload,
                         event_type="task.completed"
                     )
-            
-            self.logger.info(f"Completed task {task_id} with webhook notification")
-            
+                    self.logger.info(f"Webhook sent for completed task {task_id}")
+                except Exception as webhook_error:
+                    self.logger.error(f"Webhook delivery failed: {webhook_error}")
+
+            self.logger.info(f"Task {task_id} completed successfully")
+
         except Exception as e:
-            self.logger.error(f"Failed to complete task with webhook: {str(e)}")
-            # Don't raise exception here to avoid breaking the main process
-    
+            self.logger.error(f"Failed to complete task {task_id}: {str(e)}")
+
     async def fail_task_with_webhook(
-        self,
-        task_id: str,
-        error_message: str,
-        callback_url: Optional[str] = None
+            self,
+            task_id: str,
+            error_message: str,
+            callback_url: Optional[str] = None
     ) -> None:
-        """Mark a background task as failed and send webhook notification.
-        
-        Args:
-            task_id: ID of the task to fail
-            error_message: Error message describing the failure
-            callback_url: Optional webhook URL override
-            
-        Raises:
-            HTTPException: If task failure handling fails
-        """
+        """Mark task as failed and send webhook notification."""
         try:
-            webhook_service = get_webhook_service()
-            
-            async with self.get_db_session() as session:
-                # Update task status to failed
-                await self.update_task_status(
-                    db=session,
-                    task_id=task_id,
-                    status=TaskStatus.FAILED,
-                    error_message=error_message
-                )
-                
-                # Get task details for webhook
-                task = await self.get_task(db=session, task_id=task_id)
-                if not task:
-                    self.logger.error(f"Task {task_id} not found for webhook notification")
-                    return
-                
-                # Send webhook notification if callback URL is provided
-                webhook_url = callback_url or task.callback_url
-                if webhook_url:
-                    webhook_payload = {
-                        "task_id": task_id,
-                        "task_type": task.task_type.value,
-                        "status": "failed",
-                        "error": error_message,
-                        "failed_at": datetime.utcnow().isoformat()
-                    }
-                    
-                    await webhook_service.send_webhook(
+            # Update task status
+            await self.update_task_status(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                error_message=error_message
+            )
+
+            # Get task for webhook
+            task = await self.get_task(task_id)
+            if not task:
+                self.logger.error(f"Task {task_id} not found for webhook")
+                return
+
+            # Send webhook if URL provided
+            webhook_url = callback_url or task.callback_url
+            if webhook_url:
+                payload = {
+                    "task_id": task_id,
+                    "task_type": task.task_type.value,
+                    "status": "failed",
+                    "error": error_message,
+                    "failed_at": utc_datetime().isoformat()
+                }
+
+                try:
+                    await self.webhook_service.send_webhook(
                         url=webhook_url,
-                        payload=webhook_payload,
+                        payload=payload,
                         event_type="task.failed"
                     )
-            
-            self.logger.info(f"Failed task {task_id} with webhook notification")
-            
+                    self.logger.info(f"Webhook sent for failed task {task_id}")
+                except Exception as webhook_error:
+                    self.logger.error(f"Webhook delivery failed: {webhook_error}")
+
+            self.logger.error(f"Task {task_id} failed: {error_message}")
+
         except Exception as e:
-            self.logger.error(f"Failed to handle task failure with webhook: {str(e)}")
-            # Don't raise exception here to avoid breaking the main process
-    
+            self.logger.error(f"Failed to handle task failure {task_id}: {str(e)}")
+
     async def add_background_task_with_tracking(
-        self,
-        background_tasks: BackgroundTasks,
-        task_func: callable,
-        task_type: TaskType,
-        task_data: Dict[str, Any],
-        user_id: Optional[int] = None,
-        priority: TaskPriority = TaskPriority.NORMAL,
-        callback_url: Optional[str] = None,
-        *args,
-        **kwargs
+            self,
+            background_tasks: BackgroundTasks,
+            task_func: Callable,
+            task_type: TaskType,
+            task_data: Dict[str, Any],
+            user_id: Optional[int] = None,
+            priority: TaskPriority = TaskPriority.NORMAL,
+            callback_url: Optional[str] = None,
+            *args,
+            **kwargs
     ) -> str:
-        """Add a background task with automatic tracking and webhook support.
-        
-        Args:
-            background_tasks: FastAPI BackgroundTasks instance
-            task_func: Function to execute in background
-            task_type: Type of the task
-            task_data: Task-specific data
-            user_id: ID of the user who initiated the task
-            priority: Task priority level
-            callback_url: Optional webhook URL for completion notification
-            *args: Additional positional arguments for task_func
-            **kwargs: Additional keyword arguments for task_func
-            
-        Returns:
-            str: Task ID
-            
-        Raises:
-            HTTPException: If task creation fails
-        """
+        """Add background task with automatic tracking and webhook support."""
         try:
             # Create task record
             task_id = await self.create_background_task(
@@ -395,70 +266,63 @@ class WebhookController(ABC):
                 priority=priority,
                 callback_url=callback_url
             )
-            
-            # Add to FastAPI background tasks
+
+            # Add to FastAPI background tasks with tracking wrapper
             background_tasks.add_task(
-                task_func,
+                self._execute_task_with_tracking,
                 task_id,
+                task_func,
                 *args,
                 **kwargs
             )
-            
-            self.logger.info(f"Added background task {task_id} to execution queue")
+
+            self.logger.info(f"Added tracked task {task_id} to execution queue")
             return task_id
-            
+
         except Exception as e:
-            self.logger.error(f"Failed to add background task with tracking: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to add background task"
-            )
-    
-    def _create_webhook_payload(
-        self,
-        task_id: str,
-        task_type: TaskType,
-        status: str,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Create webhook payload for task notifications.
-        
-        Args:
-            task_id: ID of the task
-            task_type: Type of the task
-            status: Task status (completed, failed, etc.)
-            **kwargs: Additional payload data
-            
-        Returns:
-            Dict containing webhook payload
-        """
-        payload = {
-            "task_id": task_id,
-            "task_type": task_type.value,
-            "status": status,
-            "timestamp": datetime.utcnow().isoformat()
+            self.logger.error(f"Failed to add tracked task: {str(e)}")
+            raise HTTPException(500, "Failed to add background task")
+
+    async def get_task_status(self, task_id: str) -> Dict[str, Any]:
+        """Get current task status and progress."""
+        task = await self.get_task(task_id)
+        if not task:
+            raise HTTPException(404, "Task not found")
+
+        return {
+            "task_id": task.id,
+            "task_type": task.task_type.value,
+            "status": task.status.value,
+            "progress": task.progress,
+            "created_at": task.created_at.isoformat(),
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+            "result_data": task.result_data,
+            "error_message": task.error_message
         }
-        payload.update(kwargs)
-        return payload
-    
+
+    async def cancel_task(self, task_id: str) -> None:
+        """Cancel a pending or running task."""
+        task = await self.get_task(task_id)
+        if not task:
+            raise HTTPException(404, "Task not found")
+
+        if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+            raise HTTPException(400, f"Cannot cancel task with status: {task.status.value}")
+
+        await self.update_task_status(
+            task_id=task_id,
+            status=TaskStatus.CANCELLED
+        )
+
+        self.logger.info(f"Task {task_id} cancelled")
+
     def _validate_webhook_url(self, url: str) -> bool:
-        """Validate webhook URL format and security.
-        
-        Args:
-            url: Webhook URL to validate
-            
-        Returns:
-            bool: True if URL is valid and secure
-        """
-        if not url:
+        """Validate webhook URL format and security."""
+        if not url or not url.startswith(('http://', 'https://')):
             return False
-        
-        # Basic URL validation
-        if not url.startswith(('http://', 'https://')):
-            return False
-        
-        # Security check - prefer HTTPS
-        if not url.startswith('https://') and not self.settings.DEBUG:
-            self.logger.warning(f"Non-HTTPS webhook URL in production: {url}")
-        
+
+        # Prefer HTTPS in production
+        if not url.startswith('https://') and not getattr(self.settings, 'DEBUG', False):
+            self.logger.warning(f"Non-HTTPS webhook URL: {url}")
+
         return True

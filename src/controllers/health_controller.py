@@ -236,6 +236,7 @@ class HealthController(BaseController):
             # Add system metrics if available
             try:
                 import psutil
+                # noinspection PyTypeChecker
                 metrics.update({
                     "memory_usage": {
                         "percent": psutil.virtual_memory().percent,

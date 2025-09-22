@@ -148,39 +148,39 @@ Once the server is running, visit:
 ## API Endpoints
 
 ### Authentication
-- `POST /api/auth/register` - User registration
-- `POST /api/auth/login` - User login
-- `POST /api/auth/logout` - User logout
-- `POST /api/auth/refresh` - Refresh JWT token
+- `POST /api/v1/user/register` - User registration
+- `POST /api/v1/user/login` - User login
+- `POST /api/v1/user/logout` - User logout
+- `POST /api/v1/user/refresh` - Refresh JWT token
 
 ### URL Analysis
-- `POST /api/url-check` - Analyze single URL
-- `POST /api/url-check/bulk` - Analyze multiple URLs
-- `GET /api/url-check/{check_id}` - Get analysis results
-- `GET /api/url-check/{check_id}/history` - Get URL history
+- `POST /api/v1/url-check` - Analyze single URL
+- `POST /api/v1/url-check/bulk` - Analyze multiple URLs
+- `GET /api/v1/url-check/{check_id}` - Get analysis results
+- `GET /api/v1/url-check/{check_id}/history` - Get URL history
 
 ### User Management
-- `GET /api/user/profile` - Get user profile
-- `PUT /api/user/profile` - Update user profile
-- `POST /api/user/change-password` - Change password
-- `GET /api/user/api-keys` - Manage API keys
+- `GET /api/v1/user/profile` - Get user profile
+- `PUT /api/v1/user/profile` - Update user profile
+- `POST /api/v1/user/change-password` - Change password
+- `GET /api/v1/user/api-keys` - Manage API keys
 
 ### Reports
-- `POST /api/reports` - Submit threat report
-- `GET /api/reports` - List user reports
-- `PUT /api/reports/{report_id}/vote` - Vote on report
+- `POST /api/v1/reports` - Submit threat report
+- `GET /api/v1/reports` - List user reports
+- `PUT /api/v1/reports/{report_id}/vote` - Vote on report
 
 ### Health & Monitoring
-- `GET /api/health` - Basic health check
-- `GET /api/health/detailed` - Detailed health status
-- `GET /api/metrics` - Prometheus metrics
+- `GET /api/v1/health` - Basic health check
+- `GET /api/v1/health/detailed` - Detailed health status
+- `GET /api/v1/metrics` - Prometheus metrics
 
 ## Usage Examples
 
 ### Analyze a URL
 
 ```bash
-curl -X POST "http://localhost:8000/api/url-check" \
+curl -X POST "http://localhost:8000/api/v1/url-check" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -193,7 +193,7 @@ curl -X POST "http://localhost:8000/api/url-check" \
 ### Register a new user
 
 ```bash
-curl -X POST "http://localhost:8000/api/auth/register" \
+curl -X POST "http://localhost:8000/api/v1/user/register" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
@@ -239,8 +239,8 @@ curl -X POST "http://localhost:8000/api/auth/register" \
 
 ## Monitoring
 
-- **Health Checks**: `/api/health` and `/api/health/detailed`
-- **Metrics**: Prometheus metrics at `/api/metrics`
+- **Health Checks**: `/api/v1/health` and `/api/v1/health/detailed`
+- **Metrics**: Prometheus metrics at `/api/v1/metrics`
 - **Logging**: Structured JSON logs with configurable levels
 - **Database Monitoring**: Connection pool and query performance
 

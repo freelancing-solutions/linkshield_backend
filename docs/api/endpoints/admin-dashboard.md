@@ -4,7 +4,7 @@
 
 The Admin Dashboard API provides comprehensive system analytics and monitoring capabilities for LinkShield administrators. These endpoints deliver real-time insights into system performance, user behavior, security threats, and traffic patterns.
 
-**Base URL**: `/api/admin/dashboard`  
+**Base URL**: `/api/v1/admin/dashboard`  
 **Authentication**: Required (Admin or Super Admin role)  
 **Content-Type**: `application/json`
 
@@ -26,12 +26,12 @@ Authorization: Bearer <jwt_token>
 
 Retrieve comprehensive system statistics and key performance indicators.
 
-**Endpoint**: `GET /api/admin/dashboard/statistics`
+**Endpoint**: `GET /api/v1/admin/dashboard/statistics`
 
 #### Request
 
 ```http
-GET /api/admin/dashboard/statistics HTTP/1.1
+GET /api/v1/admin/dashboard/statistics HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -118,7 +118,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Retrieve detailed traffic analytics with configurable time periods.
 
-**Endpoint**: `GET /api/admin/dashboard/traffic`
+**Endpoint**: `GET /api/v1/admin/dashboard/traffic`
 
 #### Query Parameters
 
@@ -131,7 +131,7 @@ Retrieve detailed traffic analytics with configurable time periods.
 #### Request
 
 ```http
-GET /api/admin/dashboard/traffic?days=30&granularity=day HTTP/1.1
+GET /api/v1/admin/dashboard/traffic?days=30&granularity=day HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -213,7 +213,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Retrieve threat detection summary and security analytics.
 
-**Endpoint**: `GET /api/admin/dashboard/threats`
+**Endpoint**: `GET /api/v1/admin/dashboard/threats`
 
 #### Query Parameters
 
@@ -226,7 +226,7 @@ Retrieve threat detection summary and security analytics.
 #### Request
 
 ```http
-GET /api/admin/dashboard/threats?days=7&severity=high HTTP/1.1
+GET /api/v1/admin/dashboard/threats?days=7&severity=high HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -315,7 +315,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 Retrieve comprehensive user behavior analytics and insights.
 
-**Endpoint**: `GET /api/admin/dashboard/users`
+**Endpoint**: `GET /api/v1/admin/dashboard/users`
 
 #### Query Parameters
 
@@ -328,7 +328,7 @@ Retrieve comprehensive user behavior analytics and insights.
 #### Request
 
 ```http
-GET /api/admin/dashboard/users?days=30&segment=active HTTP/1.1
+GET /api/v1/admin/dashboard/users?days=30&segment=active HTTP/1.1
 Host: api.linkshield.com
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
@@ -482,7 +482,7 @@ Last-Modified: Mon, 15 Jan 2024 10:25:00 GMT
 #### Get System Statistics
 
 ```bash
-curl -X GET "https://api.linkshield.com/api/admin/dashboard/statistics" \
+curl -X GET "https://api.linkshield.com/api/v1/admin/dashboard/statistics" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json"
 ```
@@ -490,7 +490,7 @@ curl -X GET "https://api.linkshield.com/api/admin/dashboard/statistics" \
 #### Get Traffic Analytics for Last 7 Days
 
 ```bash
-curl -X GET "https://api.linkshield.com/api/admin/dashboard/traffic?days=7&granularity=day" \
+curl -X GET "https://api.linkshield.com/api/v1/admin/dashboard/traffic?days=7&granularity=day" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json"
 ```
@@ -498,7 +498,7 @@ curl -X GET "https://api.linkshield.com/api/admin/dashboard/traffic?days=7&granu
 #### Get High Severity Threats
 
 ```bash
-curl -X GET "https://api.linkshield.com/api/admin/dashboard/threats?severity=high&days=7" \
+curl -X GET "https://api.linkshield.com/api/v1/admin/dashboard/threats?severity=high&days=7" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json"
 ```
@@ -508,7 +508,7 @@ curl -X GET "https://api.linkshield.com/api/admin/dashboard/threats?severity=hig
 ```javascript
 // Get dashboard statistics
 const getStatistics = async () => {
-  const response = await fetch('/api/admin/dashboard/statistics', {
+  const response = await fetch('/api/v1/admin/dashboard/statistics', {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'
@@ -525,7 +525,7 @@ const getStatistics = async () => {
 // Get traffic analytics with parameters
 const getTrafficAnalytics = async (days = 7, granularity = 'day') => {
   const params = new URLSearchParams({ days, granularity });
-  const response = await fetch(`/api/admin/dashboard/traffic?${params}`, {
+  const response = await fetch(`/api/v1/admin/dashboard/traffic?${params}`, {
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'

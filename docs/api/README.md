@@ -51,7 +51,7 @@ LinkShield API supports two authentication methods:
 
 ```bash
 # Register a new user
-curl -X POST "http://localhost:8000/api/v1/auth/register" \
+curl -X POST "http://localhost:8000/api/v1/user/register" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
@@ -60,7 +60,7 @@ curl -X POST "http://localhost:8000/api/v1/auth/register" \
   }'
 
 # Login and get JWT token
-curl -X POST "http://localhost:8000/api/v1/auth/login" \
+curl -X POST "http://localhost:8000/api/v1/user/login" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
