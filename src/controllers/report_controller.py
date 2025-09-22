@@ -191,6 +191,7 @@ class ReportController(BaseController):
                     # Use traditional background tasks
                     background_tasks.add_task(self._analyze_reported_url, str(report.id), normalized_url)
                 
+                # TODO - there may be a problem here or bug where only HIGH Priority tasks are added
                 if priority == ReportPriority.HIGH:
                     if callback_url:
                         # High priority moderation notification with webhook
@@ -1285,12 +1286,16 @@ class ReportController(BaseController):
             url: URL to analyze
         """
         try:
-            # This would integrate with the URL analysis service
+            # TODO - This would integrate with the URL analysis service
             # For now, just log the analysis request
+            # TODO - Needs to Revise Implementation
+            scan_types = [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
+            report = self.url_analysis_service.analyze_url(url=url,scan_types=scan_types)
             self.log_operation(
                 "URL analysis requested",
                 details={"report_id": report_id, "url": url}
             )
+            return report
         except Exception as e:
             self.logger.error(f"URL analysis failed for report {report_id}: {str(e)}")
     
@@ -1310,6 +1315,7 @@ class ReportController(BaseController):
         try:
             # This would send notifications to the moderation team
             # For now, just log the notification
+            # TODO - use Emailer Service to Send Report
             self.log_operation(
                 "Moderation team notified",
                 details={
