@@ -6,32 +6,33 @@ and bulk processing operations.
 """
 
 import uuid
-import aiohttp
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
-from fastapi import HTTPException, status, BackgroundTasks
 
-from sqlalchemy import and_,  desc, func, select
+import aiohttp
+from fastapi import HTTPException, status, BackgroundTasks
+from sqlalchemy import and_, desc, func, select
+
+from src.authentication.auth_service import AuthService
 from src.controllers.base_controller import BaseController
+from src.models.analysis_results import (
+    AnalysisResults, convert_legacy_analysis_results,
+    convert_analysis_results_to_dict_for_storage
+)
 from src.models.url_check import (
     URLCheck, ScanResult, URLReputation,
     CheckStatus, ThreatLevel, ScanType
 )
-from src.models.analysis_results import (
-    AnalysisResults, ProviderScanResult, convert_legacy_analysis_results,
-    convert_analysis_results_to_dict_for_storage
-)
 from src.models.user import User, UserRole
-from src.services.url_analysis_service import (
-    URLAnalysisService, URLAnalysisError, InvalidURLError
-)
 from src.services.ai_service import AIService
 from src.services.email_service import EmailService
 from src.services.security_service import (
-    SecurityService, AuthenticationError, RateLimitError
+    SecurityService
 )
-from src.authentication.auth_service import AuthService
+from src.services.url_analysis_service import (
+    URLAnalysisService
+)
 from src.utils import utc_datetime
 
 
@@ -305,7 +306,7 @@ class URLCheckController(BaseController):
                 return url_checks
             
         except Exception as e:
-            raise self.handle_database_error(str(e), "bulk URL check creation")
+            raise self.handle_database_error(e, "bulk URL check creation")
     
     async def get_url_check(
         self,
@@ -775,7 +776,7 @@ class URLCheckController(BaseController):
                 self._create_scan_results(session=session, url_check_id=url_check.id, analysis_results=analysis_results)
                 
                 # Update domain reputation based on analysis
-                await self._update_domain_reputation_from_analysis(
+                self._update_domain_reputation_from_analysis(
                     session=session, domain=domain, analysis_results=analysis_results,
                     reputation_data=reputation_data
                 )

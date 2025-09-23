@@ -1,23 +1,25 @@
+#!/usr/bin/env python3
 """
-Data classes for URL analysis results with strict typing.
-These classes work alongside existing models to provide type safety.
+Pydantic models for URL analysis results with strict typing.
+These models work alongside existing SQLAlchemy models to provide type safety.
 """
-
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 from enum import Enum
-import uuid
+from typing import Any, Dict, List, Optional
+from uuid import UUID
 
-# Import existing models for conversion - use local imports to avoid circular dependencies
+from pydantic import BaseModel, Field
+
+from src.utils import utc_datetime
+
+
+# Lazy imports to avoid circular dependencies
 def get_url_check_models():
-    """Lazy import to avoid circular dependencies."""
     from .url_check import ThreatLevel, ScanType, ScanResult, URLCheck
     return ThreatLevel, ScanType, ScanResult, URLCheck
 
 
 class ThreatType(str, Enum):
-    """Standardized threat types across providers."""
     MALWARE = "malware"
     PHISHING = "phishing"
     SOCIAL_ENGINEERING = "social_engineering"
@@ -28,289 +30,168 @@ class ThreatType(str, Enum):
     UNKNOWN = "unknown"
 
 
-@dataclass
-class ProviderMetadata:
-    """Metadata for provider scan results."""
+# ------------------------------------------------------------------
+# Pydantic equivalents of former @dataclasses
+# ------------------------------------------------------------------
+class ProviderMetadata(BaseModel):
     positives: Optional[int] = None
     total: Optional[int] = None
     scan_date: Optional[str] = None
     matches_count: Optional[int] = None
-    additional_data: Dict[str, Any] = field(default_factory=dict)
+    additional_data: Dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = "forbid"  # mimic dataclass strictness
 
 
-@dataclass
-class ProviderScanResult:
-    """Individual scan result from a specific provider."""
+class ProviderScanResult(BaseModel):
     provider: str
     threat_detected: bool
-    threat_types: List[str] = field(default_factory=list)
+    threat_types: List[str] = Field(default_factory=list)
     confidence_score: float = 0.0
     raw_response: Optional[Dict[str, Any]] = None
     metadata: Optional[ProviderMetadata] = None
     error: Optional[str] = None
-    
+
+    # --- backward-compat helpers ---
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for backward compatibility."""
-        return {
-            "provider": self.provider,
-            "threat_detected": self.threat_detected,
-            "threat_types": self.threat_types,
-            "confidence_score": self.confidence_score,
-            "raw_response": self.raw_response,
-            "metadata": self.metadata.__dict__ if self.metadata else None,
-            "error": self.error
-        }
-    
+        return self.model_dump()
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ProviderScanResult":
-        """Create from dictionary for backward compatibility."""
-        metadata = None
-        if data.get("metadata"):
-            metadata = ProviderMetadata(**data["metadata"])
-        
-        return cls(
-            provider=data.get("provider", ""),
-            threat_detected=data.get("threat_detected", False),
-            threat_types=data.get("threat_types", []),
-            confidence_score=data.get("confidence_score", 0.0),
-            raw_response=data.get("raw_response"),
-            metadata=metadata,
-            error=data.get("error")
-        )
+    def from_dict(cls, data: Dict[str, Any]) -> 'ProviderScanResult':
+        return cls(**data)
 
 
-@dataclass
-class AnalysisResults:
-    """Aggregated analysis results from all providers."""
+class AnalysisResults(BaseModel):
     normalized_url: str
     domain: str
     threat_level: Optional[str] = None
     confidence_score: float = 0.0
-    scan_results: List[ProviderScanResult] = field(default_factory=list)
-    scan_types: List[str] = field(default_factory=list)
-    analysis_timestamp: datetime = field(default_factory=datetime.utcnow)
-    
+    scan_results: List[ProviderScanResult] = Field(default_factory=list)
+    scan_types: List[str] = Field(default_factory=list)
+    analysis_timestamp: datetime = Field(default_factory=utc_datetime)
+
+    # --- backward-compat helpers ---
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for backward compatibility."""
-        return {
-            "normalized_url": self.normalized_url,
-            "domain": self.domain,
-            "threat_level": self.threat_level,
-            "confidence_score": self.confidence_score,
-            "scan_results": [result.to_dict() for result in self.scan_results],
-            "scan_types": self.scan_types,
-            "analysis_timestamp": self.analysis_timestamp.isoformat()
-        }
-    
+        return self.model_dump()
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "AnalysisResults":
-        """Create from dictionary for backward compatibility."""
-        scan_results = []
-        for scan_data in data.get("scan_results", []):
-            if isinstance(scan_data, dict):
-                # Handle both old format (nested dict) and new format
-                if "provider" in scan_data:
-                    scan_results.append(ProviderScanResult.from_dict(scan_data))
-                else:
-                    # Handle old nested format like {"virustotal": {...}}
-                    for provider_name, provider_data in scan_data.items():
-                        if isinstance(provider_data, dict):
-                            provider_data["provider"] = provider_name
-                            scan_results.append(ProviderScanResult.from_dict(provider_data))
-        
+    def from_dict(cls, data: Dict[str, Any]) -> 'AnalysisResults':
+        # Handle nested Pydantic models explicitly
         return cls(
             normalized_url=data.get("normalized_url", ""),
             domain=data.get("domain", ""),
             threat_level=data.get("threat_level"),
             confidence_score=data.get("confidence_score", 0.0),
-            scan_results=scan_results,
+            scan_results=[ProviderScanResult.from_dict(sr) for sr in data.get("scan_results", [])],
             scan_types=data.get("scan_types", []),
-            analysis_timestamp=datetime.fromisoformat(data["analysis_timestamp"]) if data.get("analysis_timestamp") else datetime.utcnow()
+            analysis_timestamp=data.get("analysis_timestamp") or utc_datetime(),
         )
-    
+
+    # --- business helpers ---
     def get_provider_result(self, provider_name: str) -> Optional[ProviderScanResult]:
-        """Get result for a specific provider."""
-        for result in self.scan_results:
-            if result.provider == provider_name:
-                return result
-        return None
-    
+        return next((r for r in self.scan_results if r.provider == provider_name), None)
+
     def get_threat_types(self) -> List[str]:
-        """Get all unique threat types detected."""
-        threat_types = set()
-        for result in self.scan_results:
-            threat_types.update(result.threat_types)
-        return list(threat_types)
-    
+        return list({tt for r in self.scan_results for tt in r.threat_types})
+
     def has_threat_detected(self) -> bool:
-        """Check if any provider detected a threat."""
-        return any(result.threat_detected for result in self.scan_results)
+        return any(r.threat_detected for r in self.scan_results)
 
 
-@dataclass
-class ReputationUpdate:
-    """Data class for domain reputation updates."""
+class ReputationUpdate(BaseModel):
     domain: str
     reputation_score: int
     total_scans: int
     malicious_count: int
-    last_scan_date: datetime = field(default_factory=datetime.utcnow)
-    
+    last_scan_date: datetime = Field(default_factory=utc_datetime)
+
+    # --- backward-compat helpers ---
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for backward compatibility."""
-        return {
-            "domain": self.domain,
-            "reputation_score": self.reputation_score,
-            "total_scans": self.total_scans,
-            "malicious_count": self.malicious_count,
-            "last_scan_date": self.last_scan_date.isoformat()
-        }
-    
+        return self.model_dump()
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ReputationUpdate":
-        """Create from dictionary for backward compatibility."""
-        return cls(
-            domain=data.get("domain", ""),
-            reputation_score=data.get("reputation_score", 50),
-            total_scans=data.get("total_scans", 0),
-            malicious_count=data.get("malicious_count", 0),
-            last_scan_date=datetime.fromisoformat(data["last_scan_date"]) if data.get("last_scan_date") else datetime.utcnow()
-        )
+    def from_dict(cls, data: Dict[str, Any]) -> 'ReputationUpdate':
+        return cls(**data)
 
 
-# Utility functions for conversion between old and new formats
+# ------------------------------------------------------------------
+# Utility functions (unchanged signatures, but use Pydantic models)
+# ------------------------------------------------------------------
 def convert_legacy_analysis_results(legacy_data: Dict[str, Any]) -> AnalysisResults:
     """
     Convert legacy dictionary-based analysis results to typed AnalysisResults.
-    This handles the old format where scan results were nested dictionaries.
+    Handles old nested formats like {"virustotal": {...}}.
     """
-    # Extract basic information
-    normalized_url = legacy_data.get("normalized_url", "")
-    domain = legacy_data.get("domain", "")
-    threat_level = legacy_data.get("threat_level")
-    confidence_score = legacy_data.get("confidence_score", 0.0)
-    scan_types = legacy_data.get("scan_types", [])
-    
-    # Convert scan results from old format to new format
     scan_results = []
-    analysis_results = legacy_data.get("analysis_results", {})
-    
-    # Handle different possible formats of scan results
-    if isinstance(analysis_results, dict):
-        for provider_name, provider_data in analysis_results.items():
-            if isinstance(provider_data, dict) and "provider" in provider_data:
-                # New format already
+    raw_scan = legacy_data.get("analysis_results", {})
+
+    if isinstance(raw_scan, dict):
+        for provider_name, provider_data in raw_scan.items():
+            if isinstance(provider_data, dict):
+                provider_data.setdefault("provider", provider_name)
                 scan_results.append(ProviderScanResult.from_dict(provider_data))
-            elif isinstance(provider_data, dict):
-                # Old nested format
-                provider_data["provider"] = provider_name
-                scan_results.append(ProviderScanResult.from_dict(provider_data))
-    
-    # Also check for scan_results key directly
-    direct_scan_results = legacy_data.get("scan_results", [])
-    for scan_data in direct_scan_results:
-        if isinstance(scan_data, dict):
-            scan_results.append(ProviderScanResult.from_dict(scan_data))
-    
+
+    direct_list = legacy_data.get("scan_results", [])
+    for item in direct_list:
+        if isinstance(item, dict):
+            scan_results.append(ProviderScanResult.from_dict(item))
+
     return AnalysisResults(
-        normalized_url=normalized_url,
-        domain=domain,
-        threat_level=threat_level,
-        confidence_score=confidence_score,
+        normalized_url=legacy_data.get("normalized_url", ""),
+        domain=legacy_data.get("domain", ""),
+        threat_level=legacy_data.get("threat_level"),
+        confidence_score=legacy_data.get("confidence_score", 0.0),
         scan_results=scan_results,
-        scan_types=scan_types
+        scan_types=legacy_data.get("scan_types", []),
+        analysis_timestamp=legacy_data.get("analysis_timestamp") or utc_datetime()
     )
 
 
 def create_scan_result_model(analysis_results: AnalysisResults, url_check_id: str) -> List[Dict[str, Any]]:
-    """
-    Create ScanResult model instances from AnalysisResults.
-    This is used to populate the database with scan results.
-    """
-    scan_result_data = []
-    
-    for provider_result in analysis_results.scan_results:
-        data = {
+    """Return plain dicts ready for DB insertion."""
+    return [
+        {
             "url_check_id": url_check_id,
-            "scan_type": provider_result.provider,  # Map provider to scan_type
-            "threat_types": provider_result.threat_types,
-            "confidence_score": provider_result.confidence_score,
-            "created_at": analysis_results.analysis_timestamp
+            "scan_type": result.provider,
+            "threat_types": result.threat_types,
+            "confidence_score": result.confidence_score,
+            "created_at": analysis_results.analysis_timestamp,
         }
-        scan_result_data.append(data)
-    
-    return scan_result_data
+        for result in analysis_results.scan_results
+    ]
 
 
-def convert_analysis_results_to_scan_results(analysis_results: AnalysisResults, url_check_id: uuid.UUID):
-    """Convert AnalysisResults to a list of ScanResult database models.
-    
-    Args:
-        analysis_results: AnalysisResults object to convert
-        url_check_id: ID of the URLCheck to associate with scan results
-        
-    Returns:
-        List of ScanResult database models
-    """
+def convert_analysis_results_to_scan_results(analysis_results: AnalysisResults, url_check_id: UUID):
+    """Convert AnalysisResults to a list of ScanResult **ORM instances**."""
     _, _, ScanResult, _ = get_url_check_models()
-    
-    scan_results = []
-    
-    for provider_result in analysis_results.scan_results:
-        scan_result = ScanResult(
-            id=uuid.uuid4(),
+    return [
+        ScanResult(
+            id=UUID(int=i),
             url_check_id=url_check_id,
-            scan_type=provider_result.provider,
-            threat_types=provider_result.threat_types,
-            confidence_score=provider_result.confidence_score,
-            created_at=datetime.utcnow()
+            scan_type=result.provider,
+            threat_types=result.threat_types,
+            confidence_score=result.confidence_score,
+            created_at=utc_datetime(),
         )
-        scan_results.append(scan_result)
-    
-    return scan_results
+        for i, result in enumerate(analysis_results.scan_results)
+    ]
 
 
 def convert_analysis_results_to_dict_for_storage(analysis_results: AnalysisResults) -> Dict[str, Any]:
-    """Convert AnalysisResults to a dictionary suitable for database storage.
-    
-    Args:
-        analysis_results: AnalysisResults object to convert
-        
-    Returns:
-        Dictionary containing analysis results data for storage
-    """
+    """Return a dict safe for JSONB storage in PostgreSQL."""
     return {
-        'threat_level': analysis_results.threat_level.value if analysis_results.threat_level else None,
-        'confidence_score': analysis_results.confidence_score,
-        'scan_results': [
-            {
-                'scan_type': result.provider,
-                'provider': result.provider,
-                'threat_detected': result.threat_detected,
-                'threat_types': result.threat_types,
-                'confidence_score': result.confidence_score,
-                'metadata': result.metadata.to_dict() if result.metadata else None
-            }
-            for result in analysis_results.scan_results
-        ],
-        'reputation_data': analysis_results.reputation_data.to_dict() if hasattr(analysis_results, 'reputation_data') and analysis_results.reputation_data else None
+        "threat_level": analysis_results.threat_level,
+        "confidence_score": analysis_results.confidence_score,
+        "scan_results": [r.model_dump() for r in analysis_results.scan_results],
+        "reputation_data": analysis_results.reputation_data.model_dump() if hasattr(analysis_results, "reputation_data") and analysis_results.reputation_data else None,
     }
 
 
 def create_analysis_results_from_url_check(url_check) -> Optional[AnalysisResults]:
-    """Create AnalysisResults from a URLCheck database model.
-    
-    Args:
-        url_check: URLCheck database model to convert
-        
-    Returns:
-        AnalysisResults object or None if analysis_results is empty
-    """
+    """Hydrate AnalysisResults from a URLCheck ORM instance."""
     if not url_check.analysis_results:
         return None
-    
-    # If analysis_results is already a dict, convert it to AnalysisResults
     if isinstance(url_check.analysis_results, dict):
         return convert_legacy_analysis_results(url_check.analysis_results)
-    
     return None

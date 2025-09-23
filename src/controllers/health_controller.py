@@ -5,17 +5,16 @@ LinkShield Backend Health Controller
 Controller for handling health check business logic including system monitoring,
 database connectivity checks, and external service availability validation.
 """
-
+import psutil
 import time
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
+
 from fastapi import HTTPException
-from loguru import logger
 from pydantic import BaseModel
 
-from src.controllers.base_controller import BaseController
 from src.config.database import check_database_health
-from src.config.settings import get_settings
+from src.controllers.base_controller import BaseController
 
 
 # --- Response Models ---
@@ -101,7 +100,7 @@ class HealthController(BaseController):
                     status="healthy",
                     response_time=0.001,
                     message="API is running"
-                ).dict()
+                ).model_dump()
             }
             return HealthResponse(
                 status="healthy",
@@ -132,7 +131,7 @@ class HealthController(BaseController):
                     "version": self.settings.APP_VERSION,
                     "environment": self.settings.ENVIRONMENT
                 }
-            ).dict()
+            ).model_dump()
 
             db_check = await self._check_database_health()
             checks["database"] = db_check
@@ -213,7 +212,7 @@ class HealthController(BaseController):
                 "version": self.settings.APP_VERSION
             }
             try:
-                import psutil
+
                 metrics.update({
                     "memory_usage": {
                         "percent": psutil.virtual_memory().percent,

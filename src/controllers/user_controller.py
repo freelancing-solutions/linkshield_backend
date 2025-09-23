@@ -7,23 +7,24 @@ Public methods return typed models and use keyword-only arguments.
 """
 
 from __future__ import annotations
-import uuid
-import secrets
+
 import hashlib
+import secrets
+import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, List, Optional, Tuple, Any as AnyType
+from typing import List, Optional, Tuple, Any as AnyType
 
 from fastapi import HTTPException, status, BackgroundTasks, Request
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel
 from sqlalchemy import and_, select, update
 from sqlalchemy.exc import IntegrityError
 
-from src.controllers.base_controller import BaseController
-from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken
-from src.models.email import EmailRequest, EmailType
-from src.services.security_service import SecurityService
 from src.authentication.auth_service import AuthService
+from src.controllers.base_controller import BaseController
+from src.models.email import EmailRequest, EmailType
+from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken
 from src.services.email_service import EmailService
+from src.services.security_service import SecurityService
 from src.utils import utc_datetime
 
 
