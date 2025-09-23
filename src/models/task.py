@@ -8,16 +8,14 @@ Provides comprehensive task management with status tracking, metadata, and relat
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from uuid import uuid4
 
 from sqlalchemy import Column, String, DateTime, Text, Integer, Boolean, JSON, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
 
 from src.config.database import Base
-
 
 
 class TaskStatus(str, Enum):
@@ -47,6 +45,7 @@ class TaskType(str, Enum):
     CACHE_REFRESH = "cache_refresh"
     BACKUP_OPERATION = "backup_operation"
     ADMIN_OPERATION = "admin_operation"
+    NOTIFY_MODERATION = "notify_moderation"
 
 
 class TaskPriority(str, Enum):

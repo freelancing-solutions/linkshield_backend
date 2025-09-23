@@ -6,9 +6,10 @@ SQLAlchemy models for user reports, feedback, and community-driven threat intell
 Includes user reports, admin reviews, and report statistics.
 """
 
+import enum
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict
 
 from sqlalchemy import (
     Boolean,
@@ -27,7 +28,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from src.config.database import Base
-import enum
+
 
 class ReportType(enum.Enum):
     """
@@ -64,6 +65,20 @@ class ReportPriority(enum.Enum):
     HIGH = "high"
     CRITICAL = "critical"
 
+
+class VoteType(enum.Enum):
+    """
+    Enumeration for different types of votes that can be cast on reports.
+
+    This enum defines the various voting options available to users when
+    evaluating the helpfulness and accuracy of reports.
+    """
+    HELPFUL = "helpful"
+    NOT_HELPFUL = "not_helpful"
+    ACCURATE = "accurate"
+    INACCURATE = "inaccurate"
+    SPAM = "spam"
+    DUPLICATE = "duplicate"
 
 class Report(Base):
     """
@@ -240,6 +255,7 @@ class ReportVote(Base):
     # Vote information
     is_helpful = Column(Boolean, nullable=False)
     comment = Column(Text, nullable=True)
+    vote_type = Column(Enum(VoteType),default=VoteType.HELPFUL, nullable=False, index=True)
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -417,17 +433,3 @@ class ReportStatistics(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
-
-class VoteType(enum.Enum):
-    """
-    Enumeration for different types of votes that can be cast on reports.
-    
-    This enum defines the various voting options available to users when
-    evaluating the helpfulness and accuracy of reports.
-    """
-    HELPFUL = "helpful"
-    NOT_HELPFUL = "not_helpful"
-    ACCURATE = "accurate"
-    INACCURATE = "inaccurate"
-    SPAM = "spam"
-    DUPLICATE = "duplicate"

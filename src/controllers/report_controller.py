@@ -6,29 +6,25 @@ statistics, and template management.
 """
 
 import uuid
-import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, status, BackgroundTasks
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc, func, select
+from sqlalchemy import and_, desc, func, select
 
-from pydantic import ValidationError
-
+from src.authentication.auth_service import AuthService
 from src.controllers.base_controller import BaseController
 from src.models.report import (
-    Report, ReportVote, ReportTemplate,  ReportType, ReportStatus, ReportPriority, VoteType
+    Report, ReportVote, ReportTemplate, ReportType, ReportStatus, ReportPriority, VoteType
 )
-from src.models.user import User, UserRole
-from src.models.url_check import  ScanType
 from src.models.task import TaskStatus, TaskType, TaskPriority
-from src.services.security_service import SecurityService
-from src.authentication.auth_service import AuthService
+from src.models.url_check import ScanType
+from src.models.user import User, UserRole
 from src.services.email_service import EmailService
-
+from src.services.security_service import SecurityService
 from src.utils import utc_datetime
+
 
 class ReportController(BaseController):
     """Controller for report management operations.
@@ -58,7 +54,8 @@ class ReportController(BaseController):
         super().__init__(security_service, auth_service, email_service)
         self.max_reports_per_hour = 10  # Rate limit for report creation
         self.max_votes_per_hour = 50   # Rate limit for voting
-    
+        self._ALLOWED_SORT = {"created_at", "updated_at", "priority", "status", "report_type"}
+
     async def create_report(
         self,
         url: str,
@@ -119,7 +116,7 @@ class ReportController(BaseController):
         
         try:
             # Create report using context manager
-            async with self.get_db_session() as db:
+            async with self.get_db_session() as session:
                 # Create report
                 report = Report(
                     id=uuid.uuid4(),
@@ -139,9 +136,9 @@ class ReportController(BaseController):
                     updated_at=utc_datetime()
                 )
                 
-                db.add(report)
+                session.add(report)
                 # Commit handled by context manager
-                db.refresh(report)
+                session.refresh(report)
                 
                 # Log the operation
                 self.log_operation(
@@ -198,7 +195,7 @@ class ReportController(BaseController):
                         # High priority moderation notification with webhook
                         await self.add_background_task_with_tracking(
                             background_tasks=background_tasks,
-                            task_type=TaskType.NOTIFICATION,
+                            task_type=TaskType.NOTIFY_MODERATION,
                             task_func=self._notify_moderation_team_async,
                             task_data={
                                 "report_id": str(report.id),
@@ -228,123 +225,128 @@ class ReportController(BaseController):
             
         except Exception as e:
             raise self.handle_database_error(e, "report creation")
-    
+
+    from sqlalchemy import func, desc
+    from sqlalchemy.sql import select
+
+    # ------------------------------------------------------------------
+    # inside your report-controller class
+    # ------------------------------------------------------------------
+
+
+
     async def list_reports(
-        self,
-        user: Optional[User] = None,
-        report_type: Optional[ReportType] = None,
-        status: Optional[ReportStatus] = None,
-        priority: Optional[ReportPriority] = None,
-        domain: Optional[str] = None,
-        tag: Optional[str] = None,
-        reporter_ip: Optional[str] = None,
-        assignee_id: Optional[uuid.UUID] = None,
-        created_after: Optional[datetime] = None,
-        created_before: Optional[datetime] = None,
-        sort_by: str = "created_at",
-        sort_order: str = "desc",
-        page: int = 1,
-        page_size: int = 20
+            self,
+            *,
+            user: Optional[User] = None,
+            report_type: Optional[ReportType] = None,
+            status: Optional[ReportStatus] = None,
+            priority: Optional[ReportPriority] = None,
+            domain: Optional[str] = None,
+            tag: Optional[str] = None,
+            reporter_ip: Optional[str] = None,
+            assignee_id: Optional[uuid.UUID] = None,
+            created_after: Optional[datetime] = None,
+            created_before: Optional[datetime] = None,
+            sort_by: str = "created_at",
+            sort_order: str = "desc",
+            page: int = 1,
+            page_size: int = 20,
     ) -> Tuple[List[Report], int, Dict[str, Any]]:
-        """List reports with filtering and pagination.
-        
-        Args:
-            user: Current user (for vote information)
-            report_type: Filter by report type
-            status: Filter by status
-            priority: Filter by priority
-            domain: Filter by domain
-            tag: Filter by tag
-            reporter_id: Filter by reporter
-            assignee_id: Filter by assignee
-            created_after: Filter by creation date
-            created_before: Filter by creation date
-            sort_by: Sort field
-            sort_order: Sort order (asc/desc)
-            page: Page number
-            page_size: Items per page
-            
-        Returns:
-            Tuple: (reports, total_count, filters_applied)
-            :param assignee_id:
-            :param page_size:
-            :param page:
-            :param sort_order:
-            :param sort_by:
-            :param created_before:
-            :param created_after:
-            :param tag:
-            :param report_type:
-            :param domain:
-            :param priority:
-            :param status:
-            :param user:
-            :param reporter_ip:
         """
-        # Validate pagination
+        List / filter reports with pagination.
+
+        Parameters
+        ----------
+        user : User | None
+            authenticated user (for vote information)
+        report_type, status, priority : Enum | None
+            exact-match filters
+        domain : str | None
+            substring match (ILIKE)
+        tag : str | None
+            single tag inside JSONB list
+        reporter_ip : str | None
+            exact match
+        assignee_id : UUID | None
+            exact match on `user_id` column
+        created_after, created_before : datetime | None
+            date-range filter (inclusive)
+        sort_by : str
+            column name (whitelisted)
+        sort_order : str
+            "asc" | "desc"
+        page : int
+            1-based page number
+        page_size : int
+            items per page (max 200)
+
+        Returns
+        -------
+        (reports, total_count, filters_applied)
+        """
+        # --- sanitise input -------------------------------------------------
+        if sort_by not in self._ALLOWED_SORT:
+            sort_by = "created_at"
+        sort_desc = (sort_order or "").lower() == "desc"
+
         skip, limit = self.validate_pagination(page - 1, page_size)
-        
-        async with self.get_db_session() as db:
-            # Build query using async ORM API instead of sync db.query
-            
-            query = select(Report)
-            filters_applied = {}
-            
-            # Apply filters
-            if report_type:
-                query = query.where(Report.report_type == report_type)
-                filters_applied["report_type"] = report_type.value
-            
-            if status:
-                query = query.where(Report.status == status)
-                filters_applied["status"] = status.value
-            
-            if priority:
-                query = query.where(Report.priority == priority)
-                filters_applied["priority"] = priority.value
-            
-            if domain:
-                query = query.where(Report.domain.ilike(f"%{domain}%"))
-                filters_applied["domain"] = domain
-            
+
+        # --- build query ----------------------------------------------------
+        filters_applied: Dict[str, Any] = {}
+
+        async with self.get_db_session() as session:
+            stmt = select(Report)
+
+            def _apply(col, val, key=None):
+                if val is not None:
+                    nonlocal stmt
+                    stmt = stmt.where(col == val)
+                    filters_applied[key or col.name] = str(val)
+
+            def _apply_like(col, val, key=None):
+                if val:
+                    nonlocal stmt
+                    stmt = stmt.where(col.ilike(f"%{val}%"))
+                    filters_applied[key or col.name] = val
+
+            _apply(Report.report_type, report_type)
+            _apply(Report.status, status)
+            _apply(Report.priority, priority)
+            _apply_like(Report.domain, domain)
+            _apply(Report.reporter_ip, reporter_ip)
+            _apply(Report.user_id, assignee_id, "assignee_id")
+
             if tag:
-                query = query.filter(Report.tags.contains([tag]))
+                stmt = stmt.where(Report.tags.contains([tag]))
                 filters_applied["tag"] = tag
-            
-            if reporter_ip:
-                query = query.filter(Report.reporter_ip == reporter_ip)
-                filters_applied["reporter_ip"] = str(reporter_ip)
-            
-            if assignee_id:
-                query = query.filter(Report.user_id == assignee_id)
-                filters_applied["assignee_id"] = str(assignee_id)
-            
+
             if created_after:
-                query = query.filter(Report.created_at >= created_after)
+                stmt = stmt.where(Report.created_at >= created_after)
                 filters_applied["created_after"] = created_after.isoformat()
-            
+
             if created_before:
-                query = query.filter(Report.created_at <= created_before)
+                stmt = stmt.where(Report.created_at <= created_before)
                 filters_applied["created_before"] = created_before.isoformat()
-            
-            # Apply sorting
-            if hasattr(Report, sort_by):
-                sort_column = getattr(Report, sort_by)
-                if sort_order.lower() == "desc":
-                    query = query.order_by(desc(sort_column))
-                else:
-                    query = query.order_by(sort_column)
-            
-            # Get total count
-            total_count = query.count()
-            
-            # Apply pagination
-            reports = query.offset(skip).limit(limit).all()
-            
-            # Add user votes if user is authenticated
+
+            # --- total count (async) ----------------------------------------
+            count_stmt = select(func.count()).select_from(stmt.subquery())
+            total_count = (await session.execute(count_stmt)).scalar()
+
+            # --- sorting -----------------------------------------------------
+            sort_col = getattr(Report, sort_by)
+            stmt = stmt.order_by(desc(sort_col) if sort_desc else sort_col)
+
+            # --- pagination --------------------------------------------------
+            stmt = stmt.offset(skip).limit(limit)
+
+            result = await session.execute(stmt)
+            reports = result.scalars().all()
+
+            # --- enrich ------------------------------------------------------
             if user:
                 await self._add_user_votes_to_reports(reports, user.id)
-            
+
             self.log_operation(
                 "Reports listed",
                 user_id=user.id if user else None,
@@ -352,12 +354,12 @@ class ReportController(BaseController):
                     "filters": filters_applied,
                     "total_count": total_count,
                     "page": page,
-                    "page_size": page_size
-                }
+                    "page_size": page_size,
+                },
             )
-            
-            return reports, total_count, filters_applied
-    
+
+            return list(reports), total_count, filters_applied
+
     async def get_report_by_id(
         self,
         report_id: uuid.UUID,
@@ -372,11 +374,11 @@ class ReportController(BaseController):
         Raises:
             HTTPException: If report not found
         """
-        async with self.get_db_session() as db:
-            # Use async ORM API instead of sync db.query
+        async with self.get_db_session() as session:
+            # Use async ORM API instead of sync session.query
             
             stmt = select(Report).where(Report.id == report_id)
-            result = await db.execute(stmt)
+            result = await session.execute(stmt)
             report = result.scalar_one_or_none()
             
             if not report:
@@ -427,7 +429,7 @@ class ReportController(BaseController):
         report = await self.get_report_by_id(report_id)
         
         # Check permissions
-        if report.reporter_id != user.id and user.role != UserRole.ADMIN:
+        if report.user_id != user.id and user.role != UserRole.ADMIN:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Can only update your own reports"
@@ -439,7 +441,7 @@ class ReportController(BaseController):
         
         try:
             # Update fields using context manager
-            async with self.get_db_session() as db:
+            async with self.get_db_session() as session:
                 # Update fields
                 if title is not None:
                     report.title = title.strip()
@@ -457,7 +459,7 @@ class ReportController(BaseController):
                 report.updated_at = utc_datetime()
                 
                 # Commit handled by context manager
-                db.refresh(report)
+                session.refresh(report)
                 
                 self.log_operation(
                     "Report updated",
@@ -504,7 +506,7 @@ class ReportController(BaseController):
         report = await self.get_report_by_id(report_id)
         
         # Check if user is trying to vote on their own report
-        if report.reporter_id == user.id:
+        if report.user_id == user.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot vote on your own report"
@@ -512,9 +514,9 @@ class ReportController(BaseController):
         
         try:
             # Vote on report using context manager
-            async with self.get_db_session() as db:
+            async with self.get_db_session() as session:
                 # Check for existing vote
-                existing_vote = db.query(ReportVote).filter(
+                existing_vote = session.query(ReportVote).filter(
                     and_(ReportVote.report_id == report_id, ReportVote.user_id == user.id)
                 ).first()
                 
@@ -535,13 +537,13 @@ class ReportController(BaseController):
                         created_at=utc_datetime(),
                         updated_at=utc_datetime()
                     )
-                    db.add(vote)
+                    session.add(vote)
                 
                 # Update report vote counts
                 await self._update_report_vote_counts(report_id)
                 
-                db.commit()
-                db.refresh(vote)
+                session.commit()
+                session.refresh(vote)
                 
                 self.log_operation(
                     "Vote cast on report",
@@ -571,8 +573,8 @@ class ReportController(BaseController):
         Raises:
             HTTPException: If vote not found
         """
-        async with self.get_db_session() as db:
-            vote = db.query(ReportVote).filter(
+        async with self.get_db_session() as session:
+            vote = session.query(ReportVote).filter(
                 and_(ReportVote.report_id == report_id, ReportVote.user_id == user.id)
             ).first()
             
@@ -583,9 +585,9 @@ class ReportController(BaseController):
                 )
             
             try:
-                db.delete(vote)
+                session.delete(vote)
                 await self._update_report_vote_counts(report_id)
-                db.commit()
+                session.commit()
                 
                 self.log_operation(
                     "Vote removed from report",
@@ -594,7 +596,7 @@ class ReportController(BaseController):
                 )
                 
             except Exception as e:
-                raise self.handle_database_error(str(e), "vote removal")
+                raise self.handle_database_error(e, "vote removal")
     
     async def assign_report(
         self,
@@ -627,9 +629,9 @@ class ReportController(BaseController):
         
         try:
             # Assign report using context manager
-            async with self.get_db_session() as db:
+            async with self.get_db_session() as session:
                 # Verify assignee exists
-                assignee = db.query(User).filter(User.id == assignee_id).first()
+                assignee = session.query(User).filter(User.id == assignee_id).first()
                 if not assignee:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
@@ -640,8 +642,8 @@ class ReportController(BaseController):
                 report.status = ReportStatus.IN_PROGRESS.value
                 report.updated_at = utc_datetime()
                 
-                db.commit()
-                db.refresh(report)
+                session.commit()
+                session.refresh(report)
                 
                 self.log_operation(
                     "Report assigned",
@@ -679,7 +681,7 @@ class ReportController(BaseController):
         report = await self.get_report_by_id(report_id)
         
         # Check permissions
-        if user.role != UserRole.ADMIN and report.assignee_id != user.id:
+        if user.role != UserRole.ADMIN and report.user_id != user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only administrators or assigned users can resolve reports"
@@ -687,14 +689,14 @@ class ReportController(BaseController):
         
         try:
             # Resolve report using context manager
-            async with self.get_db_session() as db:
+            async with self.get_db_session() as session:
                 report.status = ReportStatus.RESOLVED
                 report.resolution_notes = resolution_notes.strip()
                 report.resolved_at = utc_datetime()
                 report.updated_at = utc_datetime()
                 
-                db.commit()
-                db.refresh(report)
+                session.commit()
+                session.refresh(report)
                 
                 self.log_operation(
                     "Report resolved",
@@ -723,9 +725,9 @@ class ReportController(BaseController):
         """
         cutoff_date = utc_datetime() - timedelta(days=days)
         
-        async with self.get_db_session() as db:
+        async with self.get_db_session() as session:
             # Base query for the time period
-            base_query = db.query(Report).filter(Report.created_at >= cutoff_date)
+            base_query = session.query(Report).filter(Report.created_at >= cutoff_date)
             
             # Total counts
             total_reports = base_query.count()
@@ -762,7 +764,7 @@ class ReportController(BaseController):
             # Recent activity (last 7 days)
             recent_cutoff = utc_datetime() - timedelta(days=7)
             recent_activity = (
-                db.query(Report)
+                session.query(Report)
                 .filter(Report.created_at >= recent_cutoff)
                 .order_by(desc(Report.created_at))
                 .limit(20)
@@ -783,9 +785,9 @@ class ReportController(BaseController):
             # User contribution (if user is provided)
             user_contribution = {}
             if user:
-                user_reports = base_query.filter(Report.reporter_id == user.id).count()
+                user_reports = base_query.filter(Report.user_id == user.id).count()
                 user_votes = (
-                    db.query(ReportVote)
+                    session.query(ReportVote)
                     .filter(
                         and_(
                             ReportVote.user_id == user.id,
@@ -830,8 +832,8 @@ class ReportController(BaseController):
         Returns:
             List[ReportTemplate]: Available templates
         """
-        async with self.get_db_session() as db:
-            query = db.query(ReportTemplate).filter(ReportTemplate.is_active == True)
+        async with self.get_db_session() as session:
+            query = session.query(ReportTemplate).filter(ReportTemplate.is_active == True)
             
             if report_type:
                 query = query.filter(ReportTemplate.report_type == report_type)
@@ -847,7 +849,8 @@ class ReportController(BaseController):
     
     # Private helper methods
     
-    async def _validate_and_normalize_url(self, url: str) -> str:
+    @staticmethod
+    async def _validate_and_normalize_url(url: str) -> str:
         """Validate and normalize URL.
         
         Args:
@@ -890,7 +893,8 @@ class ReportController(BaseController):
         
         return url
     
-    def _extract_domain(self, url: str) -> str:
+    @staticmethod
+    def _extract_domain(url: str) -> str:
         """Extract domain from URL.
         
         Args:
@@ -948,13 +952,13 @@ class ReportController(BaseController):
         # Check for recent duplicate from same user
         recent_cutoff = utc_datetime() - timedelta(hours=24)
         
-        async with self.get_db_session() as db:
+        async with self.get_db_session() as session:
             duplicate = (
-                db.query(Report)
+                session.query(Report)
                 .filter(
                     and_(
-                        Report.url == url,
-                        Report.reporter_id == user_id,
+                        Report.domain == self._extract_domain(url),
+                        Report.user_id == user_id,
                         Report.report_type == report_type,
                         Report.created_at >= recent_cutoff
                     )
@@ -1017,9 +1021,9 @@ class ReportController(BaseController):
         
         report_ids = [report.id for report in reports]
         
-        async with self.get_db_session() as db:
+        async with self.get_db_session() as session:
             votes = (
-                db.query(ReportVote)
+                session.query(ReportVote)
                 .filter(
                     and_(
                         ReportVote.report_id.in_(report_ids),
@@ -1040,30 +1044,30 @@ class ReportController(BaseController):
         Args:
             report_id: Report ID to update counts for
         """
-        async with self.get_db_session() as db:
+        async with self.get_db_session() as session:
             upvotes = (
-                db.query(ReportVote)
+                session.query(ReportVote)
                 .filter(
                     and_(
                         ReportVote.report_id == report_id,
-                        ReportVote.vote_type == VoteType.UPVOTE
+                        ReportVote.vote_type == VoteType.HELPFUL
                     )
                 )
                 .count()
             )
             
             downvotes = (
-                db.query(ReportVote)
+                session.query(ReportVote)
                 .filter(
                     and_(
                         ReportVote.report_id == report_id,
-                        ReportVote.vote_type == VoteType.DOWNVOTE
+                        ReportVote.vote_type == VoteType.NOT_HELPFUL
                     )
                 )
                 .count()
             )
             
-            report = db.query(Report).filter(Report.id == report_id).first()
+            report = session.query(Report).filter(Report.id == report_id).first()
             if report:
                 report.upvotes = upvotes
                 report.downvotes = downvotes
@@ -1089,42 +1093,39 @@ class ReportController(BaseController):
         """
         try:
             # Get database session
-            db = await self.get_db_session()
-            
-            # Update task status to running
-            await self.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=10
-            )
-            
-            # Perform URL analysis (placeholder for actual analysis logic)
-            await self.update_task_status(
-                db=db,
-                task_id=task_id,
-                status=TaskStatus.RUNNING,
-                progress=50
-            )
-            
-            # Simulate analysis processing
-            analysis_result = {
-                "report_id": report_id,
-                "url": url,
-                "report_type": report_type,
-                "priority": priority,
-                "analysis_completed": True,
-                "threat_detected": False,  # This would be actual analysis result
-                "confidence_score": 0.85,
-                "analyzed_at": datetime.now(timezone.utc).isoformat()
-            }
-            
-            # Complete the task
-            await self.complete_task(
-                db=db,
-                task_id=task_id,
-                result=analysis_result
-            )
+            async with self.get_db_session() as session:
+                # Update task status to running
+                await self.update_task_status(
+                    task_id=task_id,
+                    status=TaskStatus.RUNNING,
+                    progress=10
+                )
+
+                # Perform URL analysis (placeholder for actual analysis logic)
+                await self.update_task_status(
+                    task_id=task_id,
+                    status=TaskStatus.RUNNING,
+                    progress=50
+                )
+
+                # Simulate analysis processing
+                analysis_result = {
+                    "report_id": report_id,
+                    "url": url,
+                    "report_type": report_type,
+                    "priority": priority,
+                    "analysis_completed": True,
+                    "threat_detected": False,  # This would be actual analysis result
+                    "confidence_score": 0.85,
+                    "analyzed_at": datetime.now(timezone.utc).isoformat()
+                }
+
+                # Complete the task
+                # await self.complete_task_with_webhook(
+                #     task_id=task_id,
+                #     result_data=analysis_result,
+                #     callback_url=callback_url
+                # )
             
             # Send webhook notification if callback URL provided
             if callback_url:
@@ -1159,11 +1160,11 @@ class ReportController(BaseController):
             
             try:
                 # Mark task as failed
-                await self.fail_task(
-                    db=db,
-                    task_id=task_id,
-                    error=str(e)
-                )
+                # await self.fail_task_with_webhook(
+                #     task_id=task_id,
+                #     error_message=str(e),
+                #     callback_url=callback_url
+                # )
                 
                 # Send failure webhook if callback URL provided
                 if callback_url:
@@ -1203,12 +1204,9 @@ class ReportController(BaseController):
             callback_url: Optional webhook URL for completion notification
         """
         try:
-            # Get database session
-            db = await self.get_db_session()
-            
+
             # Update task status to running
             await self.update_task_status(
-                db=db,
                 task_id=task_id,
                 status=TaskStatus.RUNNING,
                 progress=25
@@ -1225,12 +1223,12 @@ class ReportController(BaseController):
                 "notified_at": datetime.now(timezone.utc).isoformat()
             }
             
-            # Complete the task
-            await self.complete_task(
-                db=db,
-                task_id=task_id,
-                result=notification_result
-            )
+            # # Complete the task
+            # await self.complete_task(
+            #     session=session,
+            #     task_id=task_id,
+            #     result=notification_result
+            # )
             
             # Send webhook notification if callback URL provided
             if callback_url:
@@ -1298,20 +1296,8 @@ class ReportController(BaseController):
             report_id: Report ID
             url: URL to analyze
         """
-        try:
-            # TODO - This would integrate with the URL analysis service
-            # For now, just log the analysis request
-            # TODO - Needs to Revise Implementation
-            scan_types = [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
-            report = self.url_analysis_service.analyze_url(url=url,scan_types=scan_types)
-            self.log_operation(
-                "URL analysis requested",
-                details={"report_id": report_id, "url": url}
-            )
-            return report
-        except Exception as e:
-            self.logger.error(f"URL analysis failed for report {report_id}: {str(e)}")
-    
+        pass
+
     async def _notify_moderation_team(
         self,
         report_id: str,
