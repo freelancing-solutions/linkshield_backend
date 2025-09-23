@@ -692,9 +692,9 @@ class URLCheckController(BaseController):
         cutoff_time = utc_datetime() - timedelta(minutes=5)
         
         async with self.get_db_session() as session:
-            return self._get_recent_check_from_db(session, normalized_url, user.id)
+            return await self._get_recent_check_from_db(session, normalized_url, user.id)
 
-    def _get_recent_check_from_db(self, session, normalized_url: str, user_id: uuid.UUID) -> Optional[URLCheck]:
+    async def _get_recent_check_from_db(self, session, normalized_url: str, user_id: uuid.UUID) -> Optional[URLCheck]:
         """Get recent check for the same URL by the same user from database session.
         
         Args:
@@ -705,11 +705,12 @@ class URLCheckController(BaseController):
         Returns:
             Recent URLCheck record or None if not found
         """
+        from sqlalchemy import select, and_, desc
         cutoff_time = utc_datetime() - timedelta(minutes=5)
         
-        return (
-            session.query(URLCheck)
-            .filter(
+        stmt = (
+            select(URLCheck)
+            .where(
                 and_(
                     URLCheck.normalized_url == normalized_url,
                     URLCheck.created_at >= cutoff_time,
@@ -718,8 +719,11 @@ class URLCheckController(BaseController):
                 )
             )
             .order_by(desc(URLCheck.created_at))
-            .first()
+            .limit(1)
         )
+        
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
     
     async def _perform_url_analysis(
         self,
@@ -738,12 +742,11 @@ class URLCheckController(BaseController):
         """
         try:
             async with self.get_db_session() as session:
-                # Get URL check record
-                url_check = (
-                    session.query(URLCheck)
-                    .filter(URLCheck.id == check_id)
-                    .first()
-                )
+                # Get URL check record using async ORM API
+                from sqlalchemy import select
+                stmt = select(URLCheck).where(URLCheck.id == check_id)
+                result = await session.execute(stmt)
+                url_check = result.scalar_one_or_none()
                 
                 if not url_check:
                     self.logger.error(f"URL check {check_id} not found for analysis")
@@ -755,7 +758,7 @@ class URLCheckController(BaseController):
                 
                 # Get domain reputation data for analysis
                 domain: str = self._extract_domain(url)
-                reputation_data: URLReputation = self._get_domain_reputation_data(domain=domain)
+                reputation_data: URLReputation = await self._get_domain_reputation_data(domain=domain)
                 
                 # Perform analysis using URL analysis service (now pure business logic)
                 analysis_results = await self.url_analysis_service.analyze_url(
@@ -772,12 +775,12 @@ class URLCheckController(BaseController):
                 self._create_scan_results(session=session, url_check_id=url_check.id, analysis_results=analysis_results)
                 
                 # Update domain reputation based on analysis
-                self._update_domain_reputation_from_analysis(
+                await self._update_domain_reputation_from_analysis(
                     session=session, domain=domain, analysis_results=analysis_results,
                     reputation_data=reputation_data
                 )
                 
-                db.commit()
+                # Commit is handled automatically by the context manager
             
             # Send webhook notification if callback URL provided
             if callback_url:
@@ -797,16 +800,15 @@ class URLCheckController(BaseController):
             # Update URL check with error status
             try:
                 async with self.get_db_session() as db:
-                    url_check = (
-                        db.query(URLCheck)
-                        .filter(URLCheck.id == check_id)
-                        .first()
-                    )
+                    from sqlalchemy import select
+                    stmt = select(URLCheck).where(URLCheck.id == check_id)
+                    result = await db.execute(stmt)
+                    url_check = result.scalar_one_or_none()
                     if url_check:
                         url_check.status = CheckStatus.FAILED
                         url_check.error_message = str(e)
                         url_check.scan_completed_at = utc_datetime()
-                        db.commit()
+                        # Commit is handled automatically by the context manager
             except Exception as commit_error:
                 self.logger.error(f"Failed to update URL check status: {str(commit_error)}")
             
@@ -833,11 +835,10 @@ class URLCheckController(BaseController):
         async with self.get_db_session() as session:
             for check_id in check_ids:
                 try:
-                    url_check = (
-                        session.query(URLCheck)
-                        .filter(URLCheck.id == check_id)
-                        .first()
-                    )
+                    from sqlalchemy import select
+                    stmt = select(URLCheck).where(URLCheck.id == check_id)
+                    result = await session.execute(stmt)
+                    url_check = result.scalar_one_or_none()
                     
                     if url_check:
                         await self._perform_url_analysis(
@@ -891,27 +892,24 @@ class URLCheckController(BaseController):
                 self._update_domain_reputation_from_analysis(
                     session, domain, minimal_analysis, None
                 )
-                session.commit()
+                # Commit is handled automatically by the context manager
         except Exception as e:
             self.logger.error(f"Failed to update domain reputation: {str(e)}")
 
-    def _get_domain_reputation_data(self, domain: str| None) -> Optional[URLReputation]:
+    async def _get_domain_reputation_data(self, domain: str| None) -> Optional[URLReputation]:
         """Get domain reputation data for analysis.
         
         Args:
-            session: Database session
             domain: Domain to get reputation for
             
         Returns:
             Dict containing reputation data or None if not found
         """
-        with self.get_db_session() as session:
-            reputation = (
-                session.query(URLReputation)
-                .filter(URLReputation.domain == domain)
-                .first()
-            )
-            return reputation if reputation else None
+        async with self.get_db_session() as session:
+            from sqlalchemy import select
+            stmt = select(URLReputation).where(URLReputation.domain == domain)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
 
     def _update_url_check_with_results(self, url_check: URLCheck, analysis_results: AnalysisResults) -> None:
         """Update URL check record with analysis results.
