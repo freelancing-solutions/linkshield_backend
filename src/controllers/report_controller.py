@@ -237,7 +237,7 @@ class ReportController(BaseController):
         priority: Optional[ReportPriority] = None,
         domain: Optional[str] = None,
         tag: Optional[str] = None,
-        reporter_id: Optional[uuid.UUID] = None,
+        reporter_ip: Optional[str] = None,
         assignee_id: Optional[uuid.UUID] = None,
         created_after: Optional[datetime] = None,
         created_before: Optional[datetime] = None,
@@ -266,6 +266,20 @@ class ReportController(BaseController):
             
         Returns:
             Tuple: (reports, total_count, filters_applied)
+            :param assignee_id:
+            :param page_size:
+            :param page:
+            :param sort_order:
+            :param sort_by:
+            :param created_before:
+            :param created_after:
+            :param tag:
+            :param report_type:
+            :param domain:
+            :param priority:
+            :param status:
+            :param user:
+            :param reporter_ip:
         """
         # Validate pagination
         skip, limit = self.validate_pagination(page - 1, page_size)
@@ -297,12 +311,12 @@ class ReportController(BaseController):
                 query = query.filter(Report.tags.contains([tag]))
                 filters_applied["tag"] = tag
             
-            if reporter_id:
-                query = query.filter(Report.reporter_id == reporter_id)
-                filters_applied["reporter_id"] = str(reporter_id)
+            if reporter_ip:
+                query = query.filter(Report.reporter_ip == reporter_ip)
+                filters_applied["reporter_ip"] = str(reporter_ip)
             
             if assignee_id:
-                query = query.filter(Report.assignee_id == assignee_id)
+                query = query.filter(Report.user_id == assignee_id)
                 filters_applied["assignee_id"] = str(assignee_id)
             
             if created_after:
@@ -580,7 +594,7 @@ class ReportController(BaseController):
                 )
                 
             except Exception as e:
-                raise self.handle_database_error(e, "vote removal")
+                raise self.handle_database_error(str(e), "vote removal")
     
     async def assign_report(
         self,

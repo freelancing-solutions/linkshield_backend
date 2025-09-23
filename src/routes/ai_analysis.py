@@ -169,6 +169,7 @@ async def analyze_content(
 )
 @limiter.limit("20/minute", key_func=ai_analysis_key_func)
 async def get_analysis(
+    request: Request,
     analysis_id: str,
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
     current_user: Optional[User] = Depends(get_optional_user)
@@ -176,15 +177,13 @@ async def get_analysis(
     """
     Get AI analysis results by ID.
     """
-    return await controller.get_analysis(
-        analysis_id=analysis_id,
-        current_user=current_user
-    )
+    return await controller.get_analysis(analysis_id=analysis_id)
 
 
 @router.get("/analysis/{analysis_id}/similar", response_model=List[SimilarContentResponse], summary="Find Similar Content", description="Find content similar to the analyzed content.")
 @limiter.limit("30/minute", key_func=ai_analysis_key_func)
 async def find_similar_content(
+    request: Request,
     analysis_id: str,
     similarity_threshold: float = Query(0.8, ge=0.0, le=1.0, description="Minimum similarity score"),
     limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
@@ -211,6 +210,7 @@ async def find_similar_content(
 )
 @limiter.limit("20/minute", key_func=ai_analysis_key_func)
 async def get_analysis_history(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
@@ -234,6 +234,7 @@ async def get_analysis_history(
 )
 @limiter.limit("30/minute", key_func=ai_analysis_key_func)
 async def get_domain_stats(
+    request: Request,
     domain: str,
     controller: AIAnalysisController = Depends(get_ai_analysis_controller),
     current_user: Optional[User] = Depends(get_optional_user)
@@ -254,6 +255,7 @@ async def get_domain_stats(
     description="Retry a failed AI analysis.")
 @limiter.limit("10/minute", key_func=ai_analysis_key_func)
 async def retry_analysis(
+    request: Request,
     analysis_id: str,
     background_tasks: BackgroundTasks,
     callback_url: Optional[str] = Query(None, description="Optional webhook URL for completion notification"),
@@ -268,7 +270,7 @@ async def retry_analysis(
     """
     return await controller.retry_analysis(
         analysis_id=analysis_id,
-        current_user=current_user,
+        user_id=current_user.id,
         background_tasks=background_tasks,
         callback_url=callback_url
     )
@@ -279,7 +281,7 @@ async def retry_analysis(
     summary="Get AI Analysis Service Status",
     description="Get the current status of the AI analysis service.")
 @limiter.limit("30/minute", key_func=ai_analysis_key_func)
-async def get_service_status(controller: AIAnalysisController = Depends(get_ai_analysis_controller)):
+async def get_service_status(request: Request, controller: AIAnalysisController = Depends(get_ai_analysis_controller)):
     """
     Get AI analysis service status.
     """

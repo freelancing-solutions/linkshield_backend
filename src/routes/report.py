@@ -249,7 +249,7 @@ async def list_reports(
     priority: Optional[ReportPriority] = Query(None, description="Filter by priority"),
     domain: Optional[str] = Query(None, description="Filter by domain"),
     tag: Optional[str] = Query(None, description="Filter by tag"),
-    reporter_id: Optional[uuid.UUID] = Query(None, description="Filter by reporter"),
+    reporter_ip: Optional[str] = Query(None, description="Filter by reporter id"),
     assignee_id: Optional[uuid.UUID] = Query(None, description="Filter by assignee"),
     created_after: Optional[datetime] = Query(None, description="Filter by creation date"),
     created_before: Optional[datetime] = Query(None, description="Filter by creation date"),
@@ -267,7 +267,7 @@ async def list_reports(
     Delegates business logic to ReportController.
     """
     return await controller.list_reports(
-        report_type, status, priority, domain, tag, reporter_id, assignee_id,
+        report_type, status, priority, domain, tag, reporter_ip, assignee_id,
         created_after, created_before, sort_by, sort_order, page, page_size, user)
 
 

@@ -18,7 +18,7 @@ import aiohttp
 import requests
 
 from src.config.settings import get_settings
-from src.models.url_check import ThreatLevel, ScanType
+from src.models.url_check import ThreatLevel, ScanType, URLReputation
 from src.services.ai_service import AIService
 from src.services.security_service import SecurityService
 
@@ -92,7 +92,7 @@ class URLAnalysisService:
         self, 
         url: str, 
         scan_types: Optional[List[ScanType]] = None,
-        reputation_data: Optional[Dict[str, Any]] = None
+        reputation_data: Optional[URLReputation] = None
     ) -> Dict[str, Any]:
         """
         Perform comprehensive URL analysis and return results as dictionary.
@@ -106,7 +106,7 @@ class URLAnalysisService:
             Dictionary containing analysis results with threat level and confidence score
         """
         # Validate and normalize URL
-        normalized_url = self._normalize_url(url)
+        normalized_url: str = self._normalize_url(url)
         if not normalized_url:
             raise InvalidURLError(f"Invalid URL format: {url}")
         
@@ -386,7 +386,7 @@ class URLAnalysisService:
                 }
             }
     
-    def _analyze_reputation(self, url: str, reputation_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _analyze_reputation(self, url: str, reputation_data: Optional[URLReputation] = None) -> Dict[str, Any]:
         """
         Analyze URL reputation based on provided historical data.
         
@@ -408,7 +408,8 @@ class URLAnalysisService:
             
             threat_detected = reputation_score < 70
             confidence_score = min(total_checks * 2, 100)  # More checks = higher confidence
-            
+
+            # TODO Implement ReputationScanResult Class Based on this.
             return {
                 "reputation": {
                     "provider": "internal",

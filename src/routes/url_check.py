@@ -169,7 +169,10 @@ async def check_url(
     Delegates business logic to URLCheckController.
     """
     
-    return await controller.check_url(request, background_tasks, user)
+    return await controller.check_url(url=request.url,
+                                      user=user,
+                                      scan_types=request.scan_types,priority=request.priority,
+                                      callback_url=request.callback_url)
 
 @router.post("/bulk-check", response_model=List[URLCheckResponse], summary="Analyze multiple URLs")
 async def bulk_check_urls(
