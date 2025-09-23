@@ -214,7 +214,7 @@ class UserController(BaseController):
                 await session.commit()
                 await session.refresh(user)
 
-            token = await self._create_email_verification_token(user)
+            token = await self._create_email_verification_token(user=user)
             if background_tasks:
                 background_tasks.add_task(self._send_verification_email, user=user, token=token.token_hash)
             else:
@@ -368,7 +368,7 @@ class UserController(BaseController):
 
         try:
             if full_name is not None:
-                user.full_name = full_name
+                user.first_name, user.last_name = full_name.split()
             if company is not None:
                 user.company = company
             if profile_picture_url is not None:
@@ -839,7 +839,8 @@ class UserController(BaseController):
                     "current_year": datetime.now().year,
                 },
             )
-            await self.email_service.send_email(email_request, EmailType.VERIFICATION.value)
+
+            await self.email_service.send_email(email_request=email_request, template_name=EmailType.VERIFICATION.value)
         else:
             self.logger.info(f"Verification email (mock) for {user.email}: {token}")
 
@@ -858,7 +859,7 @@ class UserController(BaseController):
                     "current_year": datetime.now().year,
                 },
             )
-            await self.email_service.send_email(email_request, EmailType.PASSWORD_RESET.value)
+            await self.email_service.send_email(email_request=email_request, template_name=EmailType.PASSWORD_RESET.value)
         else:
             self.logger.info(f"Password reset email (mock) for {user.email}: {token}")
 
@@ -919,6 +920,7 @@ class UserController(BaseController):
                 if not user or not user.is_active:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid reset token")
 
+                # noinspection DuplicatedCode
                 user.password_hash = self.auth_service.hash_password(new_password)
                 user.password_changed_at = datetime.now(timezone.utc)
                 user.updated_at = datetime.now(timezone.utc)
