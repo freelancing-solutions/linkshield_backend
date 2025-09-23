@@ -105,8 +105,17 @@ class BaseController(WebhookController):
         # Use the existing get_db dependency instead of undefined db_session_factory
         async with get_db() as session:
             try:
-                # Validate session connection
-                await session.execute(text("SELECT 1"))
+                # Validate session connection - only in DEBUG mode to reduce overhead
+                if self.settings.DEBUG:
+                    await session.execute(text("SELECT 1"))
+                    self.log_operation(
+                        "Database connectivity validated",
+                        details={
+                            "session_id": session_id,
+                            "controller": self.__class__.__name__
+                        },
+                        level="debug"
+                    )
                 
                 yield session
                 

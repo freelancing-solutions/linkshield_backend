@@ -193,22 +193,63 @@ class DatabaseManager:
             await self.session.close()
 
 
+# Health check optimization variables
+_last_health_check_time: Optional[float] = None
+_last_health_check_result: bool = False
+_health_check_cache_duration: float = 30.0  # Cache health check for 30 seconds
+
 # Health check function
-async def check_database_health() -> bool:
+async def check_database_health(force_check: bool = False) -> bool:
     """
-    Check if database is healthy and accessible.
-    Returns True if database is accessible, False otherwise.
+    Check if database is healthy and accessible with optimized caching.
+    
+    This function implements several optimizations to reduce production overhead:
+    - Caches health check results for 30 seconds to avoid excessive database calls
+    - Uses lightweight SELECT 1 query instead of heavy operations
+    - Reuses existing connection pool instead of creating new connections
+    - Provides force_check parameter to bypass cache when needed
+    
+    Args:
+        force_check: If True, bypasses cache and performs fresh health check
+        
+    Returns:
+        True if database is accessible, False otherwise.
     """
+    import time
+    
+    global _last_health_check_time, _last_health_check_result
+    
+    # Return cached result if within cache duration and not forcing check
+    current_time = time.time()
+    if (not force_check and 
+        _last_health_check_time is not None and 
+        current_time - _last_health_check_time < _health_check_cache_duration):
+        return _last_health_check_result
+    
     try:
         if not engine:
+            _last_health_check_result = False
+            _last_health_check_time = current_time
             return False
         
+        # Use connection from pool with minimal overhead
+        # engine.begin() is more efficient than creating a full session
         async with engine.begin() as conn:
+            # Simple SELECT 1 is the most lightweight health check
             result = await conn.execute("SELECT 1")
-            return result.scalar() == 1
+            health_status = result.scalar() == 1
+            
+            # Update cache
+            _last_health_check_result = health_status
+            _last_health_check_time = current_time
+            
+            return health_status
     
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
+        # Cache the failure result to avoid repeated failed attempts
+        _last_health_check_result = False
+        _last_health_check_time = current_time
         return False
 
 

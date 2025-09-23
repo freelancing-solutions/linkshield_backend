@@ -19,12 +19,11 @@ from pydantic import ValidationError
 
 from src.controllers.base_controller import BaseController
 from src.models.report import (
-    Report, ReportVote, ReportTemplate, ReportStatistics,
-    ReportType, ReportStatus, ReportPriority, VoteType
+    Report, ReportVote, ReportTemplate,  ReportType, ReportStatus, ReportPriority, VoteType
 )
 from src.models.user import User, UserRole
-from src.models.url_check import URLCheck, ThreatLevel, ScanType
-from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
+from src.models.url_check import  ScanType
+from src.models.task import TaskStatus, TaskType, TaskPriority
 from src.services.security_service import SecurityService
 from src.authentication.auth_service import AuthService
 from src.services.email_service import EmailService
@@ -141,13 +140,7 @@ class ReportController(BaseController):
                 )
                 
                 db.add(report)
-                # Use consistent commit/rollback helper instead of manual commit
-                await self.ensure_consistent_commit_rollback(
-                    db, 
-                    "create_report", 
-                    session_id=None, 
-                    start_time=time.time()
-                )
+                # Commit handled by context manager
                 db.refresh(report)
                 
                 # Log the operation
@@ -285,19 +278,19 @@ class ReportController(BaseController):
             
             # Apply filters
             if report_type:
-                query = query.filter(Report.report_type == report_type)
+                query = query.where(Report.report_type == report_type)
                 filters_applied["report_type"] = report_type.value
             
             if status:
-                query = query.filter(Report.status == status)
+                query = query.where(Report.status == status)
                 filters_applied["status"] = status.value
             
             if priority:
-                query = query.filter(Report.priority == priority)
+                query = query.where(Report.priority == priority)
                 filters_applied["priority"] = priority.value
             
             if domain:
-                query = query.filter(Report.domain.ilike(f"%{domain}%"))
+                query = query.where(Report.domain.ilike(f"%{domain}%"))
                 filters_applied["domain"] = domain
             
             if tag:
@@ -366,7 +359,11 @@ class ReportController(BaseController):
             HTTPException: If report not found
         """
         async with self.get_db_session() as db:
-            report = db.query(Report).filter(Report.id == report_id).first()
+            # Use async ORM API instead of sync db.query
+            
+            stmt = select(Report).where(Report.id == report_id)
+            result = await db.execute(stmt)
+            report = result.scalar_one_or_none()
             
             if not report:
                 raise HTTPException(
@@ -445,13 +442,7 @@ class ReportController(BaseController):
                 
                 report.updated_at = utc_datetime()
                 
-                # Use consistent commit/rollback helper instead of manual commit
-                await self.ensure_consistent_commit_rollback(
-                    db, 
-                    "update_report", 
-                    session_id=None, 
-                    start_time=time.time()
-                )
+                # Commit handled by context manager
                 db.refresh(report)
                 
                 self.log_operation(

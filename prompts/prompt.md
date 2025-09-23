@@ -1,183 +1,124 @@
 I have the following verification comments after thorough review and exploration of the codebase. Implement the comments by following the instructions in the comments verbatim.
 
 ---
-## Comment 1: BaseController get_db_session uses undefined db_session_factory causing runtime failure.
+## Comment 1: Double-commit persists: context manager auto-commits but controllers still call commit within session blocks.
 
-Update `BaseController` to properly provide an async DB session.
+Refactor to a single transaction pattern across controllers using the updated async session manager.
 
-Option A (use existing dependency):
-- Modify `get_db_session()` in `e:/projects/linkshield_backend/src/controllers/base_controller.py` to create the session via the existing `get_db` function:
+Context:
+- `BaseController.get_db_session()` in `e:/projects/linkshield_backend/src/controllers/base_controller.py` auto-commits on exit and rolls back on errors.
+- Explicit commits still exist in controller methods, causing duplicate commits and inconsistent semantics.
 
-```python
-from src.config.database import get_db
+Goal:
+- Adopt Option A: rely on context manager for commit/rollback and remove all explicit commits in controllers.
 
-@asynccontextmanager
-async def get_db_session(self):
-    session_id = str(uuid.uuid4())[:8]
-    start_time = time.time()
-    self.validate_session_usage()
-    self.log_operation("Database session started", details={"session_id": session_id, "controller": self.__class__.__name__}, level="debug")
-    async with get_db() as session:
-        try:
-            await session.execute(text("SELECT 1"))
-            yield session
-            await session.commit()
-            duration = time.time() - start_time
-            self.log_operation("Database session committed", details={"session_id": session_id, "duration_ms": round(duration*1000,2), "controller": self.__class__.__name__}, level="debug")
-        except Exception as e:
-            try:
-                await session.rollback()
-                duration = time.time() - start_time
-                self.log_operation("Database session rolled back", details={"session_id": session_id, "duration_ms": round(duration*1000,2), "error": str(e), "error_type": type(e).__name__, "controller": self.__class__.__name__}, level="warning")
-            except Exception as rollback_error:
-                self.logger.error(f"Failed to rollback session {session_id}: {rollback_error}")
-            raise
-        finally:
-            try:
-                await session.close()
-                duration = time.time() - start_time
-                self.log_operation("Database session closed", details={"session_id": session_id, "total_duration_ms": round(duration*1000,2), "controller": self.__class__.__name__}, level="debug")
-            except Exception as close_error:
-                self.logger.error(f"Failed to close session {session_id}: {close_error}")
-```
+Steps:
+1) In `e:/projects/linkshield_backend/src/controllers/ai_analysis_controller.py`:
+   - Remove `await db.commit()` in `_analyze_content_task`, `_analyze_content_sync`, and `_create_analysis_record`.
+   - Keep `await db.refresh(analysis)` after changes where needed.
+2) In `e:/projects/linkshield_backend/src/controllers/url_check_controller.py`:
+   - Remove `db.commit()`/`await session.commit()` calls inside any `async with self.get_db_session()` blocks (e.g., `_perform_url_analysis`, `_update_domain_reputation`).
+   - Ensure any entity refreshes use `await session.refresh(entity)`.
+3) Verify no other controllers call `commit()` inside the context manager. If they must, switch to Option B project-wide:
+   - Stop auto-commit in `BaseController.get_db_session()` and use `await self.ensure_consistent_commit_rollback(session, operation="<describe>")` where commits are needed.
+4) Run tests and exercise endpoints to confirm there are no transaction boundary regressions.
 
-Option B (inject factory):
-- Add a constructor param to `BaseController.__init__` like `db_session_factory: Callable[[], AsyncSession]` and assign `self.db_session_factory = db_session_factory`. Ensure all controller constructors pass this factory.
+Notes:
+- Do not mix both strategies. Use only one consistently.
+- Preserve existing logging and error handling.
 
 ### Referred Files
-- e:\projects\linkshield_backend\src\controllers\base_controller.py
+- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
+- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py\e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
+- e:\projects\linkshield_backend\src\controllers\url_check_controller.py\e:\projects\linkshield_backend\src\controllers\url_check_controller.py
 ---
-## Comment 2: Missing imports in BaseController: `time` and `sqlalchemy.text` used but not imported.
+## Comment 2: ensure_consistent_commit_rollback helper remains unused; integrate at commit points or remove per chosen pattern.
 
-Add missing imports to `e:/projects/linkshield_backend/src/controllers/base_controller.py` top-level imports:
+Standardize transaction handling using the provided helper or remove it.
 
-```python
-import time
-from sqlalchemy import text
-```
+Context:
+- `ensure_consistent_commit_rollback()` exists in `e:/projects/linkshield_backend/src/controllers/base_controller.py`.
+- Controllers (e.g., `ai_analysis_controller.py`, `url_check_controller.py`) still call `commit()` directly.
 
-Ensure there are no conflicting names and rerun tests.
+Goal:
+- Use a single strategy across the codebase.
+
+Option A (recommended now): Keep auto-commit in `get_db_session()` and remove explicit `commit()` calls across controllers. Then remove the unused helper to avoid dead code.
+
+Option B: Disable auto-commit in `get_db_session()` and replace controller `commit()` calls with `await self.ensure_consistent_commit_rollback(session, operation="<describe>")`.
+
+Steps for Option B:
+1) Edit `get_db_session()` to stop committing on exit; still rollback on exceptions and always close.
+2) In controllers:
+   - Replace each `commit()` with `await self.ensure_consistent_commit_rollback(session, operation="<what is being committed>")`.
+   - Ensure every place that modifies entities is covered.
+3) Run tests to validate consistent logging and rollback behavior.
 
 ### Referred Files
-- e:\projects\linkshield_backend\src\controllers\base_controller.py
+- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
+- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py\e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
+- e:\projects\linkshield_backend\src\controllers\url_check_controller.py\e:\projects\linkshield_backend\src\controllers\url_check_controller.py
 ---
-## Comment 3: AIAnalysisController.get_analysis uses sync ORM API (`db.query`) with AsyncSession.
+## Comment 3: URLCheckController still uses sync SQLAlchemy APIs with AsyncSession; migrate to async select/execute patterns.
 
-Refactor `get_analysis` in `e:/projects/linkshield_backend/src/controllers/ai_analysis_controller.py` to async ORM usage:
+Migrate `URLCheckController` to async SQLAlchemy patterns compatible with `AsyncSession`.
 
-```python
-from sqlalchemy import select
+Files: `e:/projects/linkshield_backend/src/controllers/url_check_controller.py`
 
-async def get_analysis(self, analysis_id: str) -> Optional[AIAnalysis]:
-    async with self.get_db_session() as db:
-        result = await db.execute(select(AIAnalysis).where(AIAnalysis.id == analysis_id))
-        return result.scalars().one_or_none()
-```
+Steps:
+1) Imports: ensure `from sqlalchemy import select, func, desc, and_` are used; remove sync-only patterns.
+2) Replace sync queries:
+   - `get_url_check`: already uses `select` — keep this pattern.
+   - `get_scan_results`: already uses `select` — keep this pattern.
+   - `get_url_history`:
+     - Build a `select(URLCheck).where(URLCheck.user_id == user.id)` statement and compose filters.
+     - For total count: `result = await session.execute(select(func.count()).select_from(select_stmt.subquery()))`; `total_count = result.scalar_one()`.
+     - For page: add `.order_by(desc(URLCheck.created_at)).offset(skip).limit(limit)` and `await session.execute` then `.scalars().all()`.
+   - `get_domain_reputation`: `stmt = select(URLReputation).where(URLReputation.domain == domain)`; `result = await session.execute(stmt)`; `reputation = result.scalar_one_or_none()`.
+   - `get_url_check_statistics`: Convert all `.count()` calls to `select(func.count())` executions; convert `with_entities/group_by/order_by/limit` chain to explicit `select(URLCheck.domain, func.count(URLCheck.id).label("count")).where(...).group_by(URLCheck.domain).order_by(desc("count")).limit(10)` and `await session.execute`, then iterate rows.
+   - `_get_recent_check_from_db`: Make it `async` and use `await session.execute(select(...).where(...).order_by(desc(...)).limit(1))`, then `.scalar_one_or_none()`.
+   - `_perform_url_analysis` and `_perform_bulk_analysis`: Fetch `URLCheck` via async `select`, update fields, and rely on the context manager for committing; replace all `commit()` calls and ensure `await session.refresh(url_check)` where needed.
+   - `_get_domain_reputation_data`: Use async `select` and return mapped dict; make it `async` and update callers accordingly.
+   - `_update_domain_reputation`: Remove `session.commit()` inside the context; rely on context manager or call the standardized helper per chosen pattern.
+3) Ensure all `.refresh` are awaited.
+4) Run tests to validate behavior.
 
-Remove any `db.query(...)` usages in this controller.
 
 ### Referred Files
-- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
+- e:\projects\linkshield_backend\src\controllers\url_check_controller.py\e:\projects\linkshield_backend\src\controllers\url_check_controller.py
+- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
 ---
-## Comment 4: Async session manager auto-commits on exit, but controllers also commit inside blocks.
+## Comment 4: AIAnalysisController still calls commit inside async context manager; remove or standardize transaction handling.
 
-Choose a single transaction pattern and apply consistently:
+Align `AIAnalysisController` with the chosen transaction pattern.
 
-Option A (context manager commits):
-- Remove explicit `commit()` calls inside `async with self.get_db_session()` across controllers (`ai_analysis_controller.py`, `url_check_controller.py`, `report_controller.py`, `admin_controller.py`, `user_controller.py`). Keep `await session.refresh(entity)` as needed.
+File: `e:/projects/linkshield_backend/src/controllers/ai_analysis_controller.py`
 
+Recommended (auto-commit via context manager):
+1) Remove `await db.commit()` from `_analyze_content_task` and `_analyze_content_sync`.
+2) In `_create_analysis_record`, remove `await db.commit()`; keep `await db.refresh(analysis)` after `db.add(analysis)` to populate defaults/PK.
+3) Ensure any flush is implicit; if needed, call `await db.flush()` before `await db.refresh(...)` to persist without a full commit.
+4) Re-run tests to ensure no functional regressions.
 
-Implement one approach project-wide to avoid mixed patterns.
+Alternative (explicit commit via helper):
+- Disable auto-commit in `get_db_session()` and replace commits with `await self.ensure_consistent_commit_rollback(db, operation="<describe>")`.
 
 ### Referred Files
-- e:\projects\linkshield_backend\src\controllers\base_controller.py
-- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
-- e:\projects\linkshield_backend\src\controllers\url_check_controller.py
-- e:\projects\linkshield_backend\src\controllers\report_controller.py
-- e:\projects\linkshield_backend\src\controllers\admin_controller.py
-- e:\projects\linkshield_backend\src\controllers\user_controller.py
+- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py\e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
+- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
 ---
-## Comment 5: Helper ensure_consistent_commit_rollback is unused; plan intent not fully realized.
+## Comment 5: Connectivity ping executes each session start; add DEBUG gating or sampling to limit overhead.
 
-Search controllers for `commit()` calls and replace with the standardized helper. Example for `ai_analysis_controller.py`:
+Reduce overhead of the session connectivity check in `BaseController.get_db_session()`.
 
-```python
-# Before
-await db.commit()
+File: `e:/projects/linkshield_backend/src/controllers/base_controller.py`
 
-# After
-await self.ensure_consistent_commit_rollback(db, operation="update analysis with results")
-```
+Steps:
+1) Introduce a guard: `if getattr(self.settings, "DEBUG", False): await session.execute(text("SELECT 1"))`.
+2) Optionally add a simple sampling mechanism for non-debug environments (e.g., 1% of sessions).
+3) Keep existing logging and error handling unchanged.
 
-Do this consistently across `url_check_controller.py`, `report_controller.py`, `admin_controller.py`, and `user_controller.py` if you choose the explicit-commit pattern.
 
 ### Referred Files
-- e:\projects\linkshield_backend\src\controllers\base_controller.py
-- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
-- e:\projects\linkshield_backend\src\controllers\url_check_controller.py
-- e:\projects\linkshield_backend\src\controllers\report_controller.py
-- e:\projects\linkshield_backend\src\controllers\admin_controller.py
-- e:\projects\linkshield_backend\src\controllers\user_controller.py
----
-## Comment 6: URLCheckController uses sync SQLAlchemy APIs with AsyncSession; will break at runtime.
-
-Refactor `e:/projects/linkshield_backend/src/controllers/url_check_controller.py` to async SQLAlchemy patterns. Examples:
-
-1) get_url_check:
-```python
-from sqlalchemy import select
-async with self.get_db_session() as session:
-    result = await session.execute(select(URLCheck).where(URLCheck.id == check_id))
-    url_check = result.scalars().one_or_none()
-```
-
-2) get_scan_results:
-```python
-result = await session.execute(
-    select(ScanResult)
-    .where(ScanResult.url_check_id == check_id)
-    .order_by(ScanResult.created_at.desc())
-)
-scan_results = result.scalars().all()
-```
-
-3) Counts:
-```python
-from sqlalchemy import func, select
-result = await session.execute(
-    select(func.count()).select_from(
-        select(URLCheck).where(URLCheck.user_id == user.id).subquery()
-    )
-)
-total_count = result.scalar_one()
-```
-
-4) Commits:
-- Replace `session.commit()` with `await session.commit()` or rely on context manager per chosen pattern.
-
-### Referred Files
-- e:\projects\linkshield_backend\src\controllers\url_check_controller.py
-- e:\projects\linkshield_backend\src\controllers\base_controller.py
----
-## Comment 7: AIAnalysisController commits inside context manager; duplicate commits likely.
-
-In `e:/projects/linkshield_backend/src/controllers/ai_analysis_controller.py`, remove explicit `await db.commit()` calls if keeping auto-commit in `get_db_session()`. Keep `await db.refresh(analysis)` where needed. Alternatively, disable auto-commit in the context manager and use `await self.ensure_consistent_commit_rollback(db, operation="<describe>")` at commit points.
-
-### Referred Files
-- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
-- e:\projects\linkshield_backend\src\controllers\base_controller.py
----
-## Comment 8: BaseController’s connectivity check runs every session; consider gating to reduce overhead.
-
-Optionally update `get_db_session()` in `e:/projects/linkshield_backend/src/controllers/base_controller.py`:
-
-```python
-if getattr(self.settings, "DEBUG", False):
-    await session.execute(text("SELECT 1"))
-```
-
-Alternatively, add a lightweight ping interval or sampling mechanism for production.
-
-### Referred Files
-- e:\projects\linkshield_backend\src\controllers\base_controller.py
+- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
 ---

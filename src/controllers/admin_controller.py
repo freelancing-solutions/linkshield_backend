@@ -812,7 +812,7 @@ class AdminController(BaseController):
                 config.updated_at = datetime.now(timezone.utc)
                 config.updated_by = current_user.id
                 
-                await db.commit()
+                # Commit handled by context manager
                 await db.refresh(config)
                 
                 # Log admin action
@@ -830,7 +830,7 @@ class AdminController(BaseController):
                     user_agent=None   # This would be set by middleware
                 )
                 db.add(admin_action)
-                await db.commit()
+                # Commit handled by context manager
                 
                 # Prepare updated configuration data
                 updated_config_data = {
@@ -1110,7 +1110,7 @@ class AdminController(BaseController):
                 user.is_active = status == "active"
                 user.updated_at = utc_datetime()
                 
-                await db.commit()
+                # Commit handled by context manager
                 await db.refresh(user)
                 
                 # Log admin action
@@ -1129,7 +1129,7 @@ class AdminController(BaseController):
                     user_agent=None   # This would be set by middleware
                 )
                 db.add(admin_action)
-                await db.commit()
+                # Commit handled by context manager
                 
                 # Prepare updated user data
                 updated_user_data = {

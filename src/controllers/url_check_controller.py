@@ -417,37 +417,40 @@ class URLCheckController(BaseController):
         skip, limit = self.validate_pagination(page - 1, page_size)
         
         async with self.get_db_session() as session:
-            # Build query
-            query = (
-                session.query(URLCheck)
-                .filter(URLCheck.user_id == user.id)
+            # Build query using async select
+            stmt = (
+                select(URLCheck)
+                .where(URLCheck.user_id == user.id)
             )
             
             # Apply filters
             if url:
                 normalized_url = await self._validate_and_normalize_url(url)
-                query = query.filter(URLCheck.normalized_url == normalized_url)
+                stmt = stmt.where(URLCheck.normalized_url == normalized_url)
             
             if domain:
-                query = query.filter(URLCheck.domain.ilike(f"%{domain}%"))
+                stmt = stmt.where(URLCheck.domain.ilike(f"%{domain}%"))
             
             if threat_level:
-                query = query.filter(URLCheck.threat_level == threat_level)
+                stmt = stmt.where(URLCheck.threat_level == threat_level)
             
             if status:
-                query = query.filter(URLCheck.status == status)
+                stmt = stmt.where(URLCheck.status == status)
             
             # Get total count
-            total_count = query.count()
+            count_stmt = select(func.count()).select_from(stmt.subquery())
+            total_count = (await session.execute(count_stmt)).scalar()
             
             # Apply pagination and ordering
-            url_checks = (
-                query
+            stmt = (
+                stmt
                 .order_by(desc(URLCheck.created_at))
                 .offset(skip)
                 .limit(limit)
-                .all()
             )
+            
+            result = await session.execute(stmt)
+            url_checks = result.scalars().all()
             
             self.log_operation(
                 "URL history retrieved",
@@ -485,12 +488,10 @@ class URLCheckController(BaseController):
         domain = domain.lower().strip()
         
         async with self.get_db_session() as session:
-            # Get reputation data
-            reputation = (
-                session.query(URLReputation)
-                .filter(URLReputation.domain == domain)
-                .first()
-            )
+            # Get reputation data using async select
+            stmt = select(URLReputation).where(URLReputation.domain == domain)
+            result = await session.execute(stmt)
+            reputation = result.scalar_one_or_none()
             
             if reputation:
                 # Update last seen timestamp
@@ -524,10 +525,10 @@ class URLCheckController(BaseController):
         cutoff_date = utc_datetime() - timedelta(days=days)
         
         async with self.get_db_session() as session:
-            # Base query for user's checks in the time period
-            base_query = (
-                session.query(URLCheck)
-                .filter(
+            # Base query for user's checks in the time period using async select
+            base_stmt = (
+                select(URLCheck)
+                .where(
                     and_(
                         URLCheck.user_id == user.id,
                         URLCheck.created_at >= cutoff_date
@@ -536,25 +537,44 @@ class URLCheckController(BaseController):
             )
             
             # Total counts
-            total_checks = base_query.count()
-            completed_checks = base_query.filter(URLCheck.status == CheckStatus.COMPLETED).count()
-            failed_checks = base_query.filter(URLCheck.status == CheckStatus.FAILED).count()
+            total_count_stmt = select(func.count()).select_from(base_stmt.subquery())
+            total_checks = (await session.execute(total_count_stmt)).scalar()
+            
+            completed_count_stmt = select(func.count()).select_from(
+                base_stmt.where(URLCheck.status == CheckStatus.COMPLETED).subquery()
+            )
+            completed_checks = (await session.execute(completed_count_stmt)).scalar()
+            
+            failed_count_stmt = select(func.count()).select_from(
+                base_stmt.where(URLCheck.status == CheckStatus.FAILED).subquery()
+            )
+            failed_checks = (await session.execute(failed_count_stmt)).scalar()
             
             # Threat level distribution
             threat_distribution = {}
             for threat_level in ThreatLevel:
-                count = base_query.filter(URLCheck.threat_level == threat_level).count()
+                threat_count_stmt = select(func.count()).select_from(
+                    base_stmt.where(URLCheck.threat_level == threat_level).subquery()
+                )
+                count = (await session.execute(threat_count_stmt)).scalar()
                 threat_distribution[threat_level.value] = count
             
             # Top domains checked
-            top_domains = (
-                base_query
-                .with_entities(URLCheck.domain, func.count(URLCheck.id).label('count'))
+            top_domains_stmt = (
+                select(URLCheck.domain, func.count(URLCheck.id).label('count'))
+                .where(
+                    and_(
+                        URLCheck.user_id == user.id,
+                        URLCheck.created_at >= cutoff_date
+                    )
+                )
                 .group_by(URLCheck.domain)
                 .order_by(desc('count'))
                 .limit(10)
-                .all()
             )
+            
+            top_domains_result = await session.execute(top_domains_stmt)
+            top_domains = top_domains_result.all()
             
             top_domains_list = [
                 {"domain": domain, "count": count}
@@ -562,12 +582,14 @@ class URLCheckController(BaseController):
             ]
             
             # Recent activity
-            recent_checks = (
-                base_query
+            recent_checks_stmt = (
+                base_stmt
                 .order_by(desc(URLCheck.created_at))
                 .limit(10)
-                .all()
             )
+            
+            recent_checks_result = await session.execute(recent_checks_stmt)
+            recent_checks = recent_checks_result.scalars().all()
             
             recent_activity = [
                 {

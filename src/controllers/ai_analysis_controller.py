@@ -154,7 +154,7 @@ class AIAnalysisController(BaseController):
 
                 # Update analysis with results
                 await self._update_analysis_with_results(db, analysis, ai_results)
-                await db.commit()
+                # Commit handled by context manager
                 await db.refresh(analysis)
 
                 await self.update_task_progress(task_id, 100)
@@ -189,7 +189,7 @@ class AIAnalysisController(BaseController):
 
             # Update analysis with results
             await self._update_analysis_with_results(db, analysis, ai_results)
-            await db.commit()
+            # Commit handled by context manager
             await db.refresh(analysis)
 
             return self._format_analysis_response(analysis)
@@ -455,7 +455,7 @@ class AIAnalysisController(BaseController):
         )
 
         db.add(analysis)
-        await db.commit()
+        # Commit handled by context manager
         await db.refresh(analysis)
 
         return analysis

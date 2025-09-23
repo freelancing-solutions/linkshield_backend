@@ -61,7 +61,7 @@ class WebhookController(ABC):
     async def create_task(self, session: AsyncSession, task: BackgroundTask) -> None:
         """Create a new background task in the database."""
         session.add(task)
-        await session.commit()
+        # Commit handled by context manager
 
     async def update_task_status(
             self,
@@ -83,7 +83,7 @@ class WebhookController(ABC):
                 if error_message is not None:
                     task.error_message = error_message
                 task.updated_at = utc_datetime()
-                await session.commit()
+                # Commit handled by context manager
 
     async def get_task(self, task_id: str) -> Optional[BackgroundTask]:
         """Get a task by ID."""

@@ -14,7 +14,8 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from fastapi import HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, desc
+from sqlalchemy import and_, desc, select, update
+import time
 from sqlalchemy.exc import IntegrityError
 
 from src.controllers.base_controller import BaseController
@@ -140,12 +141,10 @@ class UserController(BaseController):
         
         try:
             async with self.get_db_session() as db:
-                # Check if user already exists
-                existing_user = (
-                    db.query(User)
-                    .filter(User.email == email.lower())
-                    .first()
-                )
+                # Check if user already exists using async ORM API
+                stmt = select(User).where(User.email == email.lower())
+                result = await db.execute(stmt)
+                existing_user = result.scalar_one_or_none()
                 
                 if existing_user:
                     raise HTTPException(
@@ -171,8 +170,9 @@ class UserController(BaseController):
                     updated_at=datetime.now(timezone.utc)
                 )
                 
+
                 db.add(user)
-                db.commit()
+                # Commit handled by context manager
                 db.refresh(user)
             
             # Create email verification token
@@ -246,12 +246,10 @@ class UserController(BaseController):
         
         try:
             async with self.get_db_session() as db:
-                # Find user by email
-                user = (
-                    db.query(User)
-                    .filter(User.email == email.lower())
-                    .first()
-                )
+                # Find user by email using async ORM API
+                stmt = select(User).where(User.email == email.lower())
+                result = await db.execute(stmt)
+                user = result.scalar_one_or_none()
                 
                 if not user:
                     raise InvalidCredentialsError("Invalid email or password")
@@ -282,7 +280,7 @@ class UserController(BaseController):
                 # Update last login timestamp
                 user.last_login_at = datetime.now(timezone.utc)
                 db.add(user)
-                db.commit()
+                # Commit handled by context manager
                 db.refresh(user)
             
             # Create user session
@@ -338,33 +336,32 @@ class UserController(BaseController):
         try:
             async with self.get_db_session() as session:
                 if session_id:
-                    # Invalidate specific session
-                    session_obj = (
-                        session.query(UserSession)
-                        .filter(
-                            and_(
-                                UserSession.id == session_id,
-                                UserSession.user_id == user.id,
-                                UserSession.is_active == True
-                            )
+                    # Invalidate specific session using async ORM API
+                    stmt = select(UserSession).where(
+                        and_(
+                            UserSession.id == session_id,
+                            UserSession.user_id == user.id,
+                            UserSession.is_active == True
                         )
-                        .first()
                     )
+                    result = await session.execute(stmt)
+                    session_obj = result.scalar_one_or_none()
                     
                     if session_obj:
                         session_obj.is_active = False
                         session_obj.ended_at = datetime.utcnow()
                 else:
-                    # Invalidate all user sessions
-                    session.query(UserSession).filter(
+                    # Invalidate all user sessions using async ORM API
+                    stmt = update(UserSession).where(
                         and_(
                             UserSession.user_id == user.id,
                             UserSession.is_active == True
                         )
-                    ).update({
+                    ).values({
                         "is_active": False,
                         "ended_at": datetime.utcnow()
                     })
+                    await session.execute(stmt)
             
             # Log the operation
             self.log_operation(
