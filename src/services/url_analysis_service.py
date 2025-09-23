@@ -19,6 +19,9 @@ import requests
 
 from src.config.settings import get_settings
 from src.models.url_check import ThreatLevel, ScanType, URLReputation
+from src.models.analysis_results import (
+    AnalysisResults, ProviderScanResult, ProviderMetadata, ReputationUpdate
+)
 from src.services.ai_service import AIService
 from src.services.security_service import SecurityService
 
@@ -93,9 +96,9 @@ class URLAnalysisService:
         url: str, 
         scan_types: Optional[List[ScanType]] = None,
         reputation_data: Optional[URLReputation] = None
-    ) -> Dict[str, Any]:
+    ) -> AnalysisResults:
         """
-        Perform comprehensive URL analysis and return results as dictionary.
+        Perform comprehensive URL analysis and return typed results.
         
         Args:
             url: URL to analyze
@@ -103,7 +106,7 @@ class URLAnalysisService:
             reputation_data: Historical reputation data for analysis
         
         Returns:
-            Dictionary containing analysis results with threat level and confidence score
+            AnalysisResults containing analysis results with threat level and confidence score
         """
         # Validate and normalize URL
         normalized_url: str = self._normalize_url(url)
@@ -124,15 +127,24 @@ class URLAnalysisService:
         # Calculate threat level and confidence score
         threat_level, confidence_score = self._calculate_threat_level(analysis_results)
         
-        # Return structured analysis results
-        return {
-            "normalized_url": normalized_url,
-            "domain": self._extract_domain(normalized_url),
-            "threat_level": threat_level,
-            "confidence_score": confidence_score,
-            "analysis_results": analysis_results,
-            "scan_types": scan_types or [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
-        }
+        # Convert legacy analysis results to typed results
+        scan_results = []
+        scan_types_list = scan_types or [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
+        
+        # Convert provider results to ProviderScanResult objects
+        for provider_name, provider_data in analysis_results.items():
+            if isinstance(provider_data, dict) and "provider" in provider_data:
+                scan_results.append(ProviderScanResult.from_dict(provider_data))
+        
+        # Create and return typed AnalysisResults
+        return AnalysisResults(
+            normalized_url=normalized_url,
+            domain=self._extract_domain(normalized_url),
+            threat_level=threat_level.value if threat_level else None,
+            confidence_score=confidence_score,
+            scan_results=scan_results,
+            scan_types=[scan_type.value for scan_type in scan_types_list]
+        )
     
     async def _perform_comprehensive_analysis(self, url: str, scan_types: List[ScanType]) -> Dict[str, Any]:
         """
@@ -182,6 +194,7 @@ class URLAnalysisService:
     async def _scan_virustotal(self, url: str) -> Dict[str, Any]:
         """
         Scan URL using VirusTotal API.
+        Returns dictionary for compatibility with _perform_comprehensive_analysis.
         """
         if not self.providers["virustotal"]["enabled"]:
             return {}
@@ -234,33 +247,40 @@ class URLAnalysisService:
                                 if threat_type not in threat_types:
                                     threat_types.append(threat_type)
                     
+                    # Create ProviderScanResult
+                    metadata = ProviderMetadata(
+                        positives=positives,
+                        total=total,
+                        scan_date=report.get("scan_date")
+                    )
+                    
+                    scan_result = ProviderScanResult(
+                        provider="virustotal",
+                        threat_detected=threat_detected,
+                        threat_types=threat_types,
+                        confidence_score=confidence_score,
+                        raw_response=report,
+                        metadata=metadata
+                    )
+                    
                     return {
-                        "virustotal": {
-                            "provider": "virustotal",
-                            "threat_detected": threat_detected,
-                            "threat_types": threat_types,
-                            "confidence_score": confidence_score,
-                            "raw_response": report,
-                            "metadata": {
-                                "positives": positives,
-                                "total": total,
-                                "scan_date": report.get("scan_date")
-                            }
-                        }
+                        "virustotal": scan_result.to_dict()
                     }
         
         except Exception as e:
+            scan_result = ProviderScanResult(
+                provider="virustotal",
+                threat_detected=False,
+                error=str(e)
+            )
             return {
-                "virustotal": {
-                    "provider": "virustotal",
-                    "threat_detected": False,
-                    "error": str(e)
-                }
+                "virustotal": scan_result.to_dict()
             }
     
     async def _scan_safe_browsing(self, url: str) -> Dict[str, Any]:
         """
         Scan URL using Google Safe Browsing API.
+        Returns dictionary for compatibility with _perform_comprehensive_analysis.
         """
         if not self.providers["safebrowsing"]["enabled"]:
             return {}
@@ -307,31 +327,36 @@ class URLAnalysisService:
                     
                     confidence_score = 95 if threat_detected else 0
                     
+                    # Create ProviderScanResult
+                    metadata = ProviderMetadata(matches_count=len(threat_matches))
+                    
+                    scan_result = ProviderScanResult(
+                        provider="safebrowsing",
+                        threat_detected=threat_detected,
+                        threat_types=threat_types,
+                        confidence_score=confidence_score,
+                        raw_response=result,
+                        metadata=metadata
+                    )
+                    
                     return {
-                        "safebrowsing": {
-                            "provider": "safebrowsing",
-                            "threat_detected": threat_detected,
-                            "threat_types": threat_types,
-                            "confidence_score": confidence_score,
-                            "raw_response": result,
-                            "metadata": {
-                                "matches_count": len(threat_matches)
-                            }
-                        }
+                        "safebrowsing": scan_result.to_dict()
                     }
         
         except Exception as e:
+            scan_result = ProviderScanResult(
+                provider="safebrowsing",
+                threat_detected=False,
+                error=str(e)
+            )
             return {
-                "safebrowsing": {
-                    "provider": "safebrowsing",
-                    "threat_detected": False,
-                    "error": str(e)
-                }
+                "safebrowsing": scan_result.to_dict()
             }
     
     async def _scan_urlvoid(self, url: str) -> Dict[str, Any]:
         """
         Scan URL using URLVoid API.
+        Returns dictionary for compatibility with _perform_comprehensive_analysis.
         """
         if not self.providers["urlvoid"]["enabled"]:
             return {}
@@ -363,27 +388,33 @@ class URLAnalysisService:
                     if threat_detected:
                         threat_types = ["suspicious", "malware"]
                     
+                    # Create ProviderScanResult
+                    metadata = ProviderMetadata(
+                        detections=detections,
+                        engines_count=engines_count
+                    )
+                    
+                    scan_result = ProviderScanResult(
+                        provider="urlvoid",
+                        threat_detected=threat_detected,
+                        threat_types=threat_types,
+                        confidence_score=confidence_score,
+                        raw_response=result,
+                        metadata=metadata
+                    )
+                    
                     return {
-                        "urlvoid": {
-                            "provider": "urlvoid",
-                            "threat_detected": threat_detected,
-                            "threat_types": threat_types,
-                            "confidence_score": confidence_score,
-                            "raw_response": result,
-                            "metadata": {
-                                "detections": detections,
-                                "engines_count": engines_count
-                            }
-                        }
+                        "urlvoid": scan_result.to_dict()
                     }
         
         except Exception as e:
+            scan_result = ProviderScanResult(
+                provider="urlvoid",
+                threat_detected=False,
+                error=str(e)
+            )
             return {
-                "urlvoid": {
-                    "provider": "urlvoid",
-                    "threat_detected": False,
-                    "error": str(e)
-                }
+                "urlvoid": scan_result.to_dict()
             }
     
     def _analyze_reputation(self, url: str, reputation_data: Optional[URLReputation] = None) -> Dict[str, Any]:
@@ -409,40 +440,50 @@ class URLAnalysisService:
             threat_detected = reputation_score < 70
             confidence_score = min(total_checks * 2, 100)  # More checks = higher confidence
 
-            # TODO Implement ReputationScanResult Class Based on this.
+            # Create ProviderScanResult for reputation analysis
+            metadata = ProviderMetadata(
+                reputation_score=reputation_score,
+                total_checks=total_checks,
+                malicious_checks=malicious_checks,
+                first_seen=reputation_data.get("first_seen"),
+                last_seen=reputation_data.get("last_seen")
+            )
+            
+            scan_result = ProviderScanResult(
+                provider="internal",
+                threat_detected=threat_detected,
+                threat_types=["low_reputation"] if threat_detected else [],
+                confidence_score=confidence_score,
+                metadata=metadata
+            )
+            
             return {
-                "reputation": {
-                    "provider": "internal",
-                    "threat_detected": threat_detected,
-                    "threat_types": ["low_reputation"] if threat_detected else [],
-                    "confidence_score": confidence_score,
-                    "metadata": {
-                        "reputation_score": reputation_score,
-                        "total_checks": total_checks,
-                        "malicious_checks": malicious_checks,
-                        "first_seen": reputation_data.get("first_seen"),
-                        "last_seen": reputation_data.get("last_seen")
-                    }
-                }
+                "reputation": scan_result.to_dict()
             }
         
+        # Create ProviderScanResult for neutral reputation
+        metadata = ProviderMetadata(
+            reputation_score=50,  # Neutral for new domains
+            total_checks=0,
+            malicious_checks=0
+        )
+        
+        scan_result = ProviderScanResult(
+            provider="internal",
+            threat_detected=False,
+            threat_types=[],
+            confidence_score=0,
+            metadata=metadata
+        )
+        
         return {
-            "reputation": {
-                "provider": "internal",
-                "threat_detected": False,
-                "threat_types": [],
-                "confidence_score": 0,
-                "metadata": {
-                    "reputation_score": 50,  # Neutral for new domains
-                    "total_checks": 0,
-                    "malicious_checks": 0
-                }
-            }
+            "reputation": scan_result.to_dict()
         }
     
     async def _analyze_content(self, url: str) -> Dict[str, Any]:
         """
         Analyze URL content using AI and pattern matching.
+        Returns dictionary for compatibility with _perform_comprehensive_analysis.
         """
         try:
             # Fetch page content
@@ -473,32 +514,39 @@ class URLAnalysisService:
                         len(suspicious_patterns) * 20
                     )
                     
+                    # Create ProviderScanResult
+                    metadata = ProviderMetadata(
+                        ai_analysis=ai_analysis,
+                        suspicious_patterns=suspicious_patterns,
+                        content_length=len(content)
+                    )
+                    
+                    scan_result = ProviderScanResult(
+                        provider="internal",
+                        threat_detected=threat_detected,
+                        threat_types=list(set(threat_types)),
+                        confidence_score=min(confidence_score, 100),
+                        metadata=metadata
+                    )
+                    
                     return {
-                        "content": {
-                            "provider": "internal",
-                            "threat_detected": threat_detected,
-                            "threat_types": list(set(threat_types)),
-                            "confidence_score": min(confidence_score, 100),
-                            "metadata": {
-                                "ai_analysis": ai_analysis,
-                                "suspicious_patterns": suspicious_patterns,
-                                "content_length": len(content)
-                            }
-                        }
+                        "content": scan_result.to_dict()
                     }
         
         except Exception as e:
+            scan_result = ProviderScanResult(
+                provider="internal",
+                threat_detected=False,
+                error=str(e)
+            )
             return {
-                "content": {
-                    "provider": "internal",
-                    "threat_detected": False,
-                    "error": str(e)
-                }
+                "content": scan_result.to_dict()
             }
     
     async def _analyze_technical(self, url: str) -> Dict[str, Any]:
         """
         Perform technical analysis of URL structure and hosting.
+        Returns dictionary for compatibility with _perform_comprehensive_analysis.
         """
         try:
             parsed_url = urlparse(url)
@@ -535,28 +583,34 @@ class URLAnalysisService:
             threat_detected = len(suspicious_indicators) >= 2
             confidence_score = len(suspicious_indicators) * 25
             
+            # Create ProviderScanResult
+            metadata = ProviderMetadata(
+                suspicious_indicators=suspicious_indicators,
+                domain=domain,
+                path_length=len(parsed_url.path),
+                subdomain_count=len(domain.split('.')) - 2
+            )
+            
+            scan_result = ProviderScanResult(
+                provider="internal",
+                threat_detected=threat_detected,
+                threat_types=["suspicious_structure"] if threat_detected else [],
+                confidence_score=min(confidence_score, 100),
+                metadata=metadata
+            )
+            
             return {
-                "technical": {
-                    "provider": "internal",
-                    "threat_detected": threat_detected,
-                    "threat_types": ["suspicious_structure"] if threat_detected else [],
-                    "confidence_score": min(confidence_score, 100),
-                    "metadata": {
-                        "suspicious_indicators": suspicious_indicators,
-                        "domain": domain,
-                        "path_length": len(parsed_url.path),
-                        "subdomain_count": len(domain.split('.')) - 2
-                    }
-                }
+                "technical": scan_result.to_dict()
             }
         
         except Exception as e:
+            scan_result = ProviderScanResult(
+                provider="internal",
+                threat_detected=False,
+                error=str(e)
+            )
             return {
-                "technical": {
-                    "provider": "internal",
-                    "threat_detected": False,
-                    "error": str(e)
-                }
+                "technical": scan_result.to_dict()
             }
     
     def _detect_suspicious_patterns(self, content: str) -> List[str]:

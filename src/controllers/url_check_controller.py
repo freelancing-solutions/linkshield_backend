@@ -18,6 +18,10 @@ from src.models.url_check import (
     URLCheck, ScanResult, URLReputation,
     CheckStatus, ThreatLevel, ScanType
 )
+from src.models.analysis_results import (
+    AnalysisResults, ProviderScanResult, convert_legacy_analysis_results,
+    convert_analysis_results_to_dict_for_storage
+)
 from src.models.user import User, UserRole
 from src.services.url_analysis_service import (
     URLAnalysisService, URLAnalysisError, InvalidURLError
@@ -757,7 +761,11 @@ class URLCheckController(BaseController):
                 analysis_results = await self.url_analysis_service.analyze_url(
                     url=url, scan_types=scan_types, reputation_data=reputation_data)
                 
-                # Upd ate URL check with results
+                # Convert to AnalysisResults if it's still a dict (backward compatibility)
+                if isinstance(analysis_results, dict):
+                    analysis_results = convert_legacy_analysis_results(analysis_results)
+                
+                # Update URL check with results
                 self._update_url_check_with_results(url_check=url_check, analysis_results=analysis_results)
                 
                 # Create scan result records
@@ -765,7 +773,7 @@ class URLCheckController(BaseController):
                 
                 # Update domain reputation based on analysis
                 self._update_domain_reputation_from_analysis(
-                    session=session, domain=domain,analysis_results=analysis_results,
+                    session=session, domain=domain, analysis_results=analysis_results,
                     reputation_data=reputation_data
                 )
                 
@@ -872,8 +880,16 @@ class URLCheckController(BaseController):
         """
         try:
             async with self.get_db_session() as session:
+                # Create a minimal AnalysisResults object for reputation update
+                from src.models.analysis_results import AnalysisResults
+                minimal_analysis = AnalysisResults(
+                    threat_level=threat_level,
+                    confidence_score=0.5,  # Default confidence
+                    scan_results=[],
+                    reputation_data=None
+                )
                 self._update_domain_reputation_from_analysis(
-                    session, domain, threat_level, None
+                    session, domain, minimal_analysis, None
                 )
                 session.commit()
         except Exception as e:
@@ -897,7 +913,7 @@ class URLCheckController(BaseController):
             )
             return reputation if reputation else None
 
-    def _update_url_check_with_results(self, url_check: URLCheck, analysis_results: Dict[str, Any]) -> None:
+    def _update_url_check_with_results(self, url_check: URLCheck, analysis_results: AnalysisResults) -> None:
         """Update URL check record with analysis results.
         
         Args:
@@ -906,13 +922,13 @@ class URLCheckController(BaseController):
             analysis_results: Analysis results from URLAnalysisService
         """
         url_check.status = CheckStatus.COMPLETED
-        url_check.threat_level = analysis_results.get('threat_level')
-        url_check.confidence_score = analysis_results.get('confidence_score')
-        url_check.analysis_results = analysis_results
+        url_check.threat_level = analysis_results.threat_level
+        url_check.confidence_score = analysis_results.confidence_score
+        url_check.analysis_results = convert_analysis_results_to_dict_for_storage(analysis_results)  # Convert to dict for storage
         url_check.scan_completed_at = utc_datetime()
 
     @staticmethod
-    def _create_scan_results(session, url_check_id: uuid.UUID, analysis_results: Dict[str, Any]) -> None:
+    def _create_scan_results(session, url_check_id: uuid.UUID, analysis_results: AnalysisResults) -> None:
         """Create scan result records from analysis results.
         
         Args:
@@ -920,13 +936,13 @@ class URLCheckController(BaseController):
             url_check_id: URL check ID
             analysis_results: Analysis results containing scan data
         """
-        for scan_result_data in analysis_results.get('scan_results', []):
+        for scan_result_data in analysis_results.scan_results:
             scan_result = ScanResult(
                 id=uuid.uuid4(),
                 url_check_id=url_check_id,
-                scan_type=scan_result_data['scan_type'],
-                threat_types=scan_result_data.get('threat_types', []),
-                confidence_score=scan_result_data['confidence_score'],
+                scan_type=scan_result_data.scan_type,
+                threat_types=scan_result_data.threat_types,
+                confidence_score=scan_result_data.confidence_score,
                 created_at=utc_datetime()
             )
             session.add(scan_result)
@@ -935,15 +951,15 @@ class URLCheckController(BaseController):
     def _update_domain_reputation_from_analysis(
             session,
         domain: str, 
-        analysis_results: Dict[str, Any], reputation_data: Optional[Dict[str, Any]] = None
+        analysis_results: AnalysisResults, reputation_data: Optional[URLReputation] = None
     ) -> None:
         """Update domain reputation based on analysis results.
         
         Args:
             session: Database session
             domain: Domain to update reputation for
-            threat_level: Detected threat level
-            confidence_score: Analysis confidence score
+            analysis_results: Analysis results from URLAnalysisService
+            reputation_data: Existing reputation data (optional)
         """
         if not reputation_data:
             # Create new reputation record
@@ -958,7 +974,7 @@ class URLCheckController(BaseController):
         
         # Update reputation metrics
         reputation_data.total_scans += 1
-        threat_level = analysis_results.get('threat_level')
+        threat_level = analysis_results.threat_level
 
         if threat_level in [ThreatLevel.HIGH, ThreatLevel.CRITICAL]:
             reputation_data.malicious_count += 1
@@ -966,7 +982,6 @@ class URLCheckController(BaseController):
         # Calculate new reputation score
         malicious_ratio = reputation_data.malicious_count / reputation_data.total_scans
         reputation_data.reputation_score = max(0, min(100, int(100 * (1 - malicious_ratio))))
-        # Update ReputationData
 
     async def _send_webhook_notification(
         self,

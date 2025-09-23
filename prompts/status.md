@@ -21,6 +21,7 @@
 | Task ID | Description | Status | Date | Notes |
 |---------|-------------|--------|------|-------|
 | replace-manual-commits | Replace manual commit() calls with ensure_consistent_commit_rollback helper across all controllers | In Progress | 2025-01-23 | Started with UserController, replacing manual commits with standardized helper method |
+| analysis-results-refactoring | Refactor analysis results to use typed classes instead of dictionaries | In Progress | 2025-09-23 | Created typed classes, refactored services and controllers, fixed circular imports and dependency issues |
 
 ## Summary
 

@@ -24,13 +24,12 @@ async def get_security_service() -> SecurityService:
     return SecurityService()
 
 async def get_auth_service(
-    email_service: EmailService = Depends(get_email_service),
     security_service: SecurityService = Depends(get_security_service)
     ) -> AuthService:
     """
     Get AuthService instance without database session dependency.
     """
-    return AuthService(email_service=email_service, security_service=security_service)
+    return AuthService(security_service=security_service)
 
 async def get_admin_service() -> AdminService:
     """
