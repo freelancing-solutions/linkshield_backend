@@ -21,7 +21,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from passlib.hash import bcrypt
@@ -84,13 +84,10 @@ class User(Base):
     # Subscription information
     subscription_plan = Column(Enum(SubscriptionPlan), default=SubscriptionPlan.FREE, nullable=False)
     subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
-    stripe_customer_id = Column(String(100), nullable=True, index=True)
-    
     # Usage tracking
     daily_check_count = Column(Integer, default=0, nullable=False)
     total_check_count = Column(Integer, default=0, nullable=False)
     last_check_reset = Column(DateTime(timezone=True), default=func.now(), nullable=False)
-    
     # Profile information
     avatar_url = Column(String(500), nullable=True)
     bio = Column(Text, nullable=True)
@@ -126,6 +123,10 @@ class User(Base):
     def check_password(self, password: str) -> bool:
         """Check if provided password matches the stored hash."""
         return bcrypt.verify(password, self.password_hash)
+
+    @property
+    def full_name(self) -> str:
+        return self.get_full_name()
 
     def get_full_name(self) -> str:
         """
@@ -218,23 +219,19 @@ class User(Base):
         
         if include_sensitive:
             data.update({
-                "stripe_customer_id": self.stripe_customer_id,
                 "subscription_expires_at": self.subscription_expires_at.isoformat() if self.subscription_expires_at else None,
                 "two_factor_secret": self.two_factor_secret,
             })
         
         return data
 
-
 class UserSession(Base):
     """
     User session model for tracking active sessions.
     """
     __tablename__ = "user_sessions"
-    
     # Primary key
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    
     # Foreign key to user
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     
@@ -288,6 +285,7 @@ class APIKey(Base):
     
     # API key information
     name = Column(String(100), nullable=False)
+    description = Column(String(255), nullable=True)
     key_hash = Column(String(255), unique=True, index=True, nullable=False)
     key_prefix = Column(String(10), nullable=False)  # First few characters for identification
     
@@ -302,7 +300,8 @@ class APIKey(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=True)
-    
+
+    permissions = Column(JSONB)
     # Relationships
     user = relationship("User", back_populates="api_keys")
     

@@ -10,7 +10,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 import bcrypt
 import jwt
@@ -106,6 +106,33 @@ class AuthService:
         """
         return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
     
+    def validate_email_format(self, email: str) -> str:
+        """
+        Validate and normalize email format.
+
+        Args:
+            email: Email address to validate
+
+        Returns:
+            Normalized email address
+
+        Raises:
+            AuthenticationError: If email format is invalid
+        """
+        try:
+            validated_email = validate_email(email)
+            # `ValidatedEmail.normalized` is the recommended attribute
+            return getattr(validated_email, 'normalized', validated_email.email)
+        except EmailNotValidError as e:
+            raise AuthenticationError(f"Invalid email format: {str(e)}")
+
+    def validate_email(self, email: str) -> str:
+        """Compatibility alias for validate_email_format used by controllers/routes.
+
+        Returns the normalized email or raises AuthenticationError on invalid input.
+        """
+        return self.validate_email_format(email)
+
     def is_password_strong(self, password: str) -> bool:
         """
         Check if password meets strength requirements.
@@ -125,7 +152,11 @@ class AuthService:
         has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
         
         return has_upper and has_lower and has_digit and has_special
-    
+
+    def check_password_strength(self, password: str) -> bool:
+        """Compatibility alias for is_password_strong used by controllers/routes."""
+        return self.is_password_strong(password)
+
     def create_access_token(
         self, 
         user_id: uuid.UUID, 
@@ -207,25 +238,6 @@ class AuthService:
             Hashed API key
         """
         return hashlib.sha256(api_key.encode()).hexdigest()
-    
-    def validate_email_format(self, email: str) -> str:
-        """
-        Validate and normalize email format.
-        
-        Args:
-            email: Email address to validate
-            
-        Returns:
-            Normalized email address
-            
-        Raises:
-            AuthenticationError: If email format is invalid
-        """
-        try:
-            validated_email = validate_email(email)
-            return validated_email.email
-        except EmailNotValidError as e:
-            raise AuthenticationError(f"Invalid email format: {str(e)}")
     
     def is_account_locked(self, failed_attempts: int, locked_until: Optional[datetime]) -> bool:
         """

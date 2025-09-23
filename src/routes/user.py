@@ -2,145 +2,76 @@
 """
 LinkShield Backend User Management Routes
 
-API routes for user authentication, registration, profile management, and account settings.
+Thin HTTP layer; all business logic & response models imported from controller.
 """
+from datetime import datetime
+from typing import List, Optional, Dict
 
-import uuid
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, List, Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, BackgroundTasks, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
 
-from src.config.database import get_db_session, AsyncSession
+from src.authentication.dependencies import get_current_user
+from src.config.database import get_db_session
 from src.config.settings import get_settings
-from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken, UserRole, SubscriptionPlan
-from src.models.subscription import UserSubscription, SubscriptionPlan
-from src.services.security_service import SecurityService, AuthenticationError, RateLimitError
-from src.authentication.auth_service import AuthService,  InvalidCredentialsError
-from src.controllers.user_controller import UserController
-from src.services.email_service import EmailService
-
-from src.services.depends import (
-    get_security_service, get_auth_service, get_email_service
+from src.models.user import User
+from src.services.security_service import SecurityService, AuthenticationError
+from src.authentication.auth_service import AuthService
+from src.controllers.user_controller import (
+    UserController,
+    UserResponse,
+    LoginResponse,
+    APIKeyResponse,
+    SessionResponse,
 )
+from src.services.depends import get_security_service, get_auth_service, get_email_service
 
-
-# Initialize router
+# ------------------------------------------------------------------
+# Router
+# ------------------------------------------------------------------
 router = APIRouter(prefix="/api/v1/user", tags=["User Management"])
 security = HTTPBearer()
 settings = get_settings()
 
 
-# Dependency injection functions
+# ------------------------------------------------------------------
+# Dependency injection
+# ------------------------------------------------------------------
 def get_user_controller(
     security_service: SecurityService = Depends(get_security_service),
     auth_service: AuthService = Depends(get_auth_service),
-    email_service: EmailService = Depends(get_email_service) ) -> UserController:
-    """Get UserController instance with refactored service dependencies."""
+    email_service = Depends(get_email_service),
+) -> UserController:
     return UserController(
         security_service=security_service,
         auth_service=auth_service,
-        email_service=email_service)
+        email_service=email_service,
+    )
 
 
-# Request/Response Models
+# ------------------------------------------------------------------
+# Shared request models (kept in routes for FastAPI validation)
+# ------------------------------------------------------------------
 class UserRegistrationRequest(BaseModel):
-    """
-    User registration request model.
-    """
-    email: EmailStr = Field(..., description="User email address")
-    password: str = Field(..., min_length=8, max_length=128, description="User password")
-    full_name: str = Field(..., min_length=1, max_length=100, description="User full name")
-    company: Optional[str] = Field(None, max_length=100, description="Company name")
-    accept_terms: bool = Field(..., description="Terms of service acceptance")
-    marketing_consent: bool = Field(default=False, description="Marketing communications consent")
-    
-    @validator('password')
-    def validate_password(cls, v):
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
-        
-        # Check for at least one uppercase, lowercase, digit, and special character
-        has_upper = any(c.isupper() for c in v)
-        has_lower = any(c.islower() for c in v)
-        has_digit = any(c.isdigit() for c in v)
-        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in v)
-        
-        if not all([has_upper, has_lower, has_digit, has_special]):
-            raise ValueError("Password must contain uppercase, lowercase, digit, and special character")
-        
-        return v
-    
-    @validator('accept_terms')
-    def validate_terms(cls, v):
-        if not v:
-            raise ValueError("Terms of service must be accepted")
-        return v
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    first_name: Optional[str] = Field(None, max_length=100)
+    last_name: Optional[str] = Field(None, max_length=100)
+    username: Optional[str] = Field(None, max_length=50)
+    avatar_url: Optional[str] = Field(None, max_length=500)
+    accept_terms: bool
+    marketing_consent: bool = False
 
 
 class UserLoginRequest(BaseModel):
-    """
-    User login request model.
-    """
-    email: EmailStr = Field(..., description="User email address")
-    password: str = Field(..., description="User password")
-    remember_me: bool = Field(default=False, description="Extended session duration")
-    device_info: Optional[Dict[str, str]] = Field(None, description="Device information")
-
-
-# Response models for ORM → Pydantic serialization
-class SubscriptionPlanResponse(BaseModel):
-    """
-    Serializable subscription plan model.
-    """
-    id: int
-    name: str
-    price: float
-    active: bool
-
-    class Config:
-        from_attributes = True
-
-
-class UserResponse(BaseModel):
-    """
-    User response model with serialized subscription plan.
-    """
-    id: uuid.UUID
-    email: str
-    full_name: str
-    company: Optional[str]
-    role: UserRole
-    subscription_plan: Optional[SubscriptionPlanResponse]  # Use serializable Pydantic model
-    is_active: bool
-    is_verified: bool
-    profile_picture_url: Optional[str]
-    created_at: datetime
-    last_login_at: Optional[datetime]
-
-    class Config:
-        from_attributes = True
-
-
-class LoginResponse(BaseModel):
-    """
-    Login response model.
-    """
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int
-    user: UserResponse
-    session_id: str
+    email: EmailStr
+    password: str
+    remember_me: bool = False
+    device_info: Optional[Dict[str, str]] = None
 
 
 class ProfileUpdateRequest(BaseModel):
-    """
-    Profile update request model.
-    """
     full_name: Optional[str] = Field(None, min_length=1, max_length=100)
     company: Optional[str] = Field(None, max_length=100)
     profile_picture_url: Optional[str] = Field(None, max_length=500)
@@ -150,265 +81,175 @@ class ProfileUpdateRequest(BaseModel):
 
 
 class PasswordChangeRequest(BaseModel):
-    """
-    Password change request model.
-    """
-    current_password: str = Field(..., description="Current password")
-    new_password: str = Field(..., min_length=8, max_length=128, description="New password")
-    
-    @validator('new_password')
-    def validate_new_password(cls, v):
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
-        
-        has_upper = any(c.isupper() for c in v)
-        has_lower = any(c.islower() for c in v)
-        has_digit = any(c.isdigit() for c in v)
-        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in v)
-        
-        if not all([has_upper, has_lower, has_digit, has_special]):
-            raise ValueError("Password must contain uppercase, lowercase, digit, and special character")
-        
-        return v
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class ForgotPasswordRequest(BaseModel):
-    """
-    Password reset request model.
-    """
-    email: EmailStr = Field(..., description="User email address")
+    email: EmailStr
 
 
 class ResetPasswordRequest(BaseModel):
-    """
-    Password reset confirmation model.
-    """
-    token: str = Field(..., description="Reset token")
-    new_password: str = Field(..., min_length=8, max_length=128, description="New password")
-    
-    @validator('new_password')
-    def validate_new_password(cls, v):
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
-        
-        has_upper = any(c.isupper() for c in v)
-        has_lower = any(c.islower() for c in v)
-        has_digit = any(c.isdigit() for c in v)
-        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in v)
-        
-        if not all([has_upper, has_lower, has_digit, has_special]):
-            raise ValueError("Password must contain uppercase, lowercase, digit, and special character")
-        
-        return v
+    token: str
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class EmailVerificationRequest(BaseModel):
-    """
-    Email verification request model.
-    """
-    token: str = Field(..., description="Verification token")
+    token: str
 
 
 class ResendVerificationRequest(BaseModel):
-    """
-    Resend verification request model.
-    """
-    email: EmailStr = Field(..., description="User email address")
+    email: EmailStr
 
 
 class CreateAPIKeyRequest(BaseModel):
-    """
-    API key creation request model.
-    """
-    name: str = Field(..., min_length=1, max_length=100, description="API key name")
-    description: Optional[str] = Field(None, max_length=500, description="API key description")
-    expires_at: Optional[datetime] = Field(None, description="Expiration date")
-    permissions: List[str] = Field(default=["url_check"], description="API key permissions")
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    expires_at: Optional[datetime] = None
+    permissions: List[str] = ["url_check"]
 
 
-class APIKeyResponse(BaseModel):
-    """
-    API key response model.
-    """
-    id: uuid.UUID
-    name: str
-    description: Optional[str]
-    key_preview: str  # Only first 8 characters
-    permissions: List[str]
-    is_active: bool
-    expires_at: Optional[datetime]
-    last_used_at: Optional[datetime]
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
 
+# ------------------------------------------------------------------
+# Routes (thin layer) – now with full doc-strings
+# ------------------------------------------------------------------
 
-class SessionResponse(BaseModel):
-    """
-    User session response model.
-    """
-    id: uuid.UUID
-    device_info: Optional[Dict[str, Any]]
-    ip_address: Optional[str]
-    user_agent: Optional[str]
-    is_active: bool
-    expires_at: datetime
-    last_activity_at: datetime
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-
-# Dependency functions
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db_session)) -> User:
-    """
-    Get current authenticated user.
-    """
-    try:
-        # Initialize services without database session
-        security_service = SecurityService()
-        
-        # Verify JWT token
-        token_data = security_service.verify_jwt_token(credentials.credentials)
-        user_id = token_data.get("user_id")
-        session_id = token_data.get("session_id")
-        
-        if not user_id or not session_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        
-        # Validate session using database operations directly
-        is_valid, session = await _validate_user_session_in_db(db, session_id, user_id)
-        if not is_valid:
-            raise HTTPException(status_code=401, detail="Session expired")
-        
-        # Get user from database
-        user = await _get_user_by_id(db, user_id)
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="User not found or inactive")
-        
-        return user
-    
-    except AuthenticationError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Authentication failed")
-
-
-async def check_rate_limits(request: Request, db: Session = Depends(get_db_session)) -> None:
-    """
-    Check rate limits for authentication endpoints.
-    """
-    # Initialize SecurityService without database session
-    security_service = SecurityService()
-    client_ip = request.client.host
-    
-    # Rate limit checking logic would need to be implemented in controller
-    # For now, we'll use SecurityService for validation logic only
-    # TODO: Move rate limit data storage to controller
-    pass
-
-
-# Authentication Routes
 @router.post("/register", response_model=UserResponse, summary="Register new user")
 async def register_user(
     request: UserRegistrationRequest,
     background_tasks: BackgroundTasks,
     req: Request,
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> UserResponse:
     """
     Register a new user account.
-    
-    **Requirements:**
-    - Valid email address
-    - Strong password (8+ chars, uppercase, lowercase, digit, special char)
-    - Acceptance of terms of service
-    
-    **Process:**
-    1. Validates input data
-    2. Checks for existing users
-    3. Creates user account
-    4. Sends email verification
-    5. Returns user profile
 
+    **Request body** – `UserRegistrationRequest`
+    - `email`: valid e-mail address (unique)
+    - `password`: 8-128 chars, must contain upper, lower, digit, special
+    - `first_name`, `last_name`, `username`, `avatar_url`: optional
+    - `accept_terms`: must be `true`
+    - `marketing_consent`: optional boolean (default `false`)
+
+    **Response** – `UserResponse` (full serialized user profile)
+
+    **Side-effects**
+    - Creates user row (password hashed)
+    - Generates e-mail verification token
+    - Queues verification e-mail (background task)
+
+    **Rate-limit**: 5 registrations / hour / IP
+
+    **Errors**:
+    - 400  – validation or terms not accepted
+    - 409  – e-mail already registered
+    - 429  – rate-limit exceeded
     """
-    return await controller.register_user(request, background_tasks, req)
+    return await controller.register_user(request_model=request, background_tasks=background_tasks, req=req)
 
 
 @router.post("/login", response_model=LoginResponse, summary="User login")
 async def login_user(
     request: UserLoginRequest,
     req: Request,
-    
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> LoginResponse:
     """
-    Authenticate user and create session.
-    
-    **Features:**
-    - Email/password authentication
-    - Session management
-    - Device tracking
-    - Rate limiting protection
+    Authenticate user and obtain an access token.
+
+    **Request body** – `UserLoginRequest`
+    - `email`: registered e-mail
+    - `password`: account password
+    - `remember_me`: extend session to 30 d (default 1 d)
+    - `device_info`: optional dict for audit
+
+    **Response** – `LoginResponse`
+    - `access_token`: JWT signed by server
+    - `token_type`: always "bearer"
+    - `expires_in`: seconds until expiry
+    - `user`: serialized user profile
+    - `session_id`: UUID of new session
+
+    **Rate-limit**: 10 login attempts / 15 min / IP
+
+    **Errors**:
+    - 401 – bad credentials
+    - 423 – account locked (too many failures)
+    - 429 – rate-limit exceeded
     """
-    return await controller.login_user(request, req)
+    return await controller.login_user(request_model=request, req=req)
 
 
 @router.post("/logout", summary="User logout")
 async def logout_user(
     user: User = Depends(get_current_user),
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> None:
     """
-    Logout user and invalidate session.
-    
+    Invalidate the caller’s session (or all sessions if token missing).
+
+    Requires valid bearer token. Returns 204 No Content on success.
     """
-    return await controller.logout_user(user, credentials)
+    await controller.logout_user(user=user, credentials=credentials)
 
 
-# Profile Management Routes
 @router.get("/profile", response_model=UserResponse, summary="Get user profile")
 async def get_user_profile(
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> UserResponse:
     """
-    Get current user profile.
-    
-    Delegates business logic to UserController.
+    Return the authenticated user’s full profile.
+
+    **Response** – `UserResponse`
     """
-    return await controller.get_user_profile(user)
+    return await controller.get_user_profile(user=user)
 
 
 @router.put("/profile", response_model=UserResponse, summary="Update user profile")
 async def update_user_profile(
     request: ProfileUpdateRequest,
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> UserResponse:
     """
-    Update user profile information.
-    
-    Delegates business logic to UserController.
+    Update editable profile fields.
+
+    **Request body** – `ProfileUpdateRequest` (all fields optional)
+    - `full_name`
+    - `company`
+    - `profile_picture_url`
+    - `marketing_consent`
+    - `timezone`
+    - `language`
+
+    **Response** – updated `UserResponse`
     """
-    return await controller.update_user_profile(request, user)
+    return await controller.update_user_profile(request_model=request, user=user)
 
 
 @router.post("/change-password", summary="Change user password")
 async def change_password(
     request: PasswordChangeRequest,
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> None:
     """
-    Change user password.
-    
-    Delegates business logic to UserController.
+    Change password while authenticated.
+
+    **Request body** – `PasswordChangeRequest`
+    - `current_password`: must match stored hash
+    - `new_password`: must meet strength rules and differ from current
+
+    **Side-effects**
+    - Hashes new password
+    - Invalidates **all** existing sessions (forces re-login)
+
+    **Errors**:
+    - 400 – current password wrong / new password weak or identical
     """
-    return await controller.change_password(request, user)
+    await controller.change_password(request_model=request, user=user)
 
 
 @router.post("/forgot-password", summary="Request password reset")
@@ -416,217 +257,190 @@ async def forgot_password(
     request: ForgotPasswordRequest,
     req: Request,
     background_tasks: BackgroundTasks,
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> None:
     """
-    Request password reset email.
-    
-    Delegates business logic to UserController.
+    Request a password-reset e-mail.
+
+    **Request body** – `ForgotPasswordRequest`
+    - `email`: address to receive reset link
+
+    **Behavior**
+    - Always returns 204 (does not reveal whether e-mail exists)
+    - If account exists & active → generates single-use token (1 h expiry)
+    - Queues reset e-mail as background task
+
+    **Rate-limit**: 3 requests / hour / IP
     """
-    return await controller.forgot_password(request, req, background_tasks)
+    await controller.forgot_password(request_model=request, req=req, background_tasks=background_tasks)
 
 
 @router.post("/reset-password", summary="Reset password with token")
 async def reset_password(
     request: ResetPasswordRequest,
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> None:
     """
-    Reset password using reset token.
-    
-    Delegates business logic to UserController.
+    Complete password reset flow.
+
+    **Request body** – `ResetPasswordRequest`
+    - `token`: from e-mail link
+    - `new_password`: must meet strength rules
+
+    **Side-effects**
+    - Hashes new password
+    - Invalidates **all** sessions
+    - Marks token used
+
+    **Errors**:
+    - 400 – invalid, expired, or already-used token
     """
-    return await controller.reset_password(request)
+    await controller.reset_password(request_model=request)
 
 
 @router.post("/verify-email", summary="Verify email address")
 async def verify_email(
     request: EmailVerificationRequest,
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> UserResponse:
     """
-    Verify email address using verification token.
-    
-    Delegates business logic to UserController.
+    Verify e-mail address using token received in inbox.
+
+    **Request body** – `EmailVerificationRequest`
+    - `token`: 24-hour valid token
+
+    **Response** – updated `UserResponse` (`is_verified=true`)
+
+    **Errors**:
+    - 400 – invalid, expired, or already-used token
     """
-    return await controller.verify_email(request)
+    return await controller.verify_email(request_model=request)
 
 
 @router.post("/resend-verification", summary="Resend email verification")
 async def resend_verification(
     request: ResendVerificationRequest,
     background_tasks: BackgroundTasks,
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> None:
     """
-    Resend email verification.
-    
-    Delegates business logic to UserController.
+    Re-send verification e-mail for an unverified account.
+
+    **Request body** – `ResendVerificationRequest`
+    - `email`: address to re-send to
+
+    **Behavior**
+    - Returns 204 regardless of existence or verification state
+    - If unverified account exists → new token generated & e-mail queued
+
+    **Rate-limit**: silently enforced per IP
     """
-    return await controller.resend_verification(request, background_tasks)
+    await controller.resend_verification(request_model=request, background_tasks=background_tasks)
 
 
-# API Key Management Routes
 @router.get("/api-keys", response_model=List[APIKeyResponse], summary="Get user API keys")
 async def get_api_keys(
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> List[APIKeyResponse]:
     """
-    Get user's API keys.
-    
-    Delegates business logic to UserController.
+    List caller’s active API keys (metadata only – secrets are shown once at creation).
+
+    **Response** – `List[APIKeyResponse]`
+    - `id`, `name`, `description`, `key_preview` (first 8 chars)
+    - `permissions`, `is_active`, `expires_at`, `last_used_at`, `created_at`
     """
-    return await controller.get_api_keys(user)
+    return await controller.get_api_keys(user=user)
 
 
 @router.post("/api-keys", response_model=APIKeyResponse, summary="Create new API key")
 async def create_api_key(
     request: CreateAPIKeyRequest,
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> APIKeyResponse:
     """
-    Create a new API key.
-    
-    Delegates business logic to UserController.
+    Generate a new API key for programmatic access.
+
+    **Request body** – `CreateAPIKeyRequest`
+    - `name`: human-readable label
+    - `description`: optional
+    - `expires_at`: optional UTC datetime
+    - `permissions`: list of strings (default `["url_check"]`)
+
+    **Response** – `APIKeyResponse` (includes full key in `key_preview`)
+
+    **Limits**:
+    - Free tier: 3 keys max
+    - Premium tier: 10 keys max
+
+    **Errors**:
+    - 400 – limit reached or invalid permission
     """
-    return await controller.create_api_key(request, user)
+    response, _ = await controller.create_api_key(request_model=request, user=user)
+    return response
 
 
 @router.delete("/api-keys/{key_id}", summary="Delete API key")
 async def delete_api_key(
     key_id: str = Path(..., description="API key ID"),
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> None:
     """
-    Delete an API key.
-    
-    Delegates business logic to UserController.
+    Soft-delete (revoke) an API key.
+
+    **Path parameter**
+    - `key_id`: UUID of key to delete
+
+    **Response** – 204 No Content on success
+    **Errors** – 404 if key not found or not owned by caller
     """
-    return await controller.delete_api_key(key_id, user)
+    await controller.delete_api_key(key_id=key_id, user=user)
 
 
-# Session Management Routes
 @router.get("/sessions", response_model=List[SessionResponse], summary="Get user sessions")
 async def get_user_sessions(
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> List[SessionResponse]:
     """
-    Get user's active sessions.
-    
-    Delegates business logic to UserController.
+    List caller’s active sessions (excluding expired).
+
+    **Response** – `List[SessionResponse]`
+    - `id`, `device_info`, `ip_address`, `user_agent`
+    - `is_active`, `expires_at`, `last_activity_at`, `created_at`
     """
-    return await controller.get_user_sessions(user)
+    return await controller.get_user_sessions(user=user)
 
 
 @router.delete("/sessions/{session_id}", summary="Delete user session")
 async def delete_user_session(
     session_id: str = Path(..., description="Session ID"),
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> None:
     """
-    Delete a specific user session.
-    
-    Delegates business logic to UserController.
+    Terminate a specific session (log it out).
+
+    **Path parameter**
+    - `session_id`: UUID of session to terminate
+
+    **Response** – 204 No Content
+    **Errors** – 404 if session not found or not owned by caller
     """
-    return await controller.delete_user_session(session_id, user)
+    await controller.delete_user_session(session_id=session_id, user=user)
 
 
 @router.delete("/sessions", summary="Terminate all sessions")
 async def terminate_all_sessions(
     user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
+    controller: UserController = Depends(get_user_controller),
+) -> None:
     """
-    Terminate all user sessions except current one.
-    """
-    # Get current session ID from token (would need to be passed)
-    # For now, terminate all sessions
-    pass
+    Revoke **all** of the caller’s sessions **except the current one**
+    (effectively a global logout on all devices).
 
-
-# Email Verification Routes
-@router.post("/verify-email/{token}", summary="Verify email address")
-async def verify_email_with_token(
-    token: str = Path(..., description="Verification token"),
-    controller: UserController = Depends(get_user_controller)
-):
+    **Response** – 204 No Content
     """
-    Verify user email address with token from URL.
-    
-    Delegates business logic to UserController.
-    """
-    request = EmailVerificationRequest(token=token)
-    return await controller.verify_email(request)
-
-
-@router.post("/resend-verification", summary="Resend verification email")
-async def resend_verification_email(
-    background_tasks: BackgroundTasks,
-    user: User = Depends(get_current_user),
-    controller: UserController = Depends(get_user_controller)
-):
-    """
-    Resend email verification.
-    
-    Delegates business logic to UserController.
-    """
-    request = ResendVerificationRequest(email=user.email)
-    return await controller.resend_verification(request, background_tasks)
-
-
-# Helper functions for database operations
-async def _validate_user_session_in_db(db: Session, session_id: str, user_id: str) -> tuple[bool, Optional[UserSession]]:
-    """
-    Validate user session in database.
-    """
-    try:
-        session = db.query(UserSession).filter(
-            and_(
-                UserSession.id == session_id,
-                UserSession.user_id == user_id,
-                UserSession.is_active == True,
-                UserSession.expires_at > datetime.now(timezone.utc)
-            )
-        ).first()
-        
-        if session:
-            # Update last activity
-            session.last_activity_at = datetime.now(timezone.utc)
-            db.commit()
-            return True, session
-        
-        return False, None
-    except Exception:
-        return False, None
-
-
-async def _get_user_by_id(db: Session, user_id: str) -> Optional[User]:
-    """
-    Get user by ID from database.
-    """
-    try:
-        return db.query(User).filter(User.id == user_id).first()
-    except Exception:
-        return None
-
-
-# Background task functions
-async def send_verification_email(email: str, full_name: str, token: str):
-    """
-    Send email verification email.
-    """
-    # Implementation would depend on email service
-    print(f"Sending verification email to {email} with token {token}")
-
-
-async def send_password_reset_email(email: str, token: str):
-    """
-    Send password reset email.
-    """
-    # Implementation would depend on email service
-    print(f"Sending password reset email to {email} with token {token}")
+    await controller.terminate_all_sessions(user=user)

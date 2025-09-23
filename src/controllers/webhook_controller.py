@@ -1,14 +1,12 @@
 """Enhanced Webhook controller with task processing functionality."""
 
-from typing import Dict, Any, Optional, List, Callable
-from abc import ABC, abstractmethod
-
+from typing import Dict, Any, Optional, List, Callable, Protocol
 import logging
 import uuid
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import HTTPException, status, BackgroundTasks
+from fastapi import HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import get_settings
@@ -17,21 +15,35 @@ from src.models.task import BackgroundTask, TaskStatus, TaskType, TaskPriority
 from src.utils import utc_datetime
 
 
-class WebhookController(ABC):
+class DatabaseSessionProvider(Protocol):
+    """Protocol for database session management."""
+    @asynccontextmanager
+    async def get_db_session(self) -> AsyncSession:
+        """Get database session."""
+        ...
+
+
+class WebhookController:
     """Enhanced webhook controller with complete task processing."""
 
-    def __init__(self):
+    def __init__(self, session_provider: Optional[DatabaseSessionProvider] = None):
         self.settings = get_settings()
         self.webhook_service = get_webhook_service()
         self.logger = logging.getLogger(self.__class__.__name__)
+        self._session_provider = session_provider
 
-    @abstractmethod
+    def set_session_provider(self, provider: DatabaseSessionProvider) -> None:
+        """Set the database session provider."""
+        self._session_provider = provider
+
     @asynccontextmanager
     async def get_db_session(self) -> AsyncSession:
-        """Database session management."""
-        pass
+        """Get database session from provider."""
+        if not self._session_provider:
+            raise RuntimeError("Session provider not set")
+        async with self._session_provider.get_db_session() as session:
+            yield session
 
-    # Core task processing wrapper
     async def _execute_task_with_tracking(
             self,
             task_id: str,
@@ -41,27 +53,23 @@ class WebhookController(ABC):
     ) -> None:
         """Execute task function with automatic tracking and webhook delivery."""
         try:
-            # Mark task as running
             await self.update_task_progress(task_id, 0, TaskStatus.RUNNING)
 
-            # Execute the actual task function
             if asyncio.iscoroutinefunction(task_func):
                 result = await task_func(task_id, *args, **kwargs)
             else:
                 result = task_func(task_id, *args, **kwargs)
 
-            # Complete task with results
             await self.complete_task_with_webhook(task_id, result or {})
 
         except Exception as e:
             self.logger.error(f"Task {task_id} failed: {str(e)}")
             await self.fail_task_with_webhook(task_id, str(e))
 
-    # Task creation and management
     async def create_task(self, session: AsyncSession, task: BackgroundTask) -> None:
         """Create a new background task in the database."""
         session.add(task)
-        # Commit handled by context manager
+        await session.flush()
 
     async def update_task_status(
             self,
@@ -83,7 +91,7 @@ class WebhookController(ABC):
                 if error_message is not None:
                     task.error_message = error_message
                 task.updated_at = utc_datetime()
-                # Commit handled by context manager
+                await session.commit()
 
     async def get_task(self, task_id: str) -> Optional[BackgroundTask]:
         """Get a task by ID."""
@@ -103,7 +111,6 @@ class WebhookController(ABC):
         try:
             task_id = str(uuid.uuid4())
 
-            # Validate webhook URL if provided
             if callback_url and not self._validate_webhook_url(callback_url):
                 raise HTTPException(400, "Invalid webhook URL format")
 
@@ -121,6 +128,7 @@ class WebhookController(ABC):
 
             async with self.get_db_session() as session:
                 await self.create_task(session, task)
+                await session.commit()
 
             self.logger.info(f"Created task {task_id} of type {task_type.value}")
             return task_id
@@ -157,7 +165,6 @@ class WebhookController(ABC):
     ) -> None:
         """Complete task and send webhook notification."""
         try:
-            # Update task status
             await self.update_task_status(
                 task_id=task_id,
                 status=TaskStatus.COMPLETED,
@@ -165,13 +172,11 @@ class WebhookController(ABC):
                 result_data=result_data
             )
 
-            # Get task for webhook
             task = await self.get_task(task_id)
             if not task:
                 self.logger.error(f"Task {task_id} not found for webhook")
                 return
 
-            # Send webhook if URL provided
             webhook_url = callback_url or task.callback_url
             if webhook_url:
                 payload = {
@@ -205,20 +210,17 @@ class WebhookController(ABC):
     ) -> None:
         """Mark task as failed and send webhook notification."""
         try:
-            # Update task status
             await self.update_task_status(
                 task_id=task_id,
                 status=TaskStatus.FAILED,
                 error_message=error_message
             )
 
-            # Get task for webhook
             task = await self.get_task(task_id)
             if not task:
                 self.logger.error(f"Task {task_id} not found for webhook")
                 return
 
-            # Send webhook if URL provided
             webhook_url = callback_url or task.callback_url
             if webhook_url:
                 payload = {
@@ -258,7 +260,6 @@ class WebhookController(ABC):
     ) -> str:
         """Add background task with automatic tracking and webhook support."""
         try:
-            # Create task record
             task_id = await self.create_background_task(
                 task_type=task_type,
                 task_data=task_data,
@@ -267,7 +268,6 @@ class WebhookController(ABC):
                 callback_url=callback_url
             )
 
-            # Add to FastAPI background tasks with tracking wrapper
             background_tasks.add_task(
                 self._execute_task_with_tracking,
                 task_id,
@@ -321,7 +321,6 @@ class WebhookController(ABC):
         if not url or not url.startswith(('http://', 'https://')):
             return False
 
-        # Prefer HTTPS in production
         if not url.startswith('https://') and not getattr(self.settings, 'DEBUG', False):
             self.logger.warning(f"Non-HTTPS webhook URL: {url}")
 
