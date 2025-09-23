@@ -20,7 +20,10 @@
 
 | Task ID | Description | Status | Date | Notes |
 |---------|-------------|--------|------|-------|
-| replace-manual-commits | Replace manual commit() calls with ensure_consistent_commit_rollback helper across all controllers | In Progress | 2025-01-23 | Started with UserController, replacing manual commits with standardized helper method |
+| replace-manual-commits | Replace manual commit() calls with ensure_consistent_commit_rollback helper across all controllers | Completed | 2025-01-23 | Replaced manual commits with standardized helper method across all controllers |
+| fix-double-commit-issue | Fix double-commit issue in URLCheckController._update_domain_reputation method | Completed | 2025-01-23 | Removed explicit session.commit() call that was causing double-commit issue |
+| migrate-url-check-controller-async | Migrate URLCheckController from sync SQLAlchemy APIs to async APIs | Completed | 2025-01-23 | Converted _get_recent_check_from_db, _perform_url_analysis, _perform_bulk_analysis, and _get_domain_reputation_data to use async ORM APIs |
+| verify-ai-analysis-controller | Verify AIAnalysisController proper async context manager usage | Completed | 2025-01-23 | Confirmed proper async usage without manual commits, no changes needed |
 | analysis-results-refactoring | Refactor analysis results to use typed classes instead of dictionaries | In Progress | 2025-09-23 | Created typed classes, refactored services and controllers, fixed circular imports and dependency issues |
 
 ## Summary
@@ -44,9 +47,20 @@ All verification comments from the prompt file have been successfully addressed:
 - **Performance Optimization**: Enhanced database connectivity checks with caching and connection reuse to reduce production overhead
 - **Import Organization**: Consolidated SQLAlchemy imports at file top to eliminate inline imports
 
-### Phase 4 - Transaction Management Standardization (In Progress)
-- **Commit Standardization**: Replacing manual commit() calls across all controllers with ensure_consistent_commit_rollback helper
-- **Error Handling**: Ensuring consistent rollback behavior and error logging throughout the application
+### Phase 4 - Transaction Management Standardization (Completed)
+- **Commit Standardization**: Replaced manual commit() calls across all controllers with ensure_consistent_commit_rollback helper
+- **Error Handling**: Ensured consistent rollback behavior and error logging throughout the application
+- **Double-Commit Fix**: Fixed double-commit issue in URLCheckController._update_domain_reputation method
+- **Manual Commit Removal**: Removed all manual session.commit() calls and added comments about auto-commit behavior
+
+### Phase 5 - Async SQLAlchemy API Migration (Completed)
+- **URLCheckController Migration**: Successfully migrated from sync SQLAlchemy APIs to async APIs:
+  - Converted `_get_recent_check_from_db` from sync `session.query()` to async `select()` + `session.execute()`
+  - Updated `_perform_url_analysis` to use async ORM APIs with proper `await` calls
+  - Migrated `_perform_bulk_analysis` from sync to async query patterns
+  - Converted `_get_domain_reputation_data` to async with proper context manager usage
+- **AIAnalysisController Verification**: Confirmed proper async context manager usage without manual commits
+- **Syntax Validation**: All changes compile successfully without syntax errors
 
 ### Key Improvements
 - **Consistency**: Standardized database session management patterns across all controllers
