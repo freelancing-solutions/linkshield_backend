@@ -22,10 +22,13 @@ from src.authentication.auth_service import AuthService
 from src.controllers.base_controller import BaseController
 from src.models.user import User, UserRole
 from src.models.project import Project
-from src.social_protection.models import (
-    SocialProfileScan, ContentRiskAssessment, 
-    PlatformType, ScanStatus, RiskLevel, ContentType, AssessmentType
+from src.social_protection.data_models import (
+    ContentRiskAssessment, ContentType
 )
+from src.social_protection.types import (
+    PlatformType, ScanStatus, RiskLevel
+)
+from src.models.social_protection import SocialProfileScan, AssessmentType
 from src.social_protection.services import (
     ExtensionDataProcessor, SocialScanService,
     ExtensionDataProcessorError, SocialScanServiceError
@@ -325,7 +328,7 @@ class SocialProtectionController(BaseController):
         content_data: Dict[str, Any],
         user: User,
         project_id: Optional[uuid.UUID] = None,
-        assessment_type: AssessmentType = AssessmentType.AUTOMATED
+        assessment_type: AssessmentType = AssessmentType.CONTENT_RISK
     ) -> ContentRiskAssessment:
         """Create a content risk assessment.
         

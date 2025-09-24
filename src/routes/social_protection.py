@@ -19,9 +19,11 @@ from pydantic import BaseModel, HttpUrl, Field
 
 from src.config.settings import get_settings
 from src.models.user import User
-from src.social_protection.models import (
-    PlatformType, ScanStatus, RiskLevel, ContentType, AssessmentType
+from src.social_protection.data_models import ContentType
+from src.social_protection.types import (
+    PlatformType, ScanStatus, RiskLevel
 )
+from src.models.social_protection import AssessmentType
 from src.social_protection.controllers.social_protection_controller import SocialProtectionController
 from src.controllers.depends import get_social_protection_controller
 from src.authentication.dependencies import get_current_user
@@ -127,7 +129,7 @@ class ContentAssessmentRequest(BaseModel):
     content_type: ContentType = Field(..., description="Type of content being assessed")
     content_data: Dict[str, Any] = Field(..., description="Content data and metadata")
     project_id: Optional[uuid.UUID] = Field(None, description="Optional project ID for organization")
-    assessment_type: AssessmentType = Field(default=AssessmentType.AUTOMATED, description="Type of assessment")
+    assessment_type: AssessmentType = Field(default=AssessmentType.CONTENT_RISK, description="Type of assessment")
     
     class Config:
         json_schema_extra = {

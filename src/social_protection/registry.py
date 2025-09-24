@@ -8,7 +8,8 @@ with dynamic registration and singleton pattern for global access.
 
 from typing import Dict, List, Optional, Type
 import logging
-from .platform_adapters.base_adapter import SocialPlatformAdapter, PlatformType
+from .types import PlatformType
+from .platform_adapters.base_adapter import SocialPlatformAdapter
 
 logger = logging.getLogger(__name__)
 

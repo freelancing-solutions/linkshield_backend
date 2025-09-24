@@ -1,0 +1,210 @@
+# Social Protection Configuration
+# Configuration file for social media protection settings
+
+# Platform-specific configurations
+platforms:
+  twitter:
+    api_base_url: "https://api.twitter.com/2"
+    rate_limits:
+      profile_scan: 100  # requests per hour
+      content_analysis: 300  # requests per hour
+      realtime_assessment: 500  # requests per hour
+    risk_thresholds:
+      external_link_penalty: 0.7
+      community_notes_trigger: 0.8
+      follower_authenticity: 0.6
+      engagement_drop: 0.5
+    features:
+      community_notes_detection: true
+      external_link_analysis: true
+      follower_authenticity_check: true
+      engagement_pattern_analysis: true
+      shadow_ban_detection: true
+
+  facebook:
+    api_base_url: "https://graph.facebook.com/v18.0"
+    rate_limits:
+      profile_scan: 80
+      content_analysis: 200
+      realtime_assessment: 400
+    risk_thresholds:
+      link_reach_reduction: 0.6
+      content_review_flag: 0.8
+      engagement_bait: 0.7
+      ad_policy_violation: 0.9
+    features:
+      link_reach_analysis: true
+      content_review_detection: true
+      engagement_bait_detection: true
+      ad_policy_monitoring: true
+      page_quality_assessment: true
+
+  instagram:
+    api_base_url: "https://graph.instagram.com"
+    rate_limits:
+      profile_scan: 80
+      content_analysis: 200
+      realtime_assessment: 400
+    risk_thresholds:
+      hashtag_penalty: 0.6
+      story_reach_reduction: 0.5
+      reel_suppression: 0.7
+      shadowban_detection: 0.8
+    features:
+      hashtag_analysis: true
+      story_reach_monitoring: true
+      reel_performance_tracking: true
+      shadowban_detection: true
+      influencer_authenticity: true
+
+  tiktok:
+    api_base_url: "https://open-api.tiktok.com/platform/v1"
+    rate_limits:
+      profile_scan: 60
+      content_analysis: 150
+      realtime_assessment: 300
+    risk_thresholds:
+      fake_engagement: 0.8
+      community_guideline_violation: 0.9
+      bio_link_restriction: 0.6
+      creator_fund_compliance: 0.7
+    features:
+      fake_engagement_detection: true
+      guideline_compliance_check: true
+      bio_link_monitoring: true
+      creator_fund_monitoring: true
+      trend_hijacking_detection: true
+
+  linkedin:
+    api_base_url: "https://api.linkedin.com/v2"
+    rate_limits:
+      profile_scan: 50
+      content_analysis: 100
+      realtime_assessment: 200
+    risk_thresholds:
+      professional_content_standard: 0.6
+      spam_link_detection: 0.8
+      b2b_compliance: 0.7
+      industry_regulation: 0.9
+    features:
+      professional_content_analysis: true
+      spam_detection: true
+      b2b_compliance_check: true
+      industry_regulation_monitoring: true
+      connection_authenticity: true
+
+# Browser extension settings
+extension:
+  authentication:
+    api_key_rotation_hours: 24
+    max_concurrent_sessions: 5
+    session_timeout_minutes: 60
+  rate_limits:
+    free_tier:
+      scans_per_hour: 50
+      assessments_per_hour: 100
+      realtime_checks_per_minute: 10
+    premium_tier:
+      scans_per_hour: 500
+      assessments_per_hour: 1000
+      realtime_checks_per_minute: 50
+    enterprise_tier:
+      scans_per_hour: 2000
+      assessments_per_hour: 5000
+      realtime_checks_per_minute: 200
+  features:
+    realtime_content_scanning: true
+    automatic_threat_blocking: true
+    privacy_protection: true
+    data_encryption: true
+    offline_mode: false
+
+# Security settings
+security:
+  encryption:
+    algorithm: "AES-256-GCM"
+    key_rotation_days: 30
+  data_retention:
+    scan_results_days: 90
+    assessment_history_days: 365
+    user_activity_logs_days: 30
+  privacy:
+    anonymize_user_data: true
+    gdpr_compliance: true
+    ccpa_compliance: true
+    data_minimization: true
+
+# Alert and notification settings
+alerts:
+  severity_levels:
+    low: 0.3
+    medium: 0.6
+    high: 0.8
+    critical: 0.9
+  notification_channels:
+    - email
+    - webhook
+    - dashboard
+    - mobile_push
+  escalation:
+    critical_alert_immediate: true
+    high_alert_within_minutes: 15
+    medium_alert_within_hours: 2
+    low_alert_daily_digest: true
+
+# Performance and monitoring
+performance:
+  caching:
+    scan_results_ttl_minutes: 30
+    profile_data_ttl_hours: 6
+    assessment_cache_ttl_hours: 2
+  monitoring:
+    health_check_interval_seconds: 30
+    performance_metrics_enabled: true
+    error_tracking_enabled: true
+    audit_logging_enabled: true
+
+# Feature flags
+feature_flags:
+  social_protection_enabled: true
+  realtime_scanning_enabled: true
+  ai_powered_analysis_enabled: true
+  multi_platform_support_enabled: true
+  crisis_detection_enabled: true
+  reputation_monitoring_enabled: true
+  algorithm_health_tracking_enabled: true
+  browser_extension_integration_enabled: true
+  dashboard_integration_enabled: true
+  mobile_app_support_enabled: false
+  enterprise_features_enabled: false
+
+# AI and machine learning settings
+ai_analysis:
+  models:
+    content_risk_model: "gpt-4-turbo"
+    sentiment_analysis_model: "text-davinci-003"
+    threat_detection_model: "claude-3-sonnet"
+  confidence_thresholds:
+    content_analysis: 0.8
+    threat_detection: 0.9
+    sentiment_analysis: 0.7
+  batch_processing:
+    max_batch_size: 100
+    processing_timeout_seconds: 300
+
+# Database settings
+database:
+  connection_pool_size: 20
+  max_overflow: 30
+  pool_timeout_seconds: 30
+  query_timeout_seconds: 60
+  batch_insert_size: 1000
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_rotation:
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
+  sensitive_data_masking: true

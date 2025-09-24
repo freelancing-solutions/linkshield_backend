@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import re
 
 from src.social_protection.data_models import (
-    ExtensionRequest,
+    ExtensionScanPayload,
     ExtensionResponse,
     RealTimeAssessment,
     FeedMonitoringData,
@@ -24,9 +24,13 @@ from src.social_protection.data_models import (
     ExtensionAnalytics,
     ExtensionHealthCheck,
     BatchExtensionRequest,
-    BatchExtensionResponse,
+    BatchExtensionResponse
+)
+from src.social_protection.types import (
     PlatformType,
-    RiskLevel,
+    RiskLevel
+)
+from src.models.social_protection import (
     ContentType,
     AssessmentType
 )
@@ -285,18 +289,18 @@ class ExtensionDataProcessor:
                 processing_time_ms=0
             )
     
-    def _validate_extension_request(self, request_data: Dict[str, Any]) -> ExtensionRequest:
+    def _validate_extension_request(self, request_data: Dict[str, Any]) -> ExtensionScanPayload:
         """
         Validate and parse extension request data.
         
         Args:
-            request_data: Raw request data
+            request_data: Raw request data from extension
             
         Returns:
-            ExtensionRequest: Validated request object
+            ExtensionScanPayload: Validated request object
             
         Raises:
-            ValidationError: If validation fails
+            ValidationError: If request data is invalid
         """
         try:
             # Check required fields
@@ -317,8 +321,8 @@ class ExtensionDataProcessor:
             except ValueError:
                 raise ValidationError(f"Invalid content type: {request_data['content_type']}")
             
-            # Create ExtensionRequest object
-            extension_request = ExtensionRequest(
+            # Create ExtensionScanPayload object
+            extension_request = ExtensionScanPayload(
                 request_id=request_data["request_id"],
                 user_id=request_data.get("user_id"),
                 platform=platform,
@@ -382,7 +386,7 @@ class ExtensionDataProcessor:
         except Exception as e:
             raise ValidationError(f"Batch validation failed: {str(e)}")
     
-    async def _perform_real_time_assessment(self, request: ExtensionRequest) -> RealTimeAssessment:
+    async def _perform_real_time_assessment(self, request: ExtensionScanPayload) -> RealTimeAssessment:
         """
         Perform real-time risk assessment on extension request.
         
@@ -470,7 +474,7 @@ class ExtensionDataProcessor:
                 processing_time_ms=int(processing_time)
             )
     
-    async def _process_single_request_async(self, request: ExtensionRequest) -> ExtensionResponse:
+    async def _process_single_request_async(self, request: ExtensionScanPayload) -> ExtensionResponse:
         """
         Process a single request asynchronously for batch processing.
         

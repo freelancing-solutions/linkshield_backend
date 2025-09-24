@@ -11,9 +11,9 @@ across different platform adapters and services.
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
 from enum import Enum
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
-from ..platform_adapters.base_adapter import PlatformType, RiskLevel
+from ..types import PlatformType, RiskLevel
 
 
 class ProfileVerificationStatus(str, Enum):
@@ -71,7 +71,7 @@ class FollowerAnalysis(BaseModel):
     engagement_quality: float = Field(0.0, ge=0.0, le=1.0, description="Engagement quality score")
     follower_growth_pattern: str = Field("normal", description="Follower growth pattern analysis")
     
-    @validator('authenticity_score', 'engagement_quality')
+    @field_validator('authenticity_score', 'engagement_quality')
     def validate_scores(cls, v):
         """Validate score values are between 0 and 1."""
         if not 0.0 <= v <= 1.0:
@@ -168,7 +168,7 @@ class BulkProfileScanRequest(BaseModel):
     batch_size: int = Field(10, ge=1, le=100, description="Batch processing size")
     priority: str = Field("normal", description="Scan priority: low, normal, high")
     
-    @validator('profile_identifiers')
+    @field_validator('profile_identifiers')
     def validate_profile_list(cls, v):
         """Validate profile identifiers list."""
         if not v:

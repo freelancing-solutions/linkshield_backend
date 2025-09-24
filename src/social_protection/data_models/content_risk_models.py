@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any, Union
 from enum import Enum
 from pydantic import BaseModel, Field, validator
 
-from ..platform_adapters.base_adapter import PlatformType, RiskLevel
+from ..types import PlatformType, RiskLevel
 
 
 class ContentType(str, Enum):

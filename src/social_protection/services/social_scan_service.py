@@ -27,9 +27,8 @@ from src.models.social_protection import (
 from src.models.user import User
 from src.models.project import Project
 from src.social_protection.data_models import (
-    SocialProfileData,
+    SocialProfileInfo,
     ContentAnalysisRequest,
-    RiskAssessmentResult,
     ComprehensiveAssessment,
     AssessmentHistory
 )
@@ -238,7 +237,7 @@ class SocialScanService:
         scan_id: UUID,
         content_type: ContentType,
         content_data: Dict[str, Any],
-        assessment_type: AssessmentType = AssessmentType.AUTOMATED
+        assessment_type: AssessmentType = AssessmentType.CONTENT_RISK
     ) -> ContentRiskAssessment:
         """
         Create a content risk assessment for a scan.

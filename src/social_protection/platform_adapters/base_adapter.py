@@ -9,31 +9,14 @@ functionality across different social media platforms.
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from enum import Enum
 
-from ..data_models.scan_models import (
-    SocialProfileScanRequest,
-    SocialProfileScanResponse,
-    ContentRiskAssessmentRequest,
-    ContentRiskAssessmentResponse,
+from ..types import PlatformType, RiskLevel
+from ..data_models import (
+    ProfileScanRequest,
+    ProfileScanResult,
+    ContentAnalysisRequest,
+    ContentAnalysisResult
 )
-
-
-class PlatformType(Enum):
-    """Supported social media platforms"""
-    TWITTER = "twitter"
-    META_FACEBOOK = "meta_facebook"
-    META_INSTAGRAM = "meta_instagram"
-    TIKTOK = "tiktok"
-    LINKEDIN = "linkedin"
-
-
-class RiskLevel(Enum):
-    """Risk assessment levels"""
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
 
 
 class SocialPlatformAdapter(ABC):
@@ -64,7 +47,7 @@ class SocialPlatformAdapter(ABC):
         return self.platform_type.value.replace("_", " ").title()
     
     @abstractmethod
-    async def scan_profile(self, request: SocialProfileScanRequest) -> SocialProfileScanResponse:
+    async def scan_profile(self, request: ProfileScanRequest) -> ProfileScanResult:
         """
         Perform comprehensive profile security audit.
         
@@ -83,7 +66,7 @@ class SocialPlatformAdapter(ABC):
         pass
     
     @abstractmethod
-    async def analyze_content(self, request: ContentRiskAssessmentRequest) -> ContentRiskAssessmentResponse:
+    async def analyze_content(self, request: ContentAnalysisRequest) -> ContentAnalysisResult:
         """
         Analyze content for platform-specific risks.
         
