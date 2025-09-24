@@ -5,6 +5,7 @@ for URL analysis, security scanning, threat detection, reputation management,
 and bulk processing operations.
 """
 
+import json
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
@@ -73,6 +74,14 @@ class URLCheckController(BaseController):
         self.max_checks_per_hour_free = 100
         self.max_checks_per_hour_premium = 1000
         self.max_bulk_urls = 100
+        
+        # Broken link scan limits (more restrictive due to resource intensity)
+        self.max_broken_link_scans_per_hour_free = 10
+        self.max_broken_link_scans_per_hour_premium = 50
+        self.max_scan_depth_free = 2
+        self.max_scan_depth_premium = 5
+        self.max_links_per_scan_free = 50
+        self.max_links_per_scan_premium = 200
     
     async def check_url(
         self,
@@ -81,7 +90,9 @@ class URLCheckController(BaseController):
         scan_types: Optional[List[ScanType]] = None,
         priority: bool = False,
         callback_url: Optional[str] = None,
-        background_tasks: Optional[BackgroundTasks] = None
+        background_tasks: Optional[BackgroundTasks] = None,
+        scan_depth: Optional[int] = None,
+        max_links: Optional[int] = None
     ) -> URLCheck:
         """Perform URL security check and analysis.
         
@@ -92,6 +103,8 @@ class URLCheckController(BaseController):
             priority: Whether to prioritize this scan
             callback_url: Webhook URL for async results
             background_tasks: FastAPI background tasks
+            scan_depth: Maximum depth for broken link scanning
+            max_links: Maximum number of links to check for broken link scanning
             
         Returns:
             URLCheck: Created URL check instance
@@ -103,7 +116,61 @@ class URLCheckController(BaseController):
         if scan_types is None:
             scan_types = [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
         
-        # Check rate limits
+        # Validate broken link scan parameters if BROKEN_LINKS is requested
+        if ScanType.BROKEN_LINKS in scan_types:
+            if user:
+                # Check broken link scan rate limits (more restrictive)
+                broken_link_rate_limit = (
+                    self.max_broken_link_scans_per_hour_premium
+                    if user.subscription_plan == "premium"
+                    else self.max_broken_link_scans_per_hour_free
+                )
+                
+                if not await self.check_rate_limit(
+                    user.id, "broken_link_scan", broken_link_rate_limit
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Rate limit exceeded for broken link scans"
+                    )
+                
+                # Validate and set scan_depth based on subscription
+                max_depth = (
+                    self.max_scan_depth_premium
+                    if user.subscription_plan == "premium"
+                    else self.max_scan_depth_free
+                )
+                
+                if scan_depth is None:
+                    scan_depth = 1  # Default depth
+                elif scan_depth > max_depth:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Maximum scan depth for {user.subscription_plan} plan is {max_depth}"
+                    )
+                
+                # Validate and set max_links based on subscription
+                max_links_allowed = (
+                    self.max_links_per_scan_premium
+                    if user.subscription_plan == "premium"
+                    else self.max_links_per_scan_free
+                )
+                
+                if max_links is None:
+                    max_links = max_links_allowed  # Use maximum allowed
+                elif max_links > max_links_allowed:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Maximum links per scan for {user.subscription_plan} plan is {max_links_allowed}"
+                    )
+            else:
+                # Anonymous users get minimal limits
+                if scan_depth is None or scan_depth > 1:
+                    scan_depth = 1
+                if max_links is None or max_links > 10:
+                    max_links = 10
+        
+        # Check general rate limits
         if user:
             rate_limit = (
                 self.max_checks_per_hour_premium
@@ -147,7 +214,10 @@ class URLCheckController(BaseController):
                     priority=priority,
                     callback_url=callback_url,
                     created_at=utc_datetime(),
-                    scan_started_at=utc_datetime()
+                    scan_started_at=utc_datetime(),
+                    # Set broken link scan parameters if applicable
+                    scan_depth_used=scan_depth if ScanType.BROKEN_LINKS in scan_types else None,
+                    max_links_used=max_links if ScanType.BROKEN_LINKS in scan_types else None
                 )
                 
                 session.add(url_check)
@@ -376,8 +446,7 @@ class URLCheckController(BaseController):
         
         # Get scan results
         async with self.get_db_session() as session:
-            # Use async ORM API instead of sync session.query
-            from sqlalchemy import select
+            # Use async ORM API instead of sync session.query            
             stmt = (
                 select(ScanResult)
                 .where(ScanResult.url_check_id == check_id)
@@ -1066,3 +1135,54 @@ class URLCheckController(BaseController):
 
         except Exception as e:
             self.logger.error(f"Bulk webhook notification failed: {str(e)}")
+
+    async def get_broken_links(
+        self,
+        check_id: uuid.UUID,
+        user: Optional[User] = None
+    ) -> List[dict]:
+        """Get broken link details for a specific URL check.
+        
+        Args:
+            check_id: URL check ID
+            user: User requesting the data (for access control)
+            
+        Returns:
+            List[dict]: List of broken link details
+            
+        Raises:
+            HTTPException: If check not found or access denied
+        """
+        try:
+            # Get the URL check using existing method
+            url_check = await self.get_url_check(check_id, user)
+            
+            # Check if broken link scanning was performed
+            if not url_check.analysis_results:
+                return []
+            
+            # Parse analysis results
+            analysis_data = json.loads(url_check.analysis_results)
+            analysis_results = AnalysisResults.from_dict(analysis_data)
+            
+            # Extract broken link data
+            if not analysis_results.broken_link_scan:
+                return []
+            
+            # Convert broken link details to response format
+            broken_links = []
+            for link_detail in analysis_results.broken_link_scan.broken_links:
+                broken_links.append({
+                    "url": link_detail.url,
+                    "status_code": link_detail.status_code,
+                    "status": link_detail.status,
+                    "error_message": link_detail.error_message,
+                    "response_time": link_detail.response_time,
+                    "redirect_url": link_detail.redirect_url,
+                    "depth_level": link_detail.depth_level
+                })
+            
+            return broken_links
+            
+        except Exception as e:
+            raise self.handle_database_error(e, "Broken links retrieval")

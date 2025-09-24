@@ -15,13 +15,45 @@ from src.controllers.admin_controller import AdminController
 from src.controllers.ai_analysis_controller import AIAnalysisController
 from src.controllers.dashboard_controller import DashboardController
 
+from src.controllers.dashboard_models import (
+    DashboardOverviewResponse,
+    ProjectResponse,
+    ProjectCreateRequest,
+    ProjectUpdateRequest,
+    MemberResponse,
+    MemberInviteRequest,
+    MonitoringConfigResponse,
+    AlertResponse,
+    AlertInstanceResponse,
+    AlertCreateRequest,
+    AlertUpdateRequest,
+    AnalyticsResponse,
+    ActivityLogResponse,
+)
+
 __all__ = [
+    # Controllers
     "BaseController",
-    "HealthController", 
+    "HealthController",
     "ReportController",
     "URLCheckController",
     "UserController",
     "AdminController",
     "AIAnalysisController",
-    "DashboardController"
+    "DashboardController",
+
+    # Dashboard Models
+    "DashboardOverviewResponse",
+    "ProjectResponse",
+    "ProjectCreateRequest",
+    "ProjectUpdateRequest",
+    "MemberResponse",
+    "MemberInviteRequest",
+    "MonitoringConfigResponse",
+    "AlertResponse",
+    "AlertInstanceResponse",
+    "AlertCreateRequest",
+    "AlertUpdateRequest",
+    "AnalyticsResponse",
+    "ActivityLogResponse",
 ]

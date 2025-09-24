@@ -16,10 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+# from slowapi import Limiter, _rate_limit_exceeded_handler
+# from slowapi.errors import RateLimitExceeded
+# from slowapi.util import get_remote_address
 
+# Used to force controllers and models to initialize
+from src.controllers import *
+from src.services.advanced_rate_limiter import get_rate_limiter
 # Config and database
 from src.config.settings import get_settings
 from src.config.database import init_db, close_db
@@ -53,8 +56,6 @@ logger.add(
 )
 os.makedirs("logs", exist_ok=True)
 
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -80,8 +81,7 @@ app = FastAPI(
 )
 
 # Middleware
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(SecurityMiddleware)
 

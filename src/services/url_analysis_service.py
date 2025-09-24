@@ -16,11 +16,13 @@ from urllib.parse import urlparse, urljoin
 
 import aiohttp
 import requests
+from bs4 import BeautifulSoup
 
 from src.config.settings import get_settings
 from src.models.url_check import ThreatLevel, ScanType, URLReputation
 from src.models.analysis_results import (
-    AnalysisResults, ProviderScanResult, ProviderMetadata, ReputationUpdate
+    AnalysisResults, ProviderScanResult, ProviderMetadata, ReputationUpdate,
+    BrokenLinkScanResult, BrokenLinkDetail, BrokenLinkStatus
 )
 from src.services.ai_service import AIService
 from src.services.security_service import SecurityService
@@ -89,13 +91,15 @@ class URLAnalysisService:
         # Analysis configuration
         self.scan_timeout = 30  # seconds
         self.max_redirects = 10
-        self.user_agent = "LinkShield-Bot/1.0 (+https://linkshield.com/bot)"
+        self.user_agent = "LinkShield-Bot/1.0 (+https://linkshield.site/bot)"
     
     async def analyze_url(
         self, 
         url: str, 
         scan_types: Optional[List[ScanType]] = None,
-        reputation_data: Optional[URLReputation] = None
+        reputation_data: Optional[URLReputation] = None,
+        scan_depth: int = 2,
+        max_links: int = 100
     ) -> AnalysisResults:
         """
         Perform comprehensive URL analysis and return typed results.
@@ -104,6 +108,8 @@ class URLAnalysisService:
             url: URL to analyze
             scan_types: Specific scan types to perform
             reputation_data: Historical reputation data for analysis
+            scan_depth: Depth for broken link scanning (default: 2)
+            max_links: Maximum links to check for broken link scanning (default: 100)
         
         Returns:
             AnalysisResults containing analysis results with threat level and confidence score
@@ -116,7 +122,9 @@ class URLAnalysisService:
         # Perform comprehensive analysis
         analysis_results = await self._perform_comprehensive_analysis(
             normalized_url, 
-            scan_types or [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
+            scan_types or ScanType.scan_types(),
+            scan_depth=scan_depth,
+            max_links=max_links
         )
         
         # Include reputation analysis if data provided
@@ -129,7 +137,12 @@ class URLAnalysisService:
         
         # Convert legacy analysis results to typed results
         scan_results = []
-        scan_types_list = scan_types or [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
+        scan_types_list = scan_types or ScanType.scan_types()
+        
+        # Extract broken link scan result if present
+        broken_link_scan = None
+        if "broken_link_scan" in analysis_results:
+            broken_link_scan = analysis_results.pop("broken_link_scan")
         
         # Convert provider results to ProviderScanResult objects
         for provider_name, provider_data in analysis_results.items():
@@ -143,12 +156,19 @@ class URLAnalysisService:
             threat_level=threat_level.value if threat_level else None,
             confidence_score=confidence_score,
             scan_results=scan_results,
-            scan_types=[scan_type.value for scan_type in scan_types_list]
+            scan_types=[scan_type.value for scan_type in scan_types_list],
+            broken_link_scan=broken_link_scan
         )
     
-    async def _perform_comprehensive_analysis(self, url: str, scan_types: List[ScanType]) -> Dict[str, Any]:
+    async def _perform_comprehensive_analysis(self, url: str, scan_types: List[ScanType], scan_depth: int = 2, max_links: int = 100) -> Dict[str, Any]:
         """
         Perform comprehensive analysis using multiple providers.
+        
+        Args:
+            url: URL to analyze
+            scan_types: List of scan types to perform
+            scan_depth: Depth for broken link scanning
+            max_links: Maximum links to check for broken link scanning
         """
         results = {}
         
@@ -170,6 +190,9 @@ class URLAnalysisService:
         
         if ScanType.TECHNICAL in scan_types:
             tasks.append(self._analyze_technical(url))
+        
+        if ScanType.BROKEN_LINKS in scan_types:
+            tasks.append(self._scan_broken_links_wrapper(url, scan_depth, max_links))
         
         # Execute tasks with timeout
         try:
@@ -759,8 +782,7 @@ class URLAnalysisService:
         Returns:
             True if all scan types are valid
         """
-        valid_types = [ScanType.SECURITY, ScanType.REPUTATION, ScanType.CONTENT]
-        return all(scan_type in valid_types for scan_type in scan_types)
+        return all(ScanType.scan_types() in valid_types for scan_type in scan_types)
     
     def estimate_analysis_time(self, scan_types: List[ScanType]) -> int:
         """
@@ -780,5 +802,219 @@ class URLAnalysisService:
             base_time += 10  # Content analysis with AI
         if ScanType.REPUTATION in scan_types:
             base_time += 2   # Reputation lookup
-            
+        if ScanType.BROKEN_LINKS in scan_types:
+            base_time += 20  # Broken link scanning takes longer due to crawling
+        if ScanType.TECHNICAL in scan_types:
+            base_time += 15    
         return base_time
+    
+    async def _scan_broken_links_wrapper(self, url: str, scan_depth: int = 2, max_links: int = 100) -> Dict[str, Any]:
+        """
+        Wrapper for broken link scanning that returns results in the expected format for _perform_comprehensive_analysis.
+        
+        Args:
+            url: URL to scan for broken links
+            scan_depth: Depth of crawling
+            max_links: Maximum number of links to check
+            
+        Returns:
+            Dictionary containing broken link scan results
+        """
+        broken_link_result = await self._scan_broken_links(url, scan_depth, max_links)
+        return {"broken_link_scan": broken_link_result}
+    
+    async def _scan_broken_links(self, url: str, scan_depth: int = 2, max_links: int = 100) -> BrokenLinkScanResult:
+        """
+        Scan for broken links on the given URL using structured models.
+        
+        Args:
+            url: URL to scan for broken links
+            scan_depth: Depth of crawling (default: 2)
+            max_links: Maximum number of links to check (default: 100)
+            
+        Returns:
+            BrokenLinkScanResult: Structured broken link scan results
+        """
+        try:
+            # Fetch the main page content
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        return BrokenLinkScanResult(
+                            total_links_found=0,
+                            total_links_checked=0,
+                            broken_links_count=0,
+                            scan_depth_used=scan_depth,
+                            max_links_used=max_links,
+                            broken_links=[],
+                            scan_duration=0.0,
+                            error_message=f"Failed to fetch main page: HTTP {response.status}"
+                        )
+                    
+                    content = await response.text()
+            
+            start_time = utc_datetime()
+            
+            # Extract links from HTML content
+            all_links = self._extract_links_from_html(content, url)
+            
+            # Limit the number of links to check
+            links_to_check = all_links[:max_links]
+            
+            # Check each link status
+            broken_link_details = []
+            checked_count = 0
+            
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                for link in links_to_check:
+                    try:
+                        link_status = await self._check_link_status(session, link)
+                        checked_count += 1
+                        
+                        if not link_status["is_working"]:
+                            # Determine status based on error type
+                            if link_status["status_code"]:
+                                if 400 <= link_status["status_code"] < 500:
+                                    status = BrokenLinkStatus.CLIENT_ERROR
+                                elif 500 <= link_status["status_code"] < 600:
+                                    status = BrokenLinkStatus.SERVER_ERROR
+                                else:
+                                    status = BrokenLinkStatus.BROKEN
+                            else:
+                                status = BrokenLinkStatus.TIMEOUT
+                            
+                            broken_link_details.append(BrokenLinkDetail(
+                                url=link,
+                                status_code=link_status["status_code"],
+                                status=status,
+                                error_message=link_status["error"],
+                                response_time=link_status["response_time"],
+                                redirect_url=None,  # Could be enhanced to track redirects
+                                depth_level=1  # Currently only scanning depth 1
+                            ))
+                    except Exception as e:
+                        # Count failed checks as broken links
+                        broken_link_details.append(BrokenLinkDetail(
+                            url=link,
+                            status_code=None,
+                            status=BrokenLinkStatus.TIMEOUT,
+                            error_message=str(e),
+                            response_time=None,
+                            redirect_url=None,
+                            depth_level=1
+                        ))
+                        checked_count += 1
+            
+            scan_duration = (datetime.now() - start_time).total_seconds()
+            
+            return BrokenLinkScanResult(
+                total_links_found=len(all_links),
+                total_links_checked=checked_count,
+                broken_links_count=len(broken_link_details),
+                scan_depth_used=scan_depth,
+                max_links_used=max_links,
+                broken_links=broken_link_details,
+                scan_duration=scan_duration,
+                error_message=None
+            )
+            
+        except Exception as e:
+            return BrokenLinkScanResult(
+                total_links_found=0,
+                total_links_checked=0,
+                broken_links_count=0,
+                scan_depth_used=scan_depth,
+                max_links_used=max_links,
+                broken_links=[],
+                scan_duration=0.0,
+                error_message=f"Broken link scan failed: {str(e)}"
+            )
+    
+    def _extract_links_from_html(self, html_content: str, base_url: str) -> List[str]:
+        """
+        Extract all links from HTML content.
+        
+        Args:
+            html_content: HTML content to parse
+            base_url: Base URL for resolving relative links
+            
+        Returns:
+            List of absolute URLs found in the HTML
+        """
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            links = []
+            
+            # Find all anchor tags with href attributes
+            for link in soup.find_all('a', href=True):
+                href = link['href']
+                
+                # Skip empty hrefs, anchors, and javascript links
+                if not href or href.startswith('#') or href.startswith('javascript:') or href.startswith('mailto:'):
+                    continue
+                
+                # Convert relative URLs to absolute URLs
+                absolute_url = urljoin(base_url, href)
+                
+                # Only include HTTP/HTTPS links
+                if absolute_url.startswith(('http://', 'https://')):
+                    links.append(absolute_url)
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_links = []
+            for link in links:
+                if link not in seen:
+                    seen.add(link)
+                    unique_links.append(link)
+            
+            return unique_links
+            
+        except Exception as e:
+            # Return empty list if parsing fails
+            return []
+    
+    async def _check_link_status(self, session: aiohttp.ClientSession, url: str) -> Dict[str, Any]:
+        """
+        Check if a link is working by making a HEAD request.
+        
+        Args:
+            session: aiohttp session to use for the request
+            url: URL to check
+            
+        Returns:
+            Dictionary with link status information
+        """
+        start_time = datetime.now()
+        
+        try:
+            # Try HEAD request first (faster)
+            async with session.head(url, allow_redirects=True) as response:
+                response_time = (datetime.now() - start_time).total_seconds()
+                
+                # Consider 2xx and 3xx status codes as working
+                is_working = 200 <= response.status < 400
+                
+                return {
+                    "is_working": is_working,
+                    "status_code": response.status,
+                    "error": None if is_working else f"HTTP {response.status}",
+                    "response_time": response_time
+                }
+                
+        except aiohttp.ClientError as e:
+            response_time = (datetime.now() - start_time).total_seconds()
+            return {
+                "is_working": False,
+                "status_code": None,
+                "error": f"Connection error: {str(e)}",
+                "response_time": response_time
+            }
+        except Exception as e:
+            response_time = (datetime.now() - start_time).total_seconds()
+            return {
+                "is_working": False,
+                "status_code": None,
+                "error": f"Unexpected error: {str(e)}",
+                "response_time": response_time
+            }

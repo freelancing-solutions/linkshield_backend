@@ -92,4 +92,4 @@ __all__ = [
     # Activity log models
     "ActivityLog",
     "ActivityLogManager",
-]]
+]

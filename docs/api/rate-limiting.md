@@ -1,18 +1,19 @@
-# Rate Limiting System
+# Advanced Rate Limiting System
 
 ## Overview
 
-LinkShield implements a comprehensive rate limiting system to protect against abuse, ensure fair resource usage, and maintain service quality. The system uses multiple layers of rate limiting including global limits, subscription-based limits, and endpoint-specific restrictions.
+LinkShield implements a comprehensive, multi-layered rate limiting system to protect against abuse, ensure fair resource usage, and maintain service quality. The system integrates advanced algorithms, subscription-based limits, and endpoint-specific restrictions using a unified service architecture.
 
 ## Architecture
 
 ### Core Components
 
-1. **SlowAPI Integration** - Primary rate limiting framework
-2. **Custom Rate Limiting Service** - Business logic and subscription integration
-3. **Rate Limiting Middleware** - Request-level enforcement
-4. **Redis Backend** - Distributed rate limit storage (production)
+1. **AdvancedRateLimiter Service** - Unified service handling all rate limiting logic
+2. **RateLimitMiddleware** - Request-level enforcement with FastAPI integration
+3. **@rate_limit Decorator** - Endpoint-specific rate limiting with dynamic limits
+4. **Redis Backend** - Distributed storage for production environments
 5. **In-Memory Fallback** - Development and fallback storage
+6. **User & Subscription Integration** - Dynamic limits based on user tiers and usage patterns
 
 ### Rate Limiting Layers
 
@@ -25,6 +26,10 @@ Request → SlowAPI Decorator → Custom Rate Limiter → Subscription Limits �
 ### Environment Variables
 
 ```bash
+# Redis Configuration
+REDIS_URL=redis://localhost:6379/0
+REDIS_CLUSTER_ENABLED=false
+
 # Rate Limiting Configuration
 LINKSHIELD_RATE_LIMIT_ENABLED=true
 LINKSHIELD_RATE_LIMIT_DEFAULT="100/hour"
@@ -32,6 +37,35 @@ LINKSHIELD_RATE_LIMIT_AUTH="1000/hour"
 LINKSHIELD_RATE_LIMIT_CHECK="50/hour"
 LINKSHIELD_RATE_LIMIT_REQUESTS_PER_MINUTE=60
 LINKSHIELD_RATE_LIMIT_BURST_SIZE=10
+RATE_LIMIT_STORAGE_BACKEND=redis  # redis, memory
+RATE_LIMIT_DEFAULT_WINDOW=3600      # 1 hour in seconds
+RATE_LIMIT_MAX_REQUESTS=100         # Default requests per window
+
+# Subscription Limits
+SUBSCRIPTION_RATE_LIMIT_ENABLED=true
+SUBSCRIPTION_CHECK_DAILY_LIMIT=10   # Free tier daily limit
+SUBSCRIPTION_CHECK_MONTHLY_LIMIT=100 # Free tier monthly limit
+```
+
+### Advanced Rate Limit Configuration
+
+The system supports multiple rate limiting strategies and configurations:
+
+```python
+# Rate Limit Strategies
+RATE_LIMIT_STRATEGIES = {
+    "sliding_window": "Sliding window counter with precise timing",
+    "fixed_window": "Fixed time window with counter reset",
+    "token_bucket": "Token bucket algorithm for burst handling"
+}
+
+# Endpoint-Specific Limits
+ENDPOINT_RATE_LIMITS = {
+    "project_creation": {"requests": 10, "window": 3600},      # 10 per hour
+    "project_modification": {"requests": 50, "window": 3600},    # 50 per hour
+    "api_authenticated": {"requests": 100, "window": 3600},    # 100 per hour
+    "api_anonymous": {"requests": 20, "window": 3600}          # 20 per hour
+}
 ```
 
 ### Default Rate Limits
@@ -236,36 +270,115 @@ X-RateLimit-Window: 3600
 }
 ```
 
-## Rate Limiting Service
+## Advanced Rate Limiting Service
 
-### Core Methods
+### Core Service Architecture
 
 ```python
-class SecurityService:
-    def check_rate_limit(
+from src.services.advanced_rate_limiter import AdvancedRateLimiter, RateLimitConfig
+
+class AdvancedRateLimiter:
+    """
+    Advanced rate limiting service with multiple strategies and user integration.
+    """
+    
+    def __init__(self, redis_client=None, storage_backend="memory"):
+        """Initialize with Redis or in-memory storage."""
+        
+    async def check_rate_limit(
         self, 
         identifier: str, 
         limit_type: str, 
-        ip_address: str
-    ) -> Tuple[bool, Dict[str, Any]]:
-        """Check if request is within rate limits."""
+        user=None,
+        endpoint: str = None
+    ) -> RateLimitResult:
+        """Check if request is within rate limits with user context."""
         
-    def get_user_rate_limits(self, user_id: int) -> Dict[str, int]:
-        """Get rate limits for specific user based on subscription."""
+    def get_user_rate_limits(self, user) -> Dict[str, int]:
+        """Get dynamic rate limits based on user subscription tier."""
         
-    def increment_usage(self, user_id: int, operation: str) -> bool:
-        """Increment usage counter for user operation."""
+    def get_rate_limit_status(self, identifier: str, limit_type: str) -> Dict[str, Any]:
+        """Get current rate limit status for identifier."""
+        
+    def reset_rate_limit(self, identifier: str, limit_type: str) -> bool:
+        """Reset rate limit counter for specific identifier."""
+```
+
+### Rate Limiting Strategies
+
+The service supports three advanced algorithms:
+
+1. **Sliding Window**: Most accurate, tracks exact time windows
+2. **Fixed Window**: Simple counter with periodic reset
+3. **Token Bucket**: Handles burst traffic patterns
+
+```python
+# Strategy configuration
+RATE_LIMIT_STRATEGIES = {
+    "sliding_window": {
+        "class": SlidingWindowStrategy,
+        "description": "Precise sliding window with millisecond accuracy",
+        "use_case": "High-precision rate limiting"
+    },
+    "fixed_window": {
+        "class": FixedWindowStrategy,
+        "description": "Simple fixed time window",
+        "use_case": "Basic rate limiting with lower overhead"
+    },
+    "token_bucket": {
+        "class": TokenBucketStrategy,
+        "description": "Token bucket for burst handling",
+        "use_case": "APIs that need burst capacity"
+    }
+}
 ```
 
 ### Rate Limit Types
 
-| Type | Description | Default Limit |
-|------|-------------|---------------|
-| `api_requests` | General API calls | 60/minute |
-| `url_checks` | URL checking operations | 100/hour |
-| `failed_logins` | Failed authentication attempts | 5/15min |
-| `ai_analysis` | AI-powered analysis | 10/minute |
-| `report_generation` | Report creation | 20/minute |
+| Type | Description | Default Limit | Strategy | User Scalable |
+|------|-------------|---------------|----------|---------------|
+| `api_requests` | General API calls | 60/minute | Sliding Window | Yes |
+| `url_checks` | URL checking operations | 100/hour | Sliding Window | Yes |
+| `failed_logins` | Failed authentication attempts | 5/15min | Fixed Window | No |
+| `ai_analysis` | AI-powered analysis | 10/minute | Token Bucket | Yes |
+| `report_generation` | Report creation | 20/minute | Sliding Window | Yes |
+| `project_creation` | Project creation | 10/hour | Sliding Window | Yes |
+| `project_modification` | Project updates/deletes | 50/hour | Sliding Window | Yes |
+| `api_authenticated` | Authenticated API calls | 100/hour | Sliding Window | Yes |
+| `api_anonymous` | Anonymous API calls | 20/hour | Sliding Window | No |
+
+## FastAPI Integration
+
+### @rate_limit Decorator
+
+The system provides a convenient decorator for FastAPI endpoints:
+
+```python
+from src.services.advanced_rate_limiter import rate_limit
+
+@app.post("/api/v1/projects")
+@rate_limit("project_creation")
+async def create_project(request: Request, current_user: User = Depends(get_current_user)):
+    """Create a new project with rate limiting."""
+    # Endpoint logic here
+    pass
+
+@app.put("/api/v1/projects/{project_id}")
+@rate_limit("project_modification")
+async def update_project(project_id: int, request: Request, current_user: User = Depends(get_current_user)):
+    """Update project with rate limiting."""
+    # Endpoint logic here
+    pass
+```
+
+### Decorator Features
+
+- **Automatic User Detection**: Extracts user from FastAPI dependencies
+- **Dynamic Limits**: Adjusts limits based on user subscription tier
+- **Header Injection**: Automatically adds rate limit headers to responses
+- **Error Handling**: Provides detailed rate limit exceeded responses
+- **Redis Integration**: Uses Redis for distributed rate limiting
+- **Fallback Support**: Falls back to in-memory storage if Redis unavailable
 
 ## Storage Backends
 
@@ -273,61 +386,83 @@ class SecurityService:
 
 ```python
 import redis
+from datetime import datetime
 
-class RedisRateLimiter:
+class RedisStorage:
     def __init__(self, redis_client: redis.Redis):
         self.redis = redis_client
         
-    def is_allowed(self, key: str, limit: int, window: int) -> bool:
-        """Check rate limit using Redis sliding window."""
-        current_time = time.time()
+    async def increment_counter(self, key: str, window: int) -> int:
+        """Increment counter and return current count."""
         pipeline = self.redis.pipeline()
         
-        # Remove expired entries
+        # Remove expired entries for sliding window
+        current_time = datetime.now().timestamp()
         pipeline.zremrangebyscore(key, 0, current_time - window)
-        
-        # Count current requests
-        pipeline.zcard(key)
         
         # Add current request
         pipeline.zadd(key, {str(current_time): current_time})
+        
+        # Count current requests
+        pipeline.zcard(key)
         
         # Set expiration
         pipeline.expire(key, window)
         
         results = pipeline.execute()
-        current_count = results[1]
+        return results[2]  # Current count
         
-        return current_count < limit
+    async def get_counter(self, key: str) -> int:
+        """Get current counter value."""
+        return self.redis.zcard(key)
+        
+    async def reset_counter(self, key: str) -> bool:
+        """Reset counter for specific key."""
+        return bool(self.redis.delete(key))
 ```
 
 ### In-Memory Backend (Development)
 
 ```python
-class InMemoryRateLimiter:
+import threading
+from datetime import datetime
+
+class InMemoryStorage:
     def __init__(self):
-        self._cache = {}
+        self._storage = {}
+        self._lock = threading.Lock()
         
-    def is_allowed(self, key: str, limit: int, window: int) -> bool:
-        """Simple sliding window implementation."""
-        current_time = time.time()
-        
-        if key not in self._cache:
-            self._cache[key] = []
+    async def increment_counter(self, key: str, window: int) -> int:
+        """Increment counter with thread safety."""
+        with self._lock:
+            current_time = datetime.now().timestamp()
             
-        # Clean expired entries
-        self._cache[key] = [
-            timestamp for timestamp in self._cache[key]
-            if current_time - timestamp < window
-        ]
-        
-        # Check limit
-        if len(self._cache[key]) >= limit:
+            if key not in self._storage:
+                self._storage[key] = []
+            
+            # Clean expired entries
+            self._storage[key] = [
+                timestamp for timestamp in self._storage[key]
+                if current_time - timestamp < window
+            ]
+            
+            # Add current request
+            self._storage[key].append(current_time)
+            
+            return len(self._storage[key])
+    
+    async def get_counter(self, key: str) -> int:
+        """Get current counter value."""
+        with self._lock:
+            return len(self._storage.get(key, []))
+    
+    async def reset_counter(self, key: str) -> bool:
+        """Reset counter for specific key."""
+        with self._lock:
+            if key in self._storage:
+                del self._storage[key]
+                return True
             return False
-            
-        # Add current request
-        self._cache[key].append(current_time)
-        return True
 ```
 
 ## Monitoring and Analytics

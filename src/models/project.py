@@ -459,9 +459,33 @@ class ProjectAlert(Base):
 
 
 # Add indexes for better query performance
-Index("ix_project_members_project_user", ProjectMember.project_id, ProjectMember.user_id, unique=True)
-Index("ix_project_alerts_project_user_type", ProjectAlert.project_id, ProjectAlert.user_id, ProjectAlert.alert_type, unique=True)
-Index("ix_projects_user_domain", Project.user_id, Project.domain)
+# ProjectMember index
+Index(
+    "ix_project_members_project_user",
+    ProjectMember.project_id,
+    ProjectMember.user_id,
+    unique=True,
+    postgresql_where=None,         # optional partial-index predicate
+    postgresql_concurrently=False  # set True if you want CONCURRENTLY
+)
+
+# ProjectAlert index
+Index(
+    "ix_project_alerts_project_user_type",
+    ProjectAlert.project_id,
+    ProjectAlert.user_id,
+    ProjectAlert.alert_type,
+    unique=True,
+    # postgresql_if_not_exists removed
+)
+
+# Projects index
+Index(
+    "ix_projects_user_domain",
+    Project.user_id,
+    Project.domain,
+    # postgresql_if_not_exists removed
+)
 
 
 class AlertInstance(Base):

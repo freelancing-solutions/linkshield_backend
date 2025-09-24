@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from src.config.settings import get_settings
-from src.services.advanced_rate_limiter import get_rate_limiter
+# from src.services.advanced_rate_limiter import get_rate_limiter, AdvancedRateLimiter
 
 # Get settings instance
 settings = get_settings()
@@ -226,64 +226,82 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
+# class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Basic rate limiting middleware.
-    Note: For production, consider using Redis-based rate limiting.
+    Advanced rate limiting middleware using AdvancedRateLimiter service.
+    Lazy-loads the rate limiter to avoid Pydantic ForwardRef errors.
     """
-    
     def __init__(self, app: ASGIApp):
         super().__init__(app)
-        self.request_counts = {}  # In-memory storage (not suitable for production)
-        self.window_size = 3600  # 1 hour window
-        self.max_requests = 1000  # Max requests per window
-    
+        self.rate_limiter = None  # don't initialize here
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """
-        Apply basic rate limiting.
-        """
         if not settings.RATE_LIMIT_ENABLED:
             return await call_next(request)
-        
-        # Get client IP
+
+        # Lazy initialize rate limiter
+        if self.rate_limiter is None:
+            try:
+                from src.services.advanced_rate_limiter import get_rate_limiter
+                self.rate_limiter = get_rate_limiter()
+            except Exception as e:
+                logger.error(f"Failed to initialize rate limiter (allowing request): {e}")
+                return await call_next(request)
+
         client_ip = self._get_client_ip(request)
-        current_time = int(time.time())
-        window_start = current_time - (current_time % self.window_size)
-        
-        # Clean old entries
-        self._cleanup_old_entries(window_start)
-        
-        # Check rate limit
-        key = f"{client_ip}:{window_start}"
-        current_count = self.request_counts.get(key, 0)
-        
-        if current_count >= self.max_requests:
+        identifier = client_ip
+        scope = self._determine_limit_scope(request)
+
+        try:
+            result = await self.rate_limiter.check_rate_limit(identifier=identifier, scope=scope)
+        except Exception as e:
+            msg = str(e)
+            # If it's a Pydantic forward-ref error, rebuild models dynamically
+            if "not fully defined" in msg or "ForwardRef" in msg:
+                try:
+                    import inspect
+                    from pydantic import BaseModel as PydanticBaseModel
+                    from src.controllers import dashboard_models
+                    for name, obj in inspect.getmembers(dashboard_models):
+                        if inspect.isclass(obj) and issubclass(obj, PydanticBaseModel):
+                            obj.model_rebuild()
+                            logger.debug(f"Rebuilt Pydantic model {name}")
+                    # Retry after rebuild
+                    result = await self.rate_limiter.check_rate_limit(identifier=identifier, scope=scope)
+                except Exception as e2:
+                    logger.exception(f"Rate limiting failed after model_rebuild: {e2}")
+                    return await call_next(request)
+            else:
+                logger.error(f"Rate limiting error: {e}")
+                return await call_next(request)
+
+        # Rate limit exceeded
+        if not result.allowed:
+            logger.warning(f"Rate limit exceeded: {identifier} ({scope.value}) - {result.current}/{result.limit}")
             return JSONResponse(
                 status_code=429,
                 content={
                     "success": False,
                     "error": "Rate limit exceeded",
-                    "detail": "Too many requests. Please try again later."
+                    "error_code": "RATE_LIMIT_EXCEEDED",
+                    "message": "Too many requests. Please try again later.",
+                    "details": {
+                        "limit": result.limit,
+                        "current": result.current,
+                        "remaining": result.remaining,
+                        "reset_time": result.reset_time.isoformat(),
+                        "retry_after": result.retry_after,
+                        "scope": scope.value
+                    }
                 },
-                headers={
-                    "Retry-After": str(self.window_size),
-                    "X-RateLimit-Limit": str(self.max_requests),
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": str(window_start + self.window_size),
-                }
+                headers=self.rate_limiter.get_rate_limit_headers(result)
             )
-        
-        # Increment counter
-        self.request_counts[key] = current_count + 1
-        
-        # Process request
+
+        # Normal request path: add headers and continue
         response = await call_next(request)
-        
-        # Add rate limit headers
-        response.headers["X-RateLimit-Limit"] = str(self.max_requests)
-        response.headers["X-RateLimit-Remaining"] = str(self.max_requests - current_count - 1)
-        response.headers["X-RateLimit-Reset"] = str(window_start + self.window_size)
-        
+        headers = self.rate_limiter.get_rate_limit_headers(result)
+        for key, value in headers.items():
+            response.headers[key] = value
         return response
     
     def _get_client_ip(self, request: Request) -> str:
@@ -302,15 +320,64 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Fallback to direct client IP
         return request.client.host if request.client else "unknown"
     
-    def _cleanup_old_entries(self, current_window: int) -> None:
+    def _determine_limit_scope(self, request: Request):
         """
-        Remove old rate limit entries to prevent memory leaks.
-        """
-        keys_to_remove = []
-        for key in self.request_counts:
-            window = int(key.split(":")[1])
-            if window < current_window:
-                keys_to_remove.append(key)
+        Determine appropriate rate limit scope based on request.
         
-        for key in keys_to_remove:
-            del self.request_counts[key]
+        Args:
+            request: FastAPI request object
+            
+        Returns:
+            RateLimitScope enum value
+        """
+        from src.services.advanced_rate_limiter import RateLimitScope
+        
+        path = request.url.path
+        method = request.method
+        
+        # API endpoints
+        if path.startswith("/api/"):
+            if path.startswith("/api/auth/"):
+                if "login" in path:
+                    return RateLimitScope.API_ANONYMOUS  # Failed logins handled by auth
+                return RateLimitScope.API_ANONYMOUS
+            
+            # Project management endpoints
+            if "/projects" in path:
+                if method == "POST":
+                    return RateLimitScope.PROJECT_CREATION
+                elif method in ["PUT", "DELETE"]:
+                    return RateLimitScope.PROJECT_MODIFICATION
+                return RateLimitScope.API_AUTHENTICATED
+            
+            # Team management endpoints
+            if "/team" in path or "/members" in path:
+                if method == "POST" or "invite" in path:
+                    return RateLimitScope.TEAM_INVITATION
+                return RateLimitScope.API_AUTHENTICATED
+            
+            # Alert endpoints
+            if "/alerts" in path:
+                if method == "POST":
+                    return RateLimitScope.ALERT_CREATION
+                elif method in ["PUT", "PATCH", "DELETE"]:
+                    return RateLimitScope.ALERT_MODIFICATION
+                return RateLimitScope.API_AUTHENTICATED
+            
+            # URL checking endpoints
+            if "/check" in path or "/analyze" in path:
+                return RateLimitScope.API_AUTHENTICATED
+            
+            # AI analysis endpoints
+            if "/ai/" in path or "/analysis" in path:
+                return RateLimitScope.API_AUTHENTICATED
+            
+            # Report endpoints
+            if "/reports" in path:
+                return RateLimitScope.API_AUTHENTICATED
+            
+            # Default authenticated API limit
+            return RateLimitScope.API_AUTHENTICATED
+        
+        # Default limit for non-API requests
+        return RateLimitScope.API_ANONYMOUS

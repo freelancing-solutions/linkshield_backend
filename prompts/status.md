@@ -105,3 +105,21 @@ The codebase now has robust, standardized database session management with compr
 - ✅ Comprehensive database indexing for performance
 - ✅ Proper foreign key relationships and constraints
 - ✅ Complete database migration with rollback support
+
+## Pydantic Forward Reference Fix (In Progress)
+
+### Issue Identified
+- **Error**: `TypeAdapter[typing.Annotated[ForwardRef('ProjectCreateRequest'), Query(PydanticUndefined)]]` when accessing `/openapi.json`
+- **Root Cause**: Circular imports and forward reference issues with Pydantic models in dashboard controller
+
+### Solution Implemented
+- **Model Separation**: Created separate `dashboard_models.py` file to house all Pydantic models
+- **Import Updates**: Updated all imports in `dashboard_controller.py` and `dashboard.py` to use new models file
+- **Model Rebuild**: Added `model_rebuild()` calls for all models to resolve forward references
+- **Configuration**: Added `class Config: from_attributes = True` to all models for proper ORM integration
+
+### Files Modified
+- **New File**: `src/controllers/dashboard_models.py` - Contains all dashboard Pydantic models
+- **Updated**: `src/controllers/dashboard_controller.py` - Updated imports, removed model definitions
+- **Updated**: `src/routes/dashboard.py` - Updated imports to use new models file
+- **Test Script**: `test_models_fix.py` - Created to verify the fix works correctly

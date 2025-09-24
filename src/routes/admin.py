@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer
 from loguru import logger
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -37,7 +37,7 @@ class ConfigurationUpdateRequest(BaseModel):
     key: str = Field(..., min_length=1, max_length=100, description="Configuration key")
     value: str = Field(..., max_length=1000, description="Configuration value")
     
-    @validator('key')
+    @field_validator('key')
     def validate_key(cls, v):
         """Validate configuration key format."""
         if not v.replace('_', '').replace('.', '').isalnum():
@@ -49,7 +49,7 @@ class UserStatusUpdateRequest(BaseModel):
     """Request model for user status updates."""
     status: str = Field(..., description="New user status")
     
-    @validator('status')
+    @field_validator('status')
     def validate_status(cls, v):
         """Validate user status."""
         valid_statuses = ["active", "inactive", "suspended", "pending_verification"]

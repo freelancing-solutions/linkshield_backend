@@ -9,7 +9,7 @@ A comprehensive URL security analysis API built with FastAPI, providing real-tim
 - **User Authentication**: JWT-based authentication with session management
 - **Subscription Management**: Tiered access control with usage quotas
 - **Report System**: Community-driven threat intelligence and feedback
-- **Rate Limiting**: Configurable rate limiting and abuse prevention
+- **Advanced Rate Limiting**: Multi-strategy rate limiting with Redis/in-memory backends, user-specific limits, and endpoint-specific restrictions
 - **Real-time Monitoring**: Health checks and metrics collection
 - **Webhook Support**: Real-time notifications for scan results
 
@@ -138,6 +138,21 @@ Key environment variables (see `.env.example` for complete list):
 2. **Google Safe Browsing**: Enable API in [Google Cloud Console](https://console.cloud.google.com/)
 3. **OpenAI**: Get API key from [OpenAI Platform](https://platform.openai.com/)
 
+### Rate Limiting Configuration
+
+The system includes advanced rate limiting with multiple strategies:
+
+- **Sliding Window**: Precise time-based limiting (default)
+- **Fixed Window**: Simple counter-based limiting
+- **Token Bucket**: Burst-friendly limiting
+
+Rate limits are automatically adjusted based on user subscription tiers:
+- **Free**: Basic limits (10 project creations/hour)
+- **Basic**: Enhanced limits (15 project creations/hour)
+- **Premium**: High limits (50 project creations/hour)
+
+See `docs/api/rate-limiting.md` for detailed configuration options.
+
 ## API Documentation
 
 Once the server is running, visit:
@@ -247,7 +262,9 @@ curl -X POST "http://localhost:8000/api/v1/user/register" \
 ## Security
 
 - JWT-based authentication with refresh tokens
-- Rate limiting per user and IP
+- Advanced rate limiting with multiple strategies (sliding window, fixed window, token bucket)
+- User-specific and subscription-based rate limits
+- Redis and in-memory storage backends for rate limiting
 - Input validation and sanitization
 - SQL injection prevention with SQLAlchemy ORM
 - CORS configuration for cross-origin requests

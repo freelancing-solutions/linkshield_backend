@@ -1,303 +1,381 @@
-I have created the following plan after thorough exploration and analysis of the codebase. Follow the below plan verbatim. Trust the files and references. Do not re-verify what's written in the plan. Explore only when absolutely necessary. First implement all the proposed file changes and then I'll review all the changes together at the end.
-
 ### Observations
 
-The LinkShield backend has a well-structured architecture with comprehensive user management, URL analysis, and admin functionality. The new project models (Project, ProjectMember, MonitoringConfig, ProjectAlert) have been implemented with proper relationships and utility methods. The existing authentication system supports role-based access control, and the admin routes demonstrate how to implement complex dashboard endpoints. The codebase uses async SQLAlchemy, follows UUID primary key patterns, and has consistent error handling and logging throughout.
+The LinkShield backend has a well-structured URL analysis system with multiple security providers, subscription-based limits, and project monitoring capabilities. The system uses async SQLAlchemy with PostgreSQL, follows clean architecture patterns, and has comprehensive error handling. The subscription model already includes scan depth and link count limits, and the project monitoring system has a boolean flag for broken link checking. The alert system already includes BROKEN_LINKS as an alert type, indicating this feature was planned.
 
 ### Approach
 
-I'll create a comprehensive dashboard API system following the existing patterns in the LinkShield backend. The approach involves creating new dashboard routes that leverage the project models we've already implemented, building a dedicated DashboardController for business logic, and implementing proper authentication and authorization middleware. The dashboard will provide user-facing endpoints for project management, team collaboration, monitoring configuration, and analytics. I'll follow the established patterns from the user and admin routes, ensuring consistency in structure, error handling, and response models.
+I'll extend the URL analysis system to include broken link detection by adding BROKEN_LINKS to the ScanType enum, implementing comprehensive link crawling and validation logic in URLAnalysisService, updating the URLCheckController to handle broken link scans with proper subscription limit enforcement, and enhancing response models to include broken link results. The implementation will respect subscription plan limits for scan depth and link count, integrate with the existing project monitoring system, and provide detailed broken link analysis results.
 
 ### Reasoning
 
-I explored the repository structure and examined the existing models, routes, and controllers. I analyzed the user.py, user_controller.py, and dependencies.py files to understand the current authentication and route patterns. I also reviewed the project.py models to understand the new dashboard functionality and the admin.py routes to see how complex API endpoints are structured. I identified that the codebase follows a clean architecture with thin routes, business logic in controllers, and proper dependency injection patterns.
+I explored the LinkShield backend codebase and examined the URL check models, routes, services, and controllers. I analyzed the subscription system to understand how limits are enforced, reviewed the project models to see monitoring configuration, and studied the analysis results structure. I identified that the system already has infrastructure for different scan types, subscription limit enforcement, and alert systems, but lacks broken link detection capabilities.
 
 ## Mermaid Diagram
 
 sequenceDiagram
     participant Client
-    participant DashboardRoutes
-    participant DashboardController
-    participant AuthDependencies
-    participant ProjectModels
+    participant URLCheckRoutes
+    participant URLCheckController
+    participant SubscriptionPlan
+    participant URLAnalysisService
     participant Database
 
-    Note over Client,Database: Dashboard Overview Flow
-    Client->>DashboardRoutes: GET /api/v1/dashboard/overview
-    DashboardRoutes->>AuthDependencies: get_current_user()
-    AuthDependencies->>Database: Validate session & get user
-    AuthDependencies-->>DashboardRoutes: User object
-    DashboardRoutes->>DashboardController: get_dashboard_overview(user)
-    DashboardController->>Database: Query projects, alerts, usage stats
-    DashboardController-->>DashboardRoutes: Dashboard overview data
-    DashboardRoutes-->>Client: DashboardOverviewResponse
-
-    Note over Client,Database: Project Management Flow
-    Client->>DashboardRoutes: POST /api/v1/dashboard/projects
-    DashboardRoutes->>AuthDependencies: get_current_user()
-    DashboardRoutes->>DashboardController: create_project(user, request_data)
-    DashboardController->>Database: Check subscription limits
-    DashboardController->>ProjectModels: Create Project & MonitoringConfig
-    DashboardController->>Database: Save new project
-    DashboardController-->>DashboardRoutes: Project response
-    DashboardRoutes-->>Client: ProjectResponse
-
-    Note over Client,Database: Team Management Flow
-    Client->>DashboardRoutes: POST /api/v1/dashboard/projects/{id}/members
-    DashboardRoutes->>AuthDependencies: get_project_owner()
-    AuthDependencies->>Database: Verify project ownership
-    DashboardRoutes->>DashboardController: invite_member(user, project_id, email, role)
-    DashboardController->>ProjectModels: Create ProjectMember
-    DashboardController->>Database: Save invitation
-    DashboardController->>EmailService: Send invitation email
-    DashboardController-->>DashboardRoutes: Member response
-    DashboardRoutes-->>Client: MemberResponse
-
-    Note over Client,Database: Analytics Flow
-    Client->>DashboardRoutes: GET /api/v1/dashboard/analytics
-    DashboardRoutes->>AuthDependencies: get_current_user()
-    DashboardRoutes->>DashboardController: get_analytics(user, filters)
-    DashboardController->>Database: Aggregate usage data, scan history
-    DashboardController->>Database: Calculate trends and metrics
-    DashboardController-->>DashboardRoutes: Analytics data
-    DashboardRoutes-->>Client: AnalyticsResponse
+    Note over Client,Database: Broken Link Scan Flow
+    Client->>URLCheckRoutes: POST /api/v1/url-check/check
+    Note right of Client: scan_types: [BROKEN_LINKS]<br/>scan_depth: 3<br/>max_links: 50
+    
+    URLCheckRoutes->>URLCheckController: check_url(url, scan_types, scan_depth, max_links)
+    URLCheckController->>SubscriptionPlan: validate_scan_depth(3)
+    SubscriptionPlan-->>URLCheckController: clamped_depth = 2 (plan limit)
+    URLCheckController->>SubscriptionPlan: get_max_links_for_scan(50)
+    SubscriptionPlan-->>URLCheckController: clamped_links = 30 (plan limit)
+    
+    URLCheckController->>Database: Create URLCheck record
+    URLCheckController->>URLAnalysisService: analyze_url(url, [BROKEN_LINKS], depth=2, max_links=30)
+    
+    Note over URLAnalysisService: Link Crawling Process
+    URLAnalysisService->>URLAnalysisService: _scan_broken_links(url, depth=2, max_links=30)
+    URLAnalysisService->>URLAnalysisService: _extract_links_from_html(html, base_url)
+    URLAnalysisService->>URLAnalysisService: _check_link_status(link) for each link
+    
+    Note over URLAnalysisService: Concurrent Link Validation
+    loop For each discovered link
+        URLAnalysisService->>URLAnalysisService: HTTP request to validate link
+        URLAnalysisService->>URLAnalysisService: Record status (200, 404, timeout, etc.)
+    end
+    
+    URLAnalysisService-->>URLCheckController: AnalysisResults with broken link data
+    URLCheckController->>Database: Update URLCheck with results
+    Note right of Database: broken_links_count: 5<br/>total_links_checked: 28<br/>scan_depth_used: 2
+    
+    URLCheckController-->>URLCheckRoutes: URLCheck with broken link results
+    URLCheckRoutes-->>Client: URLCheckResponse with broken link details
+    Note left of Client: Response includes:<br/>- broken_links_count<br/>- broken_links_details<br/>- scan_depth_used<br/>- total_links_checked
 
 ## Proposed File Changes
 
-### src\routes\dashboard.py(NEW)
+### src\models\url_check.py(MODIFY)
 
 References: 
 
-- src\routes\user.py
-- src\routes\admin.py
-- src\authentication\dependencies.py(MODIFY)
+- src\models\analysis_results.py(MODIFY)
 
-Create a comprehensive dashboard routes file with the following endpoints:
+Add BROKEN_LINKS to the ScanType enumeration:
 
-**Dashboard Overview Route:**
-- `GET /api/v1/dashboard/overview` - Returns user dashboard summary including project count, recent activity, subscription status, usage statistics, and alerts summary
-- Include authentication via `get_current_user` dependency
-- Return dashboard overview data with project statistics, monitoring status, and recent alerts
+**Add new enum value:**
+- Add `BROKEN_LINKS = "broken_links"` to the ScanType enum after the existing values
+- This will enable broken link detection as a distinct scan type alongside SECURITY, REPUTATION, and CONTENT
 
-**Project Management Routes:**
-- `GET /api/v1/dashboard/projects` - List user's projects with pagination, filtering, and search
-- `POST /api/v1/dashboard/projects` - Create new monitoring project
-- `GET /api/v1/dashboard/projects/{project_id}` - Get specific project details
-- `PUT /api/v1/dashboard/projects/{project_id}` - Update project settings
-- `DELETE /api/v1/dashboard/projects/{project_id}` - Delete project (soft delete)
-- `POST /api/v1/dashboard/projects/{project_id}/toggle-monitoring` - Enable/disable monitoring
+**Update docstring:**
+- Update the ScanType enum docstring to include description of BROKEN_LINKS scan type
+- Document that BROKEN_LINKS performs link crawling and validation to detect broken or inaccessible links
 
-**Team Management Routes:**
-- `GET /api/v1/dashboard/projects/{project_id}/members` - List project members
-- `POST /api/v1/dashboard/projects/{project_id}/members` - Invite team member
-- `PUT /api/v1/dashboard/projects/{project_id}/members/{member_id}` - Update member role
-- `DELETE /api/v1/dashboard/projects/{project_id}/members/{member_id}` - Remove team member
-- `POST /api/v1/dashboard/projects/{project_id}/members/{member_id}/accept` - Accept invitation
+The change should be minimal and follow the existing pattern of other scan types in the enum.
+Update the URLCheck model to properly handle broken link scan results:
 
-**Analytics Route:**
-- `GET /api/v1/dashboard/analytics` - Get usage statistics, trends, scan history, and performance metrics
-- Support date range filtering and metric type selection
+**Add broken link specific fields:**
+- Add `broken_links_count = Column(Integer, nullable=True, default=0)` to track number of broken links found
+- Add `total_links_checked = Column(Integer, nullable=True, default=0)` to track total links validated
+- Add `scan_depth_used = Column(Integer, nullable=True)` to record actual scan depth used
+- Add `max_links_used = Column(Integer, nullable=True)` to record link limit applied
 
-**Request/Response Models:**
-- Create Pydantic models for all request/response data following existing patterns
-- Include proper validation, field descriptions, and examples
-- Models: DashboardOverviewResponse, ProjectCreateRequest, ProjectResponse, ProjectUpdateRequest, MemberInviteRequest, MemberResponse, AnalyticsResponse
+**Update the to_dict method:**
+- Include broken link statistics in the dictionary representation
+- Extract broken link details from analysis_results JSON when available
+- Add broken link summary information to the response
+- Ensure backward compatibility for existing URL checks without broken link data
 
-**Authentication & Authorization:**
-- Use `get_current_user` for all authenticated endpoints
-- Implement project ownership and member access checks
-- Add proper error handling for unauthorized access
+**Add broken link helper methods:**
+- Add `get_broken_links_summary(self) -> Dict[str, Any]` method to extract broken link statistics
+- Add `has_broken_links(self) -> bool` method to check if broken links were found
+- Add `get_broken_link_percentage(self) -> float` method to calculate percentage of broken links
 
-**Rate Limiting & Validation:**
-- Apply appropriate rate limiting for creation and invitation endpoints
-- Include comprehensive input validation and sanitization
-- Follow existing error response patterns from `src/routes/user.py`
+**Update threat level calculation:**
+- Modify `update_threat_level()` method to consider broken links in threat assessment
+- Add logic to increase threat level if a high percentage of links are broken
+- Consider broken links as a factor in overall safety score calculation
 
-The routes should follow the thin layer pattern established in `src/routes/user.py`, delegating all business logic to the DashboardController.
+**Enhance indexes:**
+- Add database index on broken_links_count for efficient querying
+- Add composite index on (domain, broken_links_count) for domain-based broken link analysis
 
-### src\controllers\dashboard_controller.py(NEW)
+**Update validation methods:**
+- Ensure broken link fields are properly validated
+- Add constraints to ensure counts are non-negative
+- Handle cases where broken link scanning was not performed
+
+The changes should maintain database compatibility and provide efficient access to broken link information.
+
+### src\services\url_analysis_service.py(MODIFY)
 
 References: 
 
-- src\controllers\user_controller.py
-- src\controllers\base_controller.py
-- src\models\project.py
+- src\models\analysis_results.py(MODIFY)
 - src\models\subscription.py
 
-Create a comprehensive DashboardController that handles all dashboard business logic:
+Implement comprehensive broken link detection functionality in URLAnalysisService:
 
-**Controller Structure:**
-- Inherit from BaseController following the pattern in `src/controllers/user_controller.py`
-- Use dependency injection for SecurityService, AuthService, and EmailService
-- Include proper error handling, logging, and rate limiting
+**Add broken link detection method:**
+- Add `async def _scan_broken_links(self, url: str, scan_depth: int = 1, max_links: int = 100) -> Dict[str, Any]` method
+- Implement link crawling logic that respects depth and link count limits
+- Parse HTML content to extract all links (href, src attributes)
+- Validate each link by making HTTP requests and checking response status
+- Handle different types of links: internal, external, relative, absolute
+- Track broken links with detailed error information (404, timeout, connection error, etc.)
 
-**Dashboard Overview Methods:**
-- `get_dashboard_overview(user)` - Aggregate user's project data, recent activity, subscription limits, and alert summaries
-- Calculate usage statistics against subscription plan limits from `SubscriptionPlan` model
-- Include recent scan results, active alerts, and system notifications
+**Add link crawling utilities:**
+- Add `_extract_links_from_html(self, html_content: str, base_url: str) -> List[str]` method
+- Add `_normalize_link(self, link: str, base_url: str) -> str` method for URL normalization
+- Add `_is_valid_link(self, link: str) -> bool` method for basic link validation
+- Add `_check_link_status(self, link: str) -> Dict[str, Any]` method for individual link validation
 
-**Project Management Methods:**
-- `list_projects(user, page, limit, search, status)` - Get paginated project list with filtering
-- `create_project(user, request_data)` - Create new project with validation against subscription limits
-- `get_project(user, project_id)` - Get project details with access control
-- `update_project(user, project_id, request_data)` - Update project with permission checks
-- `delete_project(user, project_id)` - Soft delete project with cleanup
-- `toggle_monitoring(user, project_id, enabled)` - Enable/disable project monitoring
+**Update _perform_comprehensive_analysis method:**
+- Add condition to include broken link scanning when `ScanType.BROKEN_LINKS` is in scan_types
+- Add task: `self._scan_broken_links(url, scan_depth, max_links)` to the analysis tasks
+- Ensure broken link scanning respects subscription limits passed as parameters
 
-**Team Management Methods:**
-- `list_project_members(user, project_id)` - Get project team members with roles
-- `invite_member(user, project_id, email, role)` - Send team invitation with email notification
-- `update_member_role(user, project_id, member_id, new_role)` - Update team member permissions
-- `remove_member(user, project_id, member_id)` - Remove team member with cleanup
-- `accept_invitation(user, project_id, invitation_token)` - Accept team invitation
+**Add subscription limit integration:**
+- Modify `analyze_url` method signature to accept `scan_depth: Optional[int] = None, max_links: Optional[int] = None`
+- Pass these limits to the broken link scanning method
+- Ensure limits are enforced during link crawling and validation
 
-**Analytics Methods:**
-- `get_analytics(user, date_range, metrics)` - Generate usage analytics and trends
-- Aggregate scan history, performance metrics, and usage patterns
-- Calculate subscription usage and remaining limits
+**Create ProviderScanResult for broken links:**
+- Return broken link results in the same format as other scan types
+- Include metadata with broken link count, total links checked, scan depth used
+- Provide detailed broken link information in the raw_response field
+- Set threat_detected based on whether broken links were found
+- Calculate confidence_score based on the percentage of broken links
 
-**Access Control Methods:**
-- `check_project_access(user, project_id, required_role)` - Verify user can access project
-- `check_subscription_limits(user, action)` - Validate against subscription plan limits
-- `can_create_project(user)` - Check if user can create more projects
+**Error handling and timeouts:**
+- Implement proper timeout handling for link validation requests
+- Add retry logic for transient network errors
+- Handle various HTTP error codes and network exceptions
+- Ensure the scan doesn't hang on slow or unresponsive links
 
-**Utility Methods:**
-- `send_invitation_email(project, invitee_email, inviter, role)` - Send team invitation emails
-- `log_project_activity(project_id, user_id, action, details)` - Log project activities
-- `calculate_usage_stats(user)` - Calculate current usage against limits
+**Performance optimizations:**
+- Use asyncio.gather() for concurrent link validation
+- Implement connection pooling for HTTP requests
+- Add rate limiting to avoid overwhelming target servers
+- Cache link validation results to avoid duplicate checks
 
-**Response Models:**
-- Create comprehensive Pydantic response models for all return data
-- Include proper serialization of project, member, and analytics data
-- Follow patterns from `src/controllers/user_controller.py` for response model structure
+The implementation should follow the existing patterns in the service and integrate seamlessly with the current analysis workflow.
 
-**Error Handling:**
-- Implement proper HTTP exception handling for all scenarios
-- Include specific error messages for subscription limits, access denied, and validation failures
-- Use consistent error response format across all methods
-
-The controller should integrate with the Project, ProjectMember, MonitoringConfig, and ProjectAlert models from `src/models/project.py`.
-
-### src\controllers\depends.py(MODIFY)
+### src\controllers\url_check_controller.py(MODIFY)
 
 References: 
 
-- src\controllers\user_controller.py
-
-Add dependency injection function for the DashboardController:
-
-**Add Import:**
-- Import the new DashboardController class
-
-**Add Dependency Function:**
-- Create `get_dashboard_controller()` function following the same pattern as existing controller dependencies
-- Use dependency injection for SecurityService, AuthService, and EmailService
-- Return configured DashboardController instance
-
-**Function Implementation:**
-```python
-def get_dashboard_controller(
-    security_service: SecurityService = Depends(get_security_service),
-    auth_service: AuthService = Depends(get_auth_service),
-    email_service = Depends(get_email_service),
-) -> DashboardController:
-    return DashboardController(
-        security_service=security_service,
-        auth_service=auth_service,
-        email_service=email_service,
-    )
-```
-
-This follows the exact pattern used for other controllers in the file and ensures proper dependency injection for the dashboard functionality.
-
-### src\authentication\dependencies.py(MODIFY)
-
-References: 
-
+- src\models\subscription.py
 - src\models\project.py
-- src\models\user.py
 
-Add project-specific authorization dependencies for dashboard access control:
+Update URLCheckController to handle broken link scans with subscription limit enforcement:
 
-**Add Project Access Dependencies:**
-- `get_project_owner(project_id, current_user)` - Verify user owns the specified project
-- `get_project_member(project_id, current_user, min_role)` - Verify user has minimum role in project
-- `get_project_admin(project_id, current_user)` - Verify user has admin access to project
+**Modify check_url method:**
+- Add subscription limit validation for broken link scans
+- Extract user's subscription plan and get scan depth and link limits
+- Pass subscription limits to the URL analysis service
+- Add validation to ensure requested scan parameters don't exceed plan limits
 
-**Implementation Details:**
-- Add async functions that check project membership and roles
-- Query Project and ProjectMember models to verify access
-- Raise HTTPException with 403 Forbidden for unauthorized access
-- Raise HTTPException with 404 Not Found for non-existent projects
-- Return the project object for successful authorization
+**Add subscription limit validation:**
+- Add `_validate_broken_link_limits(self, user: User, scan_types: List[ScanType], requested_depth: Optional[int] = None, requested_links: Optional[int] = None) -> Tuple[int, int]` method
+- Check if user's subscription plan allows broken link scanning
+- Validate and clamp scan depth to plan limits using `plan.get_scan_depth_for_request()`
+- Validate and clamp max links to plan limits using `plan.get_max_links_for_scan()`
+- Raise HTTPException if broken link scanning is not allowed for the user's plan
 
-**Helper Functions:**
-- `_get_project_by_id(db, project_id)` - Database lookup for project
-- `_check_project_membership(db, project_id, user_id, min_role)` - Verify membership and role
-- `_get_user_project_role(db, project_id, user_id)` - Get user's role in project
+**Update _perform_url_analysis method:**
+- Modify method signature to accept scan depth and max links parameters
+- Pass these parameters to the URL analysis service
+- Ensure the parameters are properly validated before analysis
 
-**Usage Pattern:**
-```python
-async def get_project_owner(
-    project_id: str = Path(...),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session)
-) -> Project:
-    # Verify project exists and user is owner
-    # Return project object or raise HTTPException
-```
+**Add broken link specific error handling:**
+- Add specific error messages for broken link scan limit violations
+- Provide clear feedback when users exceed their plan limits
+- Include upgrade suggestions in error messages for users on lower plans
 
-**Integration:**
-- Import ProjectRole enum from `src/models/project.py`
-- Use existing database session and user authentication patterns
-- Follow error handling patterns from existing dependencies
-- Add proper logging for authorization attempts
+**Update bulk_check_urls method:**
+- Apply the same subscription limit validation for bulk requests
+- Ensure broken link scanning limits are enforced across all URLs in bulk requests
+- Consider the cumulative impact of broken link scanning on plan limits
 
-These dependencies will be used in dashboard routes to ensure users can only access projects they own or are members of, with appropriate role-based permissions.
+**Add logging for broken link scans:**
+- Log broken link scan requests with depth and link count parameters
+- Track subscription limit enforcement in logs
+- Log broken link scan results and performance metrics
 
-### src\routes\__init__.py(MODIFY)
+**Integration with project monitoring:**
+- When broken link scans are triggered from project monitoring, respect the MonitoringConfig settings
+- Use the project's configured scan_depth and max_links_per_scan values
+- Ensure project-based scans also respect the user's subscription limits
 
-Add the new dashboard router to the routes module:
+The changes should maintain backward compatibility and follow the existing error handling and logging patterns in the controller.
 
-**Add Import:**
-- Import the dashboard router: `from .dashboard import router as dashboard_router`
-
-**Update Router List:**
-- Add `dashboard_router` to the list of available routers
-- Ensure it's properly exported for use in the main application
-
-**Update __all__ List:**
-- Include `dashboard_router` in the __all__ list if one exists
-- Maintain alphabetical ordering of router imports
-
-This ensures the dashboard routes are properly discoverable and can be included in the main FastAPI application routing.
-
-### app.py(MODIFY)
+### src\routes\url_check.py(MODIFY)
 
 References: 
 
-- src\routes\user.py
-- src\routes\admin.py
+- src\models\url_check.py(MODIFY)
+- src\models\analysis_results.py(MODIFY)
 
-Register the new dashboard router with the FastAPI application:
+Update URL check routes to support broken link scanning parameters:
 
-**Add Router Import:**
-- Import the dashboard router from routes: `from src.routes.dashboard import router as dashboard_router`
+**Modify URLCheckRequest model:**
+- Add `scan_depth: Optional[int] = Field(None, ge=1, le=10, description="Maximum depth for link crawling (broken link scans only)")` 
+- Add `max_links: Optional[int] = Field(None, ge=1, le=1000, description="Maximum number of links to check (broken link scans only)")`
+- Update the model docstring to document the new parameters
 
-**Register Router:**
-- Add the dashboard router to the FastAPI app using `app.include_router(dashboard_router)`
-- Place it in the appropriate section with other API routers
-- Ensure it's registered after authentication middleware is set up
+**Update BulkURLCheckRequest model:**
+- Add the same scan_depth and max_links parameters
+- Ensure bulk requests can also specify broken link scanning limits
 
-**Router Registration:**
+**Modify check_url route:**
+- Pass the scan_depth and max_links parameters from the request to the controller
+- Update the route documentation to explain broken link scanning parameters
+- Add examples showing how to use broken link scanning
+
+**Update bulk_check_urls route:**
+- Pass the broken link scanning parameters to the bulk check controller method
+- Ensure the parameters are applied to all URLs in the bulk request
+
+**Enhance route documentation:**
+- Update docstrings to explain broken link scanning functionality
+- Document subscription plan requirements for broken link scanning
+- Provide examples of broken link scan requests
+- Explain how scan depth and max links parameters work
+
+**Add validation examples:**
+- Include examples in the OpenAPI documentation showing valid broken link scan requests
+- Document the relationship between subscription plans and scanning limits
+- Provide error response examples for limit violations
+
+The changes should maintain backward compatibility by making the new parameters optional with sensible defaults.
+Enhance URLCheckResponse and related response models to include broken link results:
+
+**Update URLCheckResponse model:**
+- Add `broken_links_count: Optional[int] = Field(None, description="Number of broken links found")` 
+- Add `total_links_checked: Optional[int] = Field(None, description="Total number of links checked")`
+- Add `broken_links_details: Optional[List[Dict[str, Any]]] = Field(None, description="Detailed information about broken links")`
+- Add `scan_depth_used: Optional[int] = Field(None, description="Actual scan depth used")`
+- Add `max_links_used: Optional[int] = Field(None, description="Maximum links limit applied")`
+
+**Create BrokenLinkDetail model:**
+- Create new Pydantic model: `class BrokenLinkDetail(BaseModel):`
+- Add fields: `url: str`, `status_code: Optional[int]`, `error_type: str`, `error_message: str`, `parent_url: str`, `link_type: str` (internal/external)
+- Add `discovered_at_depth: int` to track at which crawl depth the link was found
+
+**Update ScanResultResponse model:**
+- Ensure it can properly represent broken link scan results
+- Add support for broken link specific metadata
+- Include broken link statistics in the scan result
+
+**Create BrokenLinkSummary model:**
+- Create summary model for broken link analysis: `class BrokenLinkSummary(BaseModel):`
+- Include fields: `total_links: int`, `broken_links: int`, `broken_percentage: float`, `scan_depth: int`, `scan_duration: float`
+- Add `broken_by_type: Dict[str, int]` to categorize broken links by error type
+- Add `broken_by_depth: Dict[int, int]` to show broken links by crawl depth
+
+**Update URLCheck.to_dict() method:**
+- Modify the to_dict method in URLCheck model to include broken link information when available
+- Extract broken link data from analysis_results JSON field
+- Format broken link information for API responses
+
+**Enhance analysis_results field:**
+- Ensure the analysis_results JSON field can store comprehensive broken link data
+- Include broken link details, statistics, and metadata
+- Maintain backward compatibility with existing analysis result formats
+
+**Update response documentation:**
+- Add comprehensive documentation for all new broken link fields
+- Provide examples of broken link scan responses
+- Document the structure of broken link details and summaries
+
+The changes should maintain backward compatibility and provide rich information about broken link scan results.
+
+### src\models\analysis_results.py(MODIFY)
+
+Add broken link detection support to the analysis results models:
+
+**Enhance ProviderScanResult model:**
+- Add `broken_links: Optional[List[Dict[str, Any]]] = Field(None, description="List of broken links found")`
+- Add `total_links_checked: Optional[int] = Field(None, description="Total number of links validated")`
+- Add `scan_depth_used: Optional[int] = Field(None, description="Actual crawl depth used")`
+
+**Update ProviderMetadata model:**
+- Add `broken_links_count: Optional[int] = None` for broken link statistics
+- Add `total_links_checked: Optional[int] = None` for total link count
+- Add `scan_depth: Optional[int] = None` for crawl depth information
+- Add `max_links_limit: Optional[int] = None` for applied link limits
+- Add `broken_link_types: Optional[Dict[str, int]] = None` for categorizing broken links by error type
+
+**Create BrokenLinkInfo model:**
+- Add new Pydantic model for individual broken link information:
 ```python
-# Add after existing router registrations
-app.include_router(dashboard_router)
+class BrokenLinkInfo(BaseModel):
+    url: str
+    status_code: Optional[int] = None
+    error_type: str  # 404, timeout, connection_error, etc.
+    error_message: str
+    parent_url: str
+    link_type: str  # internal, external, relative, absolute
+    discovered_at_depth: int
+    response_time: Optional[float] = None
 ```
 
-**Placement:**
-- Add the router registration in the same section where other routers (user, admin, url_check) are registered
-- Maintain consistent ordering and formatting with existing router registrations
-- Ensure the dashboard routes are available at `/api/v1/dashboard/*`
+**Update conversion utilities:**
+- Modify `convert_legacy_analysis_results()` to handle broken link data
+- Update `convert_analysis_results_to_dict_for_storage()` to include broken link information
+- Ensure `create_scan_result_model()` can handle broken link scan results
 
-This makes the dashboard API endpoints accessible through the main FastAPI application and ensures they're properly integrated with the existing middleware and authentication systems.
+**Add broken link specific helper methods:**
+- Add `get_broken_links_summary()` method to AnalysisResults
+- Add `get_broken_links_by_type()` method to categorize broken links
+- Add `get_broken_links_by_depth()` method to analyze broken links by crawl depth
+- Add `calculate_broken_link_percentage()` method for statistics
+
+**Enhance backward compatibility:**
+- Ensure existing analysis results without broken link data continue to work
+- Provide default values for new broken link fields
+- Handle cases where broken link scanning was not performed
+
+The changes should integrate seamlessly with the existing analysis results structure and provide comprehensive broken link information.
+
+### alembic\versions\006_add_broken_link_fields.py(NEW)
+
+References: 
+
+- alembic\versions\005_add_alert_instance_model.py
+- alembic\versions\004_add_dashboard_project_models.py
+
+Create a new Alembic migration to add broken link fields to the url_checks table:
+
+**Migration Header:**
+- Set revision ID as '006_add_broken_link_fields'
+- Set down_revision to '005_add_alert_instance_model'
+- Include proper docstring describing the broken link functionality additions
+
+**Add Columns to url_checks table:**
+- Add `broken_links_count` column: `sa.Column('broken_links_count', sa.Integer(), nullable=True, default=0)`
+- Add `total_links_checked` column: `sa.Column('total_links_checked', sa.Integer(), nullable=True, default=0)`
+- Add `scan_depth_used` column: `sa.Column('scan_depth_used', sa.Integer(), nullable=True)`
+- Add `max_links_used` column: `sa.Column('max_links_used', sa.Integer(), nullable=True)`
+
+**Add Database Indexes:**
+- Create index on broken_links_count: `op.create_index('ix_url_checks_broken_links_count', 'url_checks', ['broken_links_count'])`
+- Create composite index: `op.create_index('ix_url_checks_domain_broken_links', 'url_checks', ['domain', 'broken_links_count'])`
+- Create index for efficient broken link queries: `op.create_index('ix_url_checks_total_links_checked', 'url_checks', ['total_links_checked'])`
+
+**Update Existing Data:**
+- Set default values for existing records: `op.execute("UPDATE url_checks SET broken_links_count = 0, total_links_checked = 0 WHERE broken_links_count IS NULL")`
+- Ensure data consistency for existing URL checks
+
+**Downgrade Function:**
+- Implement complete rollback that drops all new columns and indexes
+- Drop indexes in correct order: `op.drop_index('ix_url_checks_broken_links_count')`
+- Drop columns: `op.drop_column('url_checks', 'broken_links_count')`
+- Ensure clean rollback without data loss
+
+**Migration Validation:**
+- Include validation to ensure migration runs successfully
+- Add comments explaining the purpose of each new field
+- Follow the patterns established in existing migration files
+
+The migration should be safe to run on existing databases and maintain data integrity.

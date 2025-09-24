@@ -13,11 +13,25 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any as AnyType
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy import and_, select, update, func as sql_func
 from sqlalchemy.exc import IntegrityError
 
 from src.controllers.base_controller import BaseController
+from src.controllers.dashboard_models import (
+    DashboardOverviewResponse,
+    ProjectResponse,
+    ProjectCreateRequest,
+    ProjectUpdateRequest,
+    MemberResponse,
+    MemberInviteRequest,
+    MonitoringConfigResponse,
+    AlertResponse,
+    AlertInstanceResponse,
+    AlertCreateRequest,
+    AlertUpdateRequest,
+    AnalyticsResponse,
+    ActivityLogResponse,
+)
 from src.models.project import Project, ProjectMember, MonitoringConfig, ProjectAlert, ProjectRole, AlertInstance, AlertType, AlertChannel
 from src.models.subscription import SubscriptionPlan, UserSubscription
 from src.models.user import User
@@ -28,182 +42,6 @@ from src.services.advanced_rate_limiter import rate_limit
 from src.authentication.auth_service import AuthService
 from src.utils import utc_datetime
 from src.config import settings
-
-
-# ------------------------------------------------------------------
-# Pydantic response models (live close to business logic)
-# ------------------------------------------------------------------
-class DashboardOverviewResponse(BaseModel):
-    """Dashboard overview response model."""
-    total_projects: int
-    active_projects: int
-    recent_alerts: int
-    subscription_status: str
-    usage_stats: Dict[str, AnyType]
-    recent_activity: List[Dict[str, AnyType]]
-    monitoring_summary: Dict[str, AnyType]
-
-
-class ProjectResponse(BaseModel):
-    """Project response model."""
-    id: uuid.UUID
-    name: str
-    description: Optional[str]
-    website_url: str
-    domain: str
-    is_active: bool
-    monitoring_enabled: bool
-    settings: Optional[Dict[str, AnyType]]
-    member_count: int
-    created_at: datetime
-    updated_at: datetime
-    last_scan_at: Optional[datetime]
-
-    class Config:
-        from_attributes = True
-
-
-class ProjectCreateRequest(BaseModel):
-    """Project creation request model."""
-    name: str = Field(..., min_length=1, max_length=100)
-    description: Optional[str] = Field(None, max_length=500)
-    website_url: str = Field(..., max_length=500)
-    settings: Optional[Dict[str, AnyType]] = None
-
-
-class ProjectUpdateRequest(BaseModel):
-    """Project update request model."""
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    description: Optional[str] = Field(None, max_length=500)
-    website_url: Optional[str] = Field(None, max_length=500)
-    settings: Optional[Dict[str, AnyType]] = None
-    is_active: Optional[bool] = None
-
-
-class MemberResponse(BaseModel):
-    """Project member response model."""
-    id: uuid.UUID
-    user_id: uuid.UUID
-    email: str
-    full_name: Optional[str]
-    role: str
-    is_active: bool
-    joined_at: Optional[datetime]
-    invited_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class MemberInviteRequest(BaseModel):
-    """Member invitation request model."""
-    email: EmailStr
-    role: str = Field(..., description="Project role: owner, admin, editor, viewer")
-
-
-class MonitoringConfigResponse(BaseModel):
-    """Monitoring configuration response model."""
-    id: uuid.UUID
-    project_id: uuid.UUID
-    scan_frequency_minutes: int
-    scan_depth_limit: int
-    max_links_per_scan: int
-    exclude_patterns: Optional[List[str]]
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class AlertResponse(BaseModel):
-    """Project alert response model."""
-    id: uuid.UUID
-    project_id: uuid.UUID
-    alert_type: str
-    title: str
-    description: Optional[str]
-    severity: str
-    is_resolved: bool
-    created_at: datetime
-    resolved_at: Optional[datetime]
-
-    class Config:
-        from_attributes = True
-
-
-class AlertInstanceResponse(BaseModel):
-    """Alert instance response model."""
-    id: uuid.UUID
-    project_id: uuid.UUID
-    project_alert_id: Optional[uuid.UUID]
-    user_id: Optional[uuid.UUID]
-    alert_type: str
-    severity: str
-    title: str
-    description: Optional[str]
-    context_data: Optional[Dict[str, AnyType]]
-    affected_urls: Optional[List[str]]
-    status: str
-    acknowledged_at: Optional[datetime]
-    resolved_at: Optional[datetime]
-    notification_sent: bool
-    notification_sent_at: Optional[datetime]
-    notification_channel: Optional[str]
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class AlertCreateRequest(BaseModel):
-    """Alert creation request model."""
-    alert_type: str
-    severity: str = Field(default="medium", description="Alert severity: low, medium, high, critical")
-    title: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = Field(None, max_length=1000)
-    context_data: Optional[Dict[str, AnyType]] = None
-    affected_urls: Optional[List[str]] = None
-
-
-class AlertUpdateRequest(BaseModel):
-    """Alert update request model."""
-    status: Optional[str] = Field(None, description="Alert status: active, acknowledged, resolved, dismissed")
-    severity: Optional[str] = Field(None, description="Alert severity: low, medium, high, critical")
-    title: Optional[str] = Field(None, min_length=1, max_length=200)
-    description: Optional[str] = Field(None, max_length=1000)
-
-
-class AnalyticsResponse(BaseModel):
-    """Analytics response model."""
-    date_range: Dict[str, datetime]
-    total_scans: int
-    total_alerts: int
-    avg_scan_duration: float
-    top_issues: List[Dict[str, AnyType]]
-    usage_trends: Dict[str, List[Dict[str, AnyType]]]
-    subscription_usage: Dict[str, AnyType]
-
-
-class ActivityLogResponse(BaseModel):
-    """Activity log response model."""
-    id: uuid.UUID
-    user_id: uuid.UUID
-    user_email: str
-    user_full_name: Optional[str]
-    project_id: uuid.UUID
-    action: str
-    resource_type: Optional[str]
-    resource_id: Optional[str]
-    details: Optional[Dict[str, AnyType]]
-    ip_address: Optional[str]
-    user_agent: Optional[str]
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 # ------------------------------------------------------------------

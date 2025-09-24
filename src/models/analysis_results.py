@@ -30,6 +30,72 @@ class ThreatType(str, Enum):
     UNKNOWN = "unknown"
 
 
+class BrokenLinkStatus(str, Enum):
+    """Status of a broken link check."""
+    WORKING = "working"
+    BROKEN = "broken"
+    TIMEOUT = "timeout"
+    REDIRECT = "redirect"
+    UNKNOWN = "unknown"
+
+
+class BrokenLinkDetail(BaseModel):
+    """Details about a specific broken link found during scanning."""
+    url: str = Field(..., description="The URL that was checked")
+    status_code: Optional[int] = Field(None, description="HTTP status code returned")
+    status: BrokenLinkStatus = Field(..., description="Status of the link check")
+    error_message: Optional[str] = Field(None, description="Error message if link is broken")
+    response_time: Optional[float] = Field(None, description="Response time in seconds")
+    redirect_url: Optional[str] = Field(None, description="Final URL after redirects")
+    depth_level: int = Field(..., description="Depth level where this link was found")
+    
+    class Config:
+        extra = "forbid"
+
+
+class BrokenLinkScanResult(BaseModel):
+    """Results from a broken link scan."""
+    total_links_found: int = Field(0, description="Total number of links discovered")
+    total_links_checked: int = Field(0, description="Total number of links actually checked")
+    broken_links_count: int = Field(0, description="Number of broken links found")
+    working_links_count: int = Field(0, description="Number of working links found")
+    scan_depth_used: int = Field(1, description="Actual scan depth used")
+    max_links_used: int = Field(100, description="Maximum links limit used")
+    broken_links: List[BrokenLinkDetail] = Field(default_factory=list, description="Details of broken links")
+    scan_duration: Optional[float] = Field(None, description="Total scan duration in seconds")
+    
+    class Config:
+        extra = "forbid"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for storage."""
+        return {
+            "total_links_found": self.total_links_found,
+            "total_links_checked": self.total_links_checked,
+            "broken_links_count": self.broken_links_count,
+            "working_links_count": self.working_links_count,
+            "scan_depth_used": self.scan_depth_used,
+            "max_links_used": self.max_links_used,
+            "broken_links": [link.dict() for link in self.broken_links],
+            "scan_duration": self.scan_duration
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'BrokenLinkScanResult':
+        """Create from dictionary."""
+        broken_links = [BrokenLinkDetail(**link) for link in data.get("broken_links", [])]
+        return cls(
+            total_links_found=data.get("total_links_found", 0),
+            total_links_checked=data.get("total_links_checked", 0),
+            broken_links_count=data.get("broken_links_count", 0),
+            working_links_count=data.get("working_links_count", 0),
+            scan_depth_used=data.get("scan_depth_used", 1),
+            max_links_used=data.get("max_links_used", 100),
+            broken_links=broken_links,
+            scan_duration=data.get("scan_duration")
+        )
+
+
 # ------------------------------------------------------------------
 # Pydantic equivalents of former @dataclasses
 # ------------------------------------------------------------------
@@ -70,14 +136,24 @@ class AnalysisResults(BaseModel):
     scan_results: List[ProviderScanResult] = Field(default_factory=list)
     scan_types: List[str] = Field(default_factory=list)
     analysis_timestamp: datetime = Field(default_factory=utc_datetime)
+    # Broken link scan results
+    broken_link_scan: Optional[BrokenLinkScanResult] = Field(None, description="Broken link scan results")
 
     # --- backward-compat helpers ---
     def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump()
+        data = self.model_dump()
+        # Handle broken link scan serialization
+        if self.broken_link_scan:
+            data["broken_link_scan"] = self.broken_link_scan.to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AnalysisResults':
         # Handle nested Pydantic models explicitly
+        broken_link_scan = None
+        if data.get("broken_link_scan"):
+            broken_link_scan = BrokenLinkScanResult.from_dict(data["broken_link_scan"])
+        
         return cls(
             normalized_url=data.get("normalized_url", ""),
             domain=data.get("domain", ""),
@@ -86,6 +162,7 @@ class AnalysisResults(BaseModel):
             scan_results=[ProviderScanResult.from_dict(sr) for sr in data.get("scan_results", [])],
             scan_types=data.get("scan_types", []),
             analysis_timestamp=data.get("analysis_timestamp") or utc_datetime(),
+            broken_link_scan=broken_link_scan,
         )
 
     # --- business helpers ---
@@ -97,6 +174,14 @@ class AnalysisResults(BaseModel):
 
     def has_threat_detected(self) -> bool:
         return any(r.threat_detected for r in self.scan_results)
+    
+    def has_broken_links(self) -> bool:
+        """Check if broken links were found."""
+        return self.broken_link_scan is not None and self.broken_link_scan.broken_links_count > 0
+    
+    def get_broken_links_count(self) -> int:
+        """Get the number of broken links found."""
+        return self.broken_link_scan.broken_links_count if self.broken_link_scan else 0
 
 
 class ReputationUpdate(BaseModel):

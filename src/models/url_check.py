@@ -54,16 +54,23 @@ class ThreatLevel(enum.Enum):
 
 class ScanType(enum.Enum):
     """
-    Scan type enumeration.
+    URL scan type enumeration.
+    
+    Includes both scan depth levels and specific scan types:
+    - QUICK, STANDARD, DEEP, CUSTOM: Define scan depth and thoroughness
+    - SECURITY, REPUTATION, CONTENT: Specific security-focused scans
+    - BROKEN_LINKS: Link crawling and validation to detect broken or inaccessible links
     """
-    QUICK = "quick"
-    STANDARD = "standard"
-    DEEP = "deep"
-    CUSTOM = "custom"
-
     SECURITY  = "Security"
     REPUTATION = "Reputation"
     CONTENT = "Content"
+    BROKEN_LINKS = "broken_links"
+    TECHNICAL = "Technical"
+    
+    @classmethod
+    def scan_types(cls):
+        """This are all web scans """
+        return [cls.SECURITY, cls.REPUTATION,cls.CONTENT, cls.BROKEN_LINKS, cls.TECHNICAL]
 
 
 class URLCheck(Base):
@@ -85,7 +92,7 @@ class URLCheck(Base):
     final_url = Column(Text, nullable=True)  # After redirects
     
     # Check configuration
-    scan_type = Column(Enum(ScanType), default=ScanType.STANDARD, nullable=False)
+    scan_type = Column(Enum(ScanType), default=ScanType.SECURITY, nullable=False)
     check_redirects = Column(Boolean, default=True, nullable=False)
     check_ssl = Column(Boolean, default=True, nullable=False)
     check_content = Column(Boolean, default=True, nullable=False)
@@ -115,6 +122,12 @@ class URLCheck(Base):
     page_description = Column(Text, nullable=True)
     content_type = Column(String(100), nullable=True)
     content_length = Column(Integer, nullable=True)
+    
+    # Broken link analysis (for BROKEN_LINKS scan type)
+    broken_links_count = Column(Integer, nullable=True)  # Number of broken links found
+    total_links_checked = Column(Integer, nullable=True)  # Total number of links checked
+    scan_depth_used = Column(Integer, nullable=True)  # Depth of scanning used
+    max_links_used = Column(Integer, nullable=True)  # Maximum links limit used
     
     # AI analysis results
     ai_analysis = Column(JSON, nullable=True)
@@ -236,6 +249,10 @@ class URLCheck(Base):
             "page_title": self.page_title,
             "content_type": self.content_type,
             "content_quality_score": self.content_quality_score,
+            "broken_links_count": self.broken_links_count,
+            "total_links_checked": self.total_links_checked,
+            "scan_depth_used": self.scan_depth_used,
+            "max_links_used": self.max_links_used,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "duration": self.get_duration(),

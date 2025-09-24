@@ -14,10 +14,7 @@ from typing import List, Dict, Any as AnyType
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 
 from src.controllers.dashboard_controller import DashboardController
-from src.controllers.depends import get_dashboard_controller
-from src.authentication.auth_service import get_current_user
-from src.models.user import User
-from src.controllers.dashboard_controller import (
+from src.controllers.dashboard_models import (
     DashboardOverviewResponse,
     ProjectResponse,
     ProjectCreateRequest,
@@ -32,6 +29,11 @@ from src.controllers.dashboard_controller import (
     AnalyticsResponse,
     ActivityLogResponse,
 )
+
+from src.controllers.depends import get_dashboard_controller
+from src.authentication.dependencies import get_current_user
+from src.models.user import User
+
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -119,7 +121,6 @@ async def get_project(
         project_id=project_id,
     )
 
-
 @router.patch(
     "/projects/{project_id}",
     response_model=ProjectResponse,
@@ -143,7 +144,7 @@ async def update_project(
 
 @router.delete(
     "/projects/{project_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Delete project",
     description="Delete project (soft delete) with cleanup",
 )
@@ -152,11 +153,8 @@ async def delete_project(
     current_user: User = Depends(get_current_user),
     controller: DashboardController = Depends(get_dashboard_controller),
 ) -> None:
-    """Delete project (soft delete)."""
-    await controller.delete_project(
-        user=current_user,
-        project_id=project_id,
-    )
+    await controller.delete_project(user=current_user, project_id=project_id)
+    return None
 
 
 # ------------------------------------------------------------------

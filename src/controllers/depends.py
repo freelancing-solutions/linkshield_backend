@@ -10,8 +10,8 @@ from src.services.security_service import SecurityService
 from src.services.url_analysis_service import URLAnalysisService
 from src.services.ai_analysis_service import AIAnalysisService
 from src.services.ai_service import AIService
-
 from src.services.depends import get_security_service, get_auth_service, get_url_analysis_service, get_ai_analysis_service, get_ai_service, get_email_service, get_admin_service
+
 
 
 async def get_health_controller(
@@ -106,3 +106,6 @@ async def get_dashboard_controller(
         auth_service=auth_service,
         email_service=email_service
     )
+
+
+
