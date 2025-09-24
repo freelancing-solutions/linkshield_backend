@@ -100,6 +100,14 @@ class SubscriptionPlan(Base):
     monthly_check_limit = Column(Integer, nullable=False, default=0)
     api_rate_limit = Column(Integer, nullable=False, default=60)  # requests per minute
     
+    # Monitoring limits for dashboard functionality
+    max_projects = Column(Integer, nullable=False, default=1)  # Maximum projects per user
+    max_team_members_per_project = Column(Integer, nullable=False, default=1)  # Maximum team members per project
+    max_alerts_per_project = Column(Integer, nullable=False, default=5)  # Maximum alerts per project
+    monitoring_frequency_minutes = Column(Integer, nullable=False, default=1440)  # Minimum scan frequency in minutes (24 hours)
+    scan_depth_limit = Column(Integer, nullable=False, default=3)  # Maximum depth for link scanning
+    max_links_per_scan = Column(Integer, nullable=False, default=100)  # Maximum links processed per scan
+    
     # Features
     features = Column(JSON, nullable=True)  # List of feature flags
     ai_analysis_enabled = Column(Boolean, default=False, nullable=False)
@@ -173,6 +181,12 @@ class SubscriptionPlan(Base):
             "daily_check_limit": self.daily_check_limit,
             "monthly_check_limit": self.monthly_check_limit,
             "api_rate_limit": self.api_rate_limit,
+            "max_projects": self.max_projects,
+            "max_team_members_per_project": self.max_team_members_per_project,
+            "max_alerts_per_project": self.max_alerts_per_project,
+            "monitoring_frequency_minutes": self.monitoring_frequency_minutes,
+            "scan_depth_limit": self.scan_depth_limit,
+            "max_links_per_scan": self.max_links_per_scan,
             "features": self.features,
             "ai_analysis_enabled": self.ai_analysis_enabled,
             "bulk_checking_enabled": self.bulk_checking_enabled,
@@ -185,6 +199,111 @@ class SubscriptionPlan(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+    
+    def validate_scan_depth(self, requested_depth: int) -> bool:
+        """
+        Validate if the requested scan depth is within plan limits.
+        
+        Args:
+            requested_depth: The requested scan depth
+            
+        Returns:
+            True if the requested depth is within limits, False otherwise
+        """
+        return 0 < requested_depth <= self.scan_depth_limit
+    
+    def get_scan_depth_for_request(self, requested_depth: Optional[int] = None) -> int:
+        """
+        Get the effective scan depth for a request, respecting plan limits.
+        
+        Args:
+            requested_depth: The requested scan depth (optional)
+            
+        Returns:
+            The effective scan depth, clamped to plan limits
+        """
+        if requested_depth is None:
+            return self.scan_depth_limit
+        
+        return min(requested_depth, self.scan_depth_limit)
+    
+    def validate_links_per_scan(self, requested_links: int) -> bool:
+        """
+        Validate if the requested number of links per scan is within plan limits.
+        
+        Args:
+            requested_links: The requested number of links to scan
+            
+        Returns:
+            True if the requested number is within limits, False otherwise
+        """
+        return 0 < requested_links <= self.max_links_per_scan
+    
+    def get_max_links_for_scan(self, requested_links: Optional[int] = None) -> int:
+        """
+        Get the effective number of links for a scan, respecting plan limits.
+        
+        Args:
+            requested_links: The requested number of links (optional)
+            
+        Returns:
+            The effective number of links, clamped to plan limits
+        """
+        if requested_links is None:
+            return self.max_links_per_scan
+        
+        return min(requested_links, self.max_links_per_scan)
+    
+    def can_create_project(self, current_project_count: int) -> bool:
+        """
+        Check if user can create a new project based on plan limits.
+        
+        Args:
+            current_project_count: Current number of projects for the user
+            
+        Returns:
+            True if user can create another project, False otherwise
+        """
+        if self.max_projects == -1:  # Unlimited
+            return True
+        return current_project_count < self.max_projects
+    
+    def can_add_team_member(self, current_member_count: int) -> bool:
+        """
+        Check if user can add a team member to a project based on plan limits.
+        
+        Args:
+            current_member_count: Current number of team members in the project
+            
+        Returns:
+            True if user can add another team member, False otherwise
+        """
+        if self.max_team_members_per_project == -1:  # Unlimited
+            return True
+        return current_member_count < self.max_team_members_per_project
+    
+    def can_create_alert(self, current_alert_count: int) -> bool:
+        """
+        Check if user can create a new alert based on plan limits.
+        
+        Args:
+            current_alert_count: Current number of alerts for the project
+            
+        Returns:
+            True if user can create another alert, False otherwise
+        """
+        if self.max_alerts_per_project == -1:  # Unlimited
+            return True
+        return current_alert_count < self.max_alerts_per_project
+    
+    def get_monitoring_frequency_seconds(self) -> int:
+        """
+        Get monitoring frequency in seconds for easier comparison.
+        
+        Returns:
+            Monitoring frequency in seconds
+        """
+        return self.monitoring_frequency_minutes * 60
 
 
 class UserSubscription(Base):

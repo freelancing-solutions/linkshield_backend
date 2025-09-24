@@ -13,6 +13,7 @@ from src.controllers.url_check_controller import URLCheckController
 from src.controllers.user_controller import UserController
 from src.controllers.admin_controller import AdminController
 from src.controllers.ai_analysis_controller import AIAnalysisController
+from src.controllers.dashboard_controller import DashboardController
 
 __all__ = [
     "BaseController",
@@ -21,5 +22,6 @@ __all__ = [
     "URLCheckController",
     "UserController",
     "AdminController",
-    "AIAnalysisController"
+    "AIAnalysisController",
+    "DashboardController"
 ]

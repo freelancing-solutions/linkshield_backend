@@ -1,124 +1,303 @@
-I have the following verification comments after thorough review and exploration of the codebase. Implement the comments by following the instructions in the comments verbatim.
+I have created the following plan after thorough exploration and analysis of the codebase. Follow the below plan verbatim. Trust the files and references. Do not re-verify what's written in the plan. Explore only when absolutely necessary. First implement all the proposed file changes and then I'll review all the changes together at the end.
 
----
-## Comment 1: Double-commit persists: context manager auto-commits but controllers still call commit within session blocks.
+### Observations
 
-Refactor to a single transaction pattern across controllers using the updated async session manager.
+The LinkShield backend has a well-structured architecture with comprehensive user management, URL analysis, and admin functionality. The new project models (Project, ProjectMember, MonitoringConfig, ProjectAlert) have been implemented with proper relationships and utility methods. The existing authentication system supports role-based access control, and the admin routes demonstrate how to implement complex dashboard endpoints. The codebase uses async SQLAlchemy, follows UUID primary key patterns, and has consistent error handling and logging throughout.
 
-Context:
-- `BaseController.get_db_session()` in `e:/projects/linkshield_backend/src/controllers/base_controller.py` auto-commits on exit and rolls back on errors.
-- Explicit commits still exist in controller methods, causing duplicate commits and inconsistent semantics.
+### Approach
 
-Goal:
-- Adopt Option A: rely on context manager for commit/rollback and remove all explicit commits in controllers.
+I'll create a comprehensive dashboard API system following the existing patterns in the LinkShield backend. The approach involves creating new dashboard routes that leverage the project models we've already implemented, building a dedicated DashboardController for business logic, and implementing proper authentication and authorization middleware. The dashboard will provide user-facing endpoints for project management, team collaboration, monitoring configuration, and analytics. I'll follow the established patterns from the user and admin routes, ensuring consistency in structure, error handling, and response models.
 
-Steps:
-1) In `e:/projects/linkshield_backend/src/controllers/ai_analysis_controller.py`:
-   - Remove `await db.commit()` in `_analyze_content_task`, `_analyze_content_sync`, and `_create_analysis_record`.
-   - Keep `await db.refresh(analysis)` after changes where needed.
-2) In `e:/projects/linkshield_backend/src/controllers/url_check_controller.py`:
-   - Remove `db.commit()`/`await session.commit()` calls inside any `async with self.get_db_session()` blocks (e.g., `_perform_url_analysis`, `_update_domain_reputation`).
-   - Ensure any entity refreshes use `await session.refresh(entity)`.
-3) Verify no other controllers call `commit()` inside the context manager. If they must, switch to Option B project-wide:
-   - Stop auto-commit in `BaseController.get_db_session()` and use `await self.ensure_consistent_commit_rollback(session, operation="<describe>")` where commits are needed.
-4) Run tests and exercise endpoints to confirm there are no transaction boundary regressions.
+### Reasoning
 
-Notes:
-- Do not mix both strategies. Use only one consistently.
-- Preserve existing logging and error handling.
+I explored the repository structure and examined the existing models, routes, and controllers. I analyzed the user.py, user_controller.py, and dependencies.py files to understand the current authentication and route patterns. I also reviewed the project.py models to understand the new dashboard functionality and the admin.py routes to see how complex API endpoints are structured. I identified that the codebase follows a clean architecture with thin routes, business logic in controllers, and proper dependency injection patterns.
 
-### Referred Files
-- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
-- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py\e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
-- e:\projects\linkshield_backend\src\controllers\url_check_controller.py\e:\projects\linkshield_backend\src\controllers\url_check_controller.py
----
-## Comment 2: ensure_consistent_commit_rollback helper remains unused; integrate at commit points or remove per chosen pattern.
+## Mermaid Diagram
 
-Standardize transaction handling using the provided helper or remove it.
+sequenceDiagram
+    participant Client
+    participant DashboardRoutes
+    participant DashboardController
+    participant AuthDependencies
+    participant ProjectModels
+    participant Database
 
-Context:
-- `ensure_consistent_commit_rollback()` exists in `e:/projects/linkshield_backend/src/controllers/base_controller.py`.
-- Controllers (e.g., `ai_analysis_controller.py`, `url_check_controller.py`) still call `commit()` directly.
+    Note over Client,Database: Dashboard Overview Flow
+    Client->>DashboardRoutes: GET /api/v1/dashboard/overview
+    DashboardRoutes->>AuthDependencies: get_current_user()
+    AuthDependencies->>Database: Validate session & get user
+    AuthDependencies-->>DashboardRoutes: User object
+    DashboardRoutes->>DashboardController: get_dashboard_overview(user)
+    DashboardController->>Database: Query projects, alerts, usage stats
+    DashboardController-->>DashboardRoutes: Dashboard overview data
+    DashboardRoutes-->>Client: DashboardOverviewResponse
 
-Goal:
-- Use a single strategy across the codebase.
+    Note over Client,Database: Project Management Flow
+    Client->>DashboardRoutes: POST /api/v1/dashboard/projects
+    DashboardRoutes->>AuthDependencies: get_current_user()
+    DashboardRoutes->>DashboardController: create_project(user, request_data)
+    DashboardController->>Database: Check subscription limits
+    DashboardController->>ProjectModels: Create Project & MonitoringConfig
+    DashboardController->>Database: Save new project
+    DashboardController-->>DashboardRoutes: Project response
+    DashboardRoutes-->>Client: ProjectResponse
 
-Option A (recommended now): Keep auto-commit in `get_db_session()` and remove explicit `commit()` calls across controllers. Then remove the unused helper to avoid dead code.
+    Note over Client,Database: Team Management Flow
+    Client->>DashboardRoutes: POST /api/v1/dashboard/projects/{id}/members
+    DashboardRoutes->>AuthDependencies: get_project_owner()
+    AuthDependencies->>Database: Verify project ownership
+    DashboardRoutes->>DashboardController: invite_member(user, project_id, email, role)
+    DashboardController->>ProjectModels: Create ProjectMember
+    DashboardController->>Database: Save invitation
+    DashboardController->>EmailService: Send invitation email
+    DashboardController-->>DashboardRoutes: Member response
+    DashboardRoutes-->>Client: MemberResponse
 
-Option B: Disable auto-commit in `get_db_session()` and replace controller `commit()` calls with `await self.ensure_consistent_commit_rollback(session, operation="<describe>")`.
+    Note over Client,Database: Analytics Flow
+    Client->>DashboardRoutes: GET /api/v1/dashboard/analytics
+    DashboardRoutes->>AuthDependencies: get_current_user()
+    DashboardRoutes->>DashboardController: get_analytics(user, filters)
+    DashboardController->>Database: Aggregate usage data, scan history
+    DashboardController->>Database: Calculate trends and metrics
+    DashboardController-->>DashboardRoutes: Analytics data
+    DashboardRoutes-->>Client: AnalyticsResponse
 
-Steps for Option B:
-1) Edit `get_db_session()` to stop committing on exit; still rollback on exceptions and always close.
-2) In controllers:
-   - Replace each `commit()` with `await self.ensure_consistent_commit_rollback(session, operation="<what is being committed>")`.
-   - Ensure every place that modifies entities is covered.
-3) Run tests to validate consistent logging and rollback behavior.
+## Proposed File Changes
 
-### Referred Files
-- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
-- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py\e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
-- e:\projects\linkshield_backend\src\controllers\url_check_controller.py\e:\projects\linkshield_backend\src\controllers\url_check_controller.py
----
-## Comment 3: URLCheckController still uses sync SQLAlchemy APIs with AsyncSession; migrate to async select/execute patterns.
+### src\routes\dashboard.py(NEW)
 
-Migrate `URLCheckController` to async SQLAlchemy patterns compatible with `AsyncSession`.
+References: 
 
-Files: `e:/projects/linkshield_backend/src/controllers/url_check_controller.py`
+- src\routes\user.py
+- src\routes\admin.py
+- src\authentication\dependencies.py(MODIFY)
 
-Steps:
-1) Imports: ensure `from sqlalchemy import select, func, desc, and_` are used; remove sync-only patterns.
-2) Replace sync queries:
-   - `get_url_check`: already uses `select` — keep this pattern.
-   - `get_scan_results`: already uses `select` — keep this pattern.
-   - `get_url_history`:
-     - Build a `select(URLCheck).where(URLCheck.user_id == user.id)` statement and compose filters.
-     - For total count: `result = await session.execute(select(func.count()).select_from(select_stmt.subquery()))`; `total_count = result.scalar_one()`.
-     - For page: add `.order_by(desc(URLCheck.created_at)).offset(skip).limit(limit)` and `await session.execute` then `.scalars().all()`.
-   - `get_domain_reputation`: `stmt = select(URLReputation).where(URLReputation.domain == domain)`; `result = await session.execute(stmt)`; `reputation = result.scalar_one_or_none()`.
-   - `get_url_check_statistics`: Convert all `.count()` calls to `select(func.count())` executions; convert `with_entities/group_by/order_by/limit` chain to explicit `select(URLCheck.domain, func.count(URLCheck.id).label("count")).where(...).group_by(URLCheck.domain).order_by(desc("count")).limit(10)` and `await session.execute`, then iterate rows.
-   - `_get_recent_check_from_db`: Make it `async` and use `await session.execute(select(...).where(...).order_by(desc(...)).limit(1))`, then `.scalar_one_or_none()`.
-   - `_perform_url_analysis` and `_perform_bulk_analysis`: Fetch `URLCheck` via async `select`, update fields, and rely on the context manager for committing; replace all `commit()` calls and ensure `await session.refresh(url_check)` where needed.
-   - `_get_domain_reputation_data`: Use async `select` and return mapped dict; make it `async` and update callers accordingly.
-   - `_update_domain_reputation`: Remove `session.commit()` inside the context; rely on context manager or call the standardized helper per chosen pattern.
-3) Ensure all `.refresh` are awaited.
-4) Run tests to validate behavior.
+Create a comprehensive dashboard routes file with the following endpoints:
 
+**Dashboard Overview Route:**
+- `GET /api/v1/dashboard/overview` - Returns user dashboard summary including project count, recent activity, subscription status, usage statistics, and alerts summary
+- Include authentication via `get_current_user` dependency
+- Return dashboard overview data with project statistics, monitoring status, and recent alerts
 
-### Referred Files
-- e:\projects\linkshield_backend\src\controllers\url_check_controller.py\e:\projects\linkshield_backend\src\controllers\url_check_controller.py
-- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
----
-## Comment 4: AIAnalysisController still calls commit inside async context manager; remove or standardize transaction handling.
+**Project Management Routes:**
+- `GET /api/v1/dashboard/projects` - List user's projects with pagination, filtering, and search
+- `POST /api/v1/dashboard/projects` - Create new monitoring project
+- `GET /api/v1/dashboard/projects/{project_id}` - Get specific project details
+- `PUT /api/v1/dashboard/projects/{project_id}` - Update project settings
+- `DELETE /api/v1/dashboard/projects/{project_id}` - Delete project (soft delete)
+- `POST /api/v1/dashboard/projects/{project_id}/toggle-monitoring` - Enable/disable monitoring
 
-Align `AIAnalysisController` with the chosen transaction pattern.
+**Team Management Routes:**
+- `GET /api/v1/dashboard/projects/{project_id}/members` - List project members
+- `POST /api/v1/dashboard/projects/{project_id}/members` - Invite team member
+- `PUT /api/v1/dashboard/projects/{project_id}/members/{member_id}` - Update member role
+- `DELETE /api/v1/dashboard/projects/{project_id}/members/{member_id}` - Remove team member
+- `POST /api/v1/dashboard/projects/{project_id}/members/{member_id}/accept` - Accept invitation
 
-File: `e:/projects/linkshield_backend/src/controllers/ai_analysis_controller.py`
+**Analytics Route:**
+- `GET /api/v1/dashboard/analytics` - Get usage statistics, trends, scan history, and performance metrics
+- Support date range filtering and metric type selection
 
-Recommended (auto-commit via context manager):
-1) Remove `await db.commit()` from `_analyze_content_task` and `_analyze_content_sync`.
-2) In `_create_analysis_record`, remove `await db.commit()`; keep `await db.refresh(analysis)` after `db.add(analysis)` to populate defaults/PK.
-3) Ensure any flush is implicit; if needed, call `await db.flush()` before `await db.refresh(...)` to persist without a full commit.
-4) Re-run tests to ensure no functional regressions.
+**Request/Response Models:**
+- Create Pydantic models for all request/response data following existing patterns
+- Include proper validation, field descriptions, and examples
+- Models: DashboardOverviewResponse, ProjectCreateRequest, ProjectResponse, ProjectUpdateRequest, MemberInviteRequest, MemberResponse, AnalyticsResponse
 
-Alternative (explicit commit via helper):
-- Disable auto-commit in `get_db_session()` and replace commits with `await self.ensure_consistent_commit_rollback(db, operation="<describe>")`.
+**Authentication & Authorization:**
+- Use `get_current_user` for all authenticated endpoints
+- Implement project ownership and member access checks
+- Add proper error handling for unauthorized access
 
-### Referred Files
-- e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py\e:\projects\linkshield_backend\src\controllers\ai_analysis_controller.py
-- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
----
-## Comment 5: Connectivity ping executes each session start; add DEBUG gating or sampling to limit overhead.
+**Rate Limiting & Validation:**
+- Apply appropriate rate limiting for creation and invitation endpoints
+- Include comprehensive input validation and sanitization
+- Follow existing error response patterns from `src/routes/user.py`
 
-Reduce overhead of the session connectivity check in `BaseController.get_db_session()`.
+The routes should follow the thin layer pattern established in `src/routes/user.py`, delegating all business logic to the DashboardController.
 
-File: `e:/projects/linkshield_backend/src/controllers/base_controller.py`
+### src\controllers\dashboard_controller.py(NEW)
 
-Steps:
-1) Introduce a guard: `if getattr(self.settings, "DEBUG", False): await session.execute(text("SELECT 1"))`.
-2) Optionally add a simple sampling mechanism for non-debug environments (e.g., 1% of sessions).
-3) Keep existing logging and error handling unchanged.
+References: 
 
+- src\controllers\user_controller.py
+- src\controllers\base_controller.py
+- src\models\project.py
+- src\models\subscription.py
 
-### Referred Files
-- e:\projects\linkshield_backend\src\controllers\base_controller.py\e:\projects\linkshield_backend\src\controllers\base_controller.py
----
+Create a comprehensive DashboardController that handles all dashboard business logic:
+
+**Controller Structure:**
+- Inherit from BaseController following the pattern in `src/controllers/user_controller.py`
+- Use dependency injection for SecurityService, AuthService, and EmailService
+- Include proper error handling, logging, and rate limiting
+
+**Dashboard Overview Methods:**
+- `get_dashboard_overview(user)` - Aggregate user's project data, recent activity, subscription limits, and alert summaries
+- Calculate usage statistics against subscription plan limits from `SubscriptionPlan` model
+- Include recent scan results, active alerts, and system notifications
+
+**Project Management Methods:**
+- `list_projects(user, page, limit, search, status)` - Get paginated project list with filtering
+- `create_project(user, request_data)` - Create new project with validation against subscription limits
+- `get_project(user, project_id)` - Get project details with access control
+- `update_project(user, project_id, request_data)` - Update project with permission checks
+- `delete_project(user, project_id)` - Soft delete project with cleanup
+- `toggle_monitoring(user, project_id, enabled)` - Enable/disable project monitoring
+
+**Team Management Methods:**
+- `list_project_members(user, project_id)` - Get project team members with roles
+- `invite_member(user, project_id, email, role)` - Send team invitation with email notification
+- `update_member_role(user, project_id, member_id, new_role)` - Update team member permissions
+- `remove_member(user, project_id, member_id)` - Remove team member with cleanup
+- `accept_invitation(user, project_id, invitation_token)` - Accept team invitation
+
+**Analytics Methods:**
+- `get_analytics(user, date_range, metrics)` - Generate usage analytics and trends
+- Aggregate scan history, performance metrics, and usage patterns
+- Calculate subscription usage and remaining limits
+
+**Access Control Methods:**
+- `check_project_access(user, project_id, required_role)` - Verify user can access project
+- `check_subscription_limits(user, action)` - Validate against subscription plan limits
+- `can_create_project(user)` - Check if user can create more projects
+
+**Utility Methods:**
+- `send_invitation_email(project, invitee_email, inviter, role)` - Send team invitation emails
+- `log_project_activity(project_id, user_id, action, details)` - Log project activities
+- `calculate_usage_stats(user)` - Calculate current usage against limits
+
+**Response Models:**
+- Create comprehensive Pydantic response models for all return data
+- Include proper serialization of project, member, and analytics data
+- Follow patterns from `src/controllers/user_controller.py` for response model structure
+
+**Error Handling:**
+- Implement proper HTTP exception handling for all scenarios
+- Include specific error messages for subscription limits, access denied, and validation failures
+- Use consistent error response format across all methods
+
+The controller should integrate with the Project, ProjectMember, MonitoringConfig, and ProjectAlert models from `src/models/project.py`.
+
+### src\controllers\depends.py(MODIFY)
+
+References: 
+
+- src\controllers\user_controller.py
+
+Add dependency injection function for the DashboardController:
+
+**Add Import:**
+- Import the new DashboardController class
+
+**Add Dependency Function:**
+- Create `get_dashboard_controller()` function following the same pattern as existing controller dependencies
+- Use dependency injection for SecurityService, AuthService, and EmailService
+- Return configured DashboardController instance
+
+**Function Implementation:**
+```python
+def get_dashboard_controller(
+    security_service: SecurityService = Depends(get_security_service),
+    auth_service: AuthService = Depends(get_auth_service),
+    email_service = Depends(get_email_service),
+) -> DashboardController:
+    return DashboardController(
+        security_service=security_service,
+        auth_service=auth_service,
+        email_service=email_service,
+    )
+```
+
+This follows the exact pattern used for other controllers in the file and ensures proper dependency injection for the dashboard functionality.
+
+### src\authentication\dependencies.py(MODIFY)
+
+References: 
+
+- src\models\project.py
+- src\models\user.py
+
+Add project-specific authorization dependencies for dashboard access control:
+
+**Add Project Access Dependencies:**
+- `get_project_owner(project_id, current_user)` - Verify user owns the specified project
+- `get_project_member(project_id, current_user, min_role)` - Verify user has minimum role in project
+- `get_project_admin(project_id, current_user)` - Verify user has admin access to project
+
+**Implementation Details:**
+- Add async functions that check project membership and roles
+- Query Project and ProjectMember models to verify access
+- Raise HTTPException with 403 Forbidden for unauthorized access
+- Raise HTTPException with 404 Not Found for non-existent projects
+- Return the project object for successful authorization
+
+**Helper Functions:**
+- `_get_project_by_id(db, project_id)` - Database lookup for project
+- `_check_project_membership(db, project_id, user_id, min_role)` - Verify membership and role
+- `_get_user_project_role(db, project_id, user_id)` - Get user's role in project
+
+**Usage Pattern:**
+```python
+async def get_project_owner(
+    project_id: str = Path(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session)
+) -> Project:
+    # Verify project exists and user is owner
+    # Return project object or raise HTTPException
+```
+
+**Integration:**
+- Import ProjectRole enum from `src/models/project.py`
+- Use existing database session and user authentication patterns
+- Follow error handling patterns from existing dependencies
+- Add proper logging for authorization attempts
+
+These dependencies will be used in dashboard routes to ensure users can only access projects they own or are members of, with appropriate role-based permissions.
+
+### src\routes\__init__.py(MODIFY)
+
+Add the new dashboard router to the routes module:
+
+**Add Import:**
+- Import the dashboard router: `from .dashboard import router as dashboard_router`
+
+**Update Router List:**
+- Add `dashboard_router` to the list of available routers
+- Ensure it's properly exported for use in the main application
+
+**Update __all__ List:**
+- Include `dashboard_router` in the __all__ list if one exists
+- Maintain alphabetical ordering of router imports
+
+This ensures the dashboard routes are properly discoverable and can be included in the main FastAPI application routing.
+
+### app.py(MODIFY)
+
+References: 
+
+- src\routes\user.py
+- src\routes\admin.py
+
+Register the new dashboard router with the FastAPI application:
+
+**Add Router Import:**
+- Import the dashboard router from routes: `from src.routes.dashboard import router as dashboard_router`
+
+**Register Router:**
+- Add the dashboard router to the FastAPI app using `app.include_router(dashboard_router)`
+- Place it in the appropriate section with other API routers
+- Ensure it's registered after authentication middleware is set up
+
+**Router Registration:**
+```python
+# Add after existing router registrations
+app.include_router(dashboard_router)
+```
+
+**Placement:**
+- Add the router registration in the same section where other routers (user, admin, url_check) are registered
+- Maintain consistent ordering and formatting with existing router registrations
+- Ensure the dashboard routes are available at `/api/v1/dashboard/*`
+
+This makes the dashboard API endpoints accessible through the main FastAPI application and ensures they're properly integrated with the existing middleware and authentication systems.

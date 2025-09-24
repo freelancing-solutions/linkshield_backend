@@ -109,9 +109,13 @@ class User(Base):
     # Relationships
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     url_checks = relationship("URLCheck", back_populates="user", cascade="all, delete-orphan")
-    reports = relationship("Report", back_populates="user", cascade="all, delete-orphan")
+    reports = relationship("Report", back_populates="user", foreign_keys="Report.user_id", cascade="all, delete-orphan")
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
     ai_analyses = relationship("AIAnalysis", back_populates="user", cascade="all, delete-orphan")
+    subscription = relationship("UserSubscription", back_populates="user", cascade="all, delete-orphan")
+    projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
+    project_memberships = relationship("ProjectMember", back_populates="user", foreign_keys="ProjectMember.user_id", cascade="all, delete-orphan")
+    project_alerts = relationship("ProjectAlert", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"

@@ -118,7 +118,9 @@ async def init_db() -> None:
         # Test connection
         async with engine.begin() as conn:
             # Import all models to ensure they're registered
-            from src.models import user, url_check, report, subscription  # noqa: F401
+            from src.models import (
+                user, url_check, report, subscription, ai_analysis, admin, project
+            )  # noqa: F401
             
             # Create all tables
             await conn.run_sync(Base.metadata.create_all)

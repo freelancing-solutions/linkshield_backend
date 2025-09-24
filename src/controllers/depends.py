@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTa
 from src.authentication import auth_service
 from src.authentication.auth_service import AuthService
 from src.config.database import AsyncSession, get_db_session
-from src.controllers import URLCheckController, ReportController, HealthController, UserController, AdminController, AIAnalysisController
+from src.controllers import URLCheckController, ReportController, HealthController, UserController, AdminController, AIAnalysisController, DashboardController
 
 from src.services.admin_service import AdminService
 from src.services.email_service import EmailService
@@ -87,6 +87,21 @@ async def get_ai_analysis_controller(
     return AIAnalysisController(
         ai_analysis_service=ai_analysis_service,
         ai_service=ai_service,
+        security_service=security_service,
+        auth_service=auth_service,
+        email_service=email_service
+    )
+
+
+async def get_dashboard_controller(
+    security_service: SecurityService = Depends(get_security_service),
+    auth_service: AuthService = Depends(get_auth_service),
+    email_service: EmailService = Depends(get_email_service)
+) -> DashboardController:
+    """
+    Get dashboard controller instance with required dependencies.
+    """
+    return DashboardController(
         security_service=security_service,
         auth_service=auth_service,
         email_service=email_service

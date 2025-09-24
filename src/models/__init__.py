@@ -22,7 +22,20 @@ from .report import Report, ReportVote, ReportTemplate, ReportStatistics
 
 # AI analysis models
 from .ai_analysis import AIAnalysis, ContentSimilarity, AIModelMetrics, ProcessingStatus, AnalysisType
+
+# Admin models
 from .admin import GlobalConfig, AdminAction, AdminSession, ConfigCategory
+
+# Project models (dashboard functionality)
+from .project import (
+    Project,
+    ProjectMember,
+    MonitoringConfig,
+    ProjectAlert,
+    ProjectRole,
+    AlertType,
+    AlertChannel,
+)
 __all__ = [
     # User models
     "User",
@@ -58,6 +71,18 @@ __all__ = [
     "ProcessingStatus",
     "AnalysisType",
 
-    # Config Models.
-    "GlobalConfig", "AdminAction", "AdminSession", "ConfigCategory"
+    # Admin models
+    "GlobalConfig",
+    "AdminAction",
+    "AdminSession",
+    "ConfigCategory",
+    
+    # Project models (dashboard functionality)
+    "Project",
+    "ProjectMember",
+    "MonitoringConfig",
+    "ProjectAlert",
+    "ProjectRole",
+    "AlertType",
+    "AlertChannel",
 ]
