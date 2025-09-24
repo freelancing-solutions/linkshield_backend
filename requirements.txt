@@ -85,3 +85,4 @@ transformers
 
 #  asyncpdg for database
 asyncpg
+psutil
