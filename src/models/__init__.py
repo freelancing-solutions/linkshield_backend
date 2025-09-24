@@ -36,6 +36,9 @@ from .project import (
     AlertType,
     AlertChannel,
 )
+
+# Activity log models
+from .activity_log import ActivityLog, ActivityLogManager
 __all__ = [
     # User models
     "User",
@@ -85,4 +88,8 @@ __all__ = [
     "ProjectRole",
     "AlertType",
     "AlertChannel",
-]
+    
+    # Activity log models
+    "ActivityLog",
+    "ActivityLogManager",
+]]

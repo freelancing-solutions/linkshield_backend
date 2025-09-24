@@ -8,9 +8,10 @@ FastAPI router for dashboard functionality.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import List, Dict, Any as AnyType
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, HTTPException
 
 from src.controllers.dashboard_controller import DashboardController
 from src.controllers.depends import get_dashboard_controller
@@ -25,7 +26,11 @@ from src.controllers.dashboard_controller import (
     MemberInviteRequest,
     MonitoringConfigResponse,
     AlertResponse,
+    AlertInstanceResponse,
+    AlertCreateRequest,
+    AlertUpdateRequest,
     AnalyticsResponse,
+    ActivityLogResponse,
 )
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -232,45 +237,239 @@ async def invite_member(
     description="Get dashboard analytics and usage statistics",
 )
 async def get_analytics(
-    date_from: str = Query(None, description="Start date (ISO format)"),
-    date_to: str = Query(None, description="End date (ISO format)"),
+    date_from: str = Query(None, description="Start date (ISO format, e.g., 2024-01-01)"),
+    date_to: str = Query(None, description="End date (ISO format, e.g., 2024-01-31)"),
     current_user: User = Depends(get_current_user),
     controller: DashboardController = Depends(get_dashboard_controller),
 ) -> AnalyticsResponse:
     """Get dashboard analytics."""
-    # This is a placeholder implementation
-    # In a real implementation, this would aggregate data from various sources
-    return AnalyticsResponse(
-        date_range={"from": None, "to": None},
-        total_scans=0,
-        total_alerts=0,
-        avg_scan_duration=0.0,
-        top_issues=[],
-        usage_trends={},
-        subscription_usage={},
+    # Parse date parameters if provided
+    from_date = None
+    to_date = None
+    
+    if date_from:
+        try:
+            from_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date_from format. Use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)"
+            )
+    
+    if date_to:
+        try:
+            to_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date_to format. Use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)"
+            )
+    
+    return await controller.get_analytics(
+        user=current_user,
+        date_from=from_date,
+        date_to=to_date,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/activity-logs",
+    response_model=List[ActivityLogResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get activity logs",
+    description="Get activity logs for a specific project",
+)
+async def get_activity_logs(
+    project_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of logs to return"),
+    offset: int = Query(0, ge=0, description="Number of logs to skip"),
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> List[ActivityLogResponse]:
+    """Get activity logs for a specific project."""
+    return await controller.get_activity_logs(
+        user=current_user,
+        project_id=project_id,
+        limit=limit,
+        offset=offset,
     )
 
 
 # ------------------------------------------------------------------
-# Alert Management Endpoints (Placeholder)
+# Alert Management Endpoints
 # ------------------------------------------------------------------
 @router.get(
-    "/alerts",
-    response_model=List[AlertResponse],
+    "/projects/{project_id}/alerts",
+    response_model=List[AlertInstanceResponse],
     status_code=status.HTTP_200_OK,
-    summary="List alerts",
-    description="List recent alerts across all user projects",
+    summary="List project alerts",
+    description="List alerts for a specific project with filtering options",
 )
-async def list_alerts(
-    limit: int = Query(20, ge=1, le=100, description="Number of alerts to return"),
-    resolved: bool = Query(None, description="Filter by resolution status"),
+async def list_project_alerts(
+    project_id: uuid.UUID,
+    status: str = Query(None, description="Filter by alert status (active, acknowledged, resolved, dismissed)"),
+    severity: str = Query(None, description="Filter by severity (low, medium, high, critical)"),
+    limit: int = Query(50, ge=1, le=100, description="Number of alerts to return"),
+    offset: int = Query(0, ge=0, description="Number of alerts to skip"),
     current_user: User = Depends(get_current_user),
     controller: DashboardController = Depends(get_dashboard_controller),
-) -> List[AlertResponse]:
-    """List recent alerts."""
-    # This is a placeholder implementation
-    # In a real implementation, this would query the alerts table
-    return []
+) -> List[AlertInstanceResponse]:
+    """List project alerts."""
+    return await controller.get_project_alerts(
+        user=current_user,
+        project_id=project_id,
+        status=status,
+        severity=severity,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/alerts",
+    response_model=AlertInstanceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create alert",
+    description="Create a new alert for the project",
+)
+async def create_alert(
+    project_id: uuid.UUID,
+    request_model: AlertCreateRequest,
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> AlertInstanceResponse:
+    """Create a new alert."""
+    return await controller.create_alert(
+        user=current_user,
+        project_id=project_id,
+        request_model=request_model,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/alerts/{alert_id}",
+    response_model=AlertInstanceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get alert",
+    description="Get details of a specific alert",
+)
+async def get_alert(
+    project_id: uuid.UUID,
+    alert_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> AlertInstanceResponse:
+    """Get alert details."""
+    return await controller.get_alert(
+        user=current_user,
+        project_id=project_id,
+        alert_id=alert_id,
+    )
+
+
+@router.patch(
+    "/projects/{project_id}/alerts/{alert_id}",
+    response_model=AlertInstanceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update alert",
+    description="Update alert details and status",
+)
+async def update_alert(
+    project_id: uuid.UUID,
+    alert_id: uuid.UUID,
+    request_model: AlertUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> AlertInstanceResponse:
+    """Update an alert."""
+    return await controller.update_alert(
+        user=current_user,
+        project_id=project_id,
+        alert_id=alert_id,
+        request_model=request_model,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/alerts/{alert_id}/acknowledge",
+    response_model=AlertInstanceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Acknowledge alert",
+    description="Mark an alert as acknowledged",
+)
+async def acknowledge_alert(
+    project_id: uuid.UUID,
+    alert_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> AlertInstanceResponse:
+    """Acknowledge an alert."""
+    return await controller.acknowledge_alert(
+        user=current_user,
+        project_id=project_id,
+        alert_id=alert_id,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/alerts/{alert_id}/resolve",
+    response_model=AlertInstanceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Resolve alert",
+    description="Mark an alert as resolved",
+)
+async def resolve_alert(
+    project_id: uuid.UUID,
+    alert_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> AlertInstanceResponse:
+    """Resolve an alert."""
+    return await controller.resolve_alert(
+        user=current_user,
+        project_id=project_id,
+        alert_id=alert_id,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/alerts/{alert_id}/dismiss",
+    response_model=AlertInstanceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Dismiss alert",
+    description="Mark an alert as dismissed",
+)
+async def dismiss_alert(
+    project_id: uuid.UUID,
+    alert_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> AlertInstanceResponse:
+    """Dismiss an alert."""
+    return await controller.dismiss_alert(
+        user=current_user,
+        project_id=project_id,
+        alert_id=alert_id,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/alerts/stats",
+    response_model=Dict[str, AnyType],
+    status_code=status.HTTP_200_OK,
+    summary="Get alert statistics",
+    description="Get alert statistics for the project",
+)
+async def get_alert_statistics(
+    project_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> Dict[str, AnyType]:
+    """Get alert statistics."""
+    return await controller.get_alert_statistics(
+        user=current_user,
+        project_id=project_id,
+    )
 
 
 @router.patch(

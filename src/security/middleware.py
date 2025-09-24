@@ -7,7 +7,8 @@ and other security-related functionality.
 """
 
 import time
-from typing import Callable
+import re
+from typing import Callable, Optional
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -16,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from src.config.settings import get_settings
+from src.services.advanced_rate_limiter import get_rate_limiter
 
 # Get settings instance
 settings = get_settings()

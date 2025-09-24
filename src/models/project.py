@@ -95,6 +95,8 @@ class Project(Base):
     members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
     monitoring_config = relationship("MonitoringConfig", back_populates="project", uselist=False, cascade="all, delete-orphan")
     alerts = relationship("ProjectAlert", back_populates="project", cascade="all, delete-orphan")
+    alert_instances = relationship("AlertInstance", back_populates="project", cascade="all, delete-orphan")
+    activity_logs = relationship("ActivityLog", back_populates="project", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<Project(id={self.id}, name={self.name}, domain={self.domain})>"
@@ -389,6 +391,7 @@ class ProjectAlert(Base):
     # Relationships
     project = relationship("Project", back_populates="alerts")
     user = relationship("User", back_populates="project_alerts")
+    alert_instances = relationship("AlertInstance", back_populates="project_alert", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<ProjectAlert(id={self.id}, project_id={self.project_id}, type={self.alert_type}, channel={self.channel})>"
@@ -459,3 +462,156 @@ class ProjectAlert(Base):
 Index("ix_project_members_project_user", ProjectMember.project_id, ProjectMember.user_id, unique=True)
 Index("ix_project_alerts_project_user_type", ProjectAlert.project_id, ProjectAlert.user_id, ProjectAlert.alert_type, unique=True)
 Index("ix_projects_user_domain", Project.user_id, Project.domain)
+
+
+class AlertInstance(Base):
+    """
+    Individual alert instance model for tracking specific alert events.
+    """
+    __tablename__ = "alert_instances"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    
+    # Foreign keys
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_alert_id = Column(UUID(as_uuid=True), ForeignKey("project_alerts.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    
+    # Alert details
+    alert_type = Column(Enum(AlertType), nullable=False, index=True)
+    severity = Column(String(20), nullable=False, default="medium", index=True)  # low, medium, high, critical
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    
+    # Alert context
+    context_data = Column(JSONB, nullable=True)  # JSON object with alert-specific context
+    affected_urls = Column(JSONB, nullable=True)  # JSON array of affected URLs
+    
+    # Alert status
+    status = Column(String(20), nullable=False, default="active", index=True)  # active, acknowledged, resolved, dismissed
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    
+    # Notification tracking
+    notification_sent = Column(Boolean, default=False, nullable=False, index=True)
+    notification_sent_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    notification_channel = Column(Enum(AlertChannel), nullable=True, index=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relationships
+    project = relationship("Project", back_populates="alert_instances")
+    project_alert = relationship("ProjectAlert", back_populates="alert_instances")
+    user = relationship("User", back_populates="alert_instances")
+    
+    def __repr__(self) -> str:
+        return f"<AlertInstance(id={self.id}, project_id={self.project_id}, type={self.alert_type}, status={self.status})>"
+    
+    def acknowledge(self, user_id: UUID) -> None:
+        """
+        Acknowledge this alert instance.
+        """
+        if self.status == "active":
+            self.status = "acknowledged"
+            self.acknowledged_at = datetime.now(timezone.utc)
+            self.user_id = user_id
+    
+    def resolve(self, user_id: UUID) -> None:
+        """
+        Resolve this alert instance.
+        """
+        if self.status in ["active", "acknowledged"]:
+            self.status = "resolved"
+            self.resolved_at = datetime.now(timezone.utc)
+            self.user_id = user_id
+    
+    def dismiss(self, user_id: UUID) -> None:
+        """
+        Dismiss this alert instance.
+        """
+        if self.status == "active":
+            self.status = "dismissed"
+            self.user_id = user_id
+    
+    def mark_notification_sent(self, channel: AlertChannel) -> None:
+        """
+        Mark that notification was sent for this alert.
+        """
+        self.notification_sent = True
+        self.notification_sent_at = datetime.now(timezone.utc)
+        self.notification_channel = channel
+    
+    def get_context_data(self) -> dict:
+        """
+        Parse context data as dictionary.
+        """
+        import json
+        if self.context_data:
+            try:
+                return json.loads(self.context_data)
+            except (json.JSONDecodeError, ValueError):
+                return {}
+        return {}
+    
+    def set_context_data(self, context: dict) -> None:
+        """
+        Set context data from dictionary.
+        """
+        import json
+        self.context_data = json.dumps(context) if context else None
+    
+    def get_affected_urls(self) -> list:
+        """
+        Parse affected URLs as list.
+        """
+        import json
+        if self.affected_urls:
+            try:
+                return json.loads(self.affected_urls)
+            except (json.JSONDecodeError, ValueError):
+                return []
+        return []
+    
+    def set_affected_urls(self, urls: list) -> None:
+        """
+        Set affected URLs from list.
+        """
+        import json
+        self.affected_urls = json.dumps(urls) if urls else None
+    
+    def to_dict(self) -> dict:
+        """
+        Convert alert instance to dictionary representation.
+        """
+        return {
+            "id": str(self.id),
+            "project_id": str(self.project_id),
+            "project_alert_id": str(self.project_alert_id) if self.project_alert_id else None,
+            "user_id": str(self.user_id) if self.user_id else None,
+            "alert_type": self.alert_type.value,
+            "severity": self.severity,
+            "title": self.title,
+            "description": self.description,
+            "context_data": self.get_context_data(),
+            "affected_urls": self.get_affected_urls(),
+            "status": self.status,
+            "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None,
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+            "notification_sent": self.notification_sent,
+            "notification_sent_at": self.notification_sent_at.isoformat() if self.notification_sent_at else None,
+            "notification_channel": self.notification_channel.value if self.notification_channel else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+# Add indexes for better query performance
+Index("ix_project_members_project_user", ProjectMember.project_id, ProjectMember.user_id, unique=True)
+Index("ix_project_alerts_project_user_type", ProjectAlert.project_id, ProjectAlert.user_id, ProjectAlert.alert_type, unique=True)
+Index("ix_projects_user_domain", Project.user_id, Project.domain)
+Index("ix_alert_instances_project_status", AlertInstance.project_id, AlertInstance.status)
+Index("ix_alert_instances_type_severity", AlertInstance.alert_type, AlertInstance.severity)
+Index("ix_alert_instances_created_at", AlertInstance.created_at)

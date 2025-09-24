@@ -18,13 +18,16 @@ from sqlalchemy import and_, select, update, func as sql_func
 from sqlalchemy.exc import IntegrityError
 
 from src.controllers.base_controller import BaseController
-from src.models.project import Project, ProjectMember, MonitoringConfig, ProjectAlert, ProjectRole
+from src.models.project import Project, ProjectMember, MonitoringConfig, ProjectAlert, ProjectRole, AlertInstance, AlertType, AlertChannel
 from src.models.subscription import SubscriptionPlan, UserSubscription
 from src.models.user import User
-from src.services.email_service import EmailService
+from src.models.activity_log import ActivityLog, ActivityLogManager
+from src.services.email_service import EmailService, EmailRequest
 from src.services.security_service import SecurityService
+from src.services.advanced_rate_limiter import rate_limit
 from src.authentication.auth_service import AuthService
 from src.utils import utc_datetime
+from src.config import settings
 
 
 # ------------------------------------------------------------------
@@ -130,6 +133,49 @@ class AlertResponse(BaseModel):
         from_attributes = True
 
 
+class AlertInstanceResponse(BaseModel):
+    """Alert instance response model."""
+    id: uuid.UUID
+    project_id: uuid.UUID
+    project_alert_id: Optional[uuid.UUID]
+    user_id: Optional[uuid.UUID]
+    alert_type: str
+    severity: str
+    title: str
+    description: Optional[str]
+    context_data: Optional[Dict[str, AnyType]]
+    affected_urls: Optional[List[str]]
+    status: str
+    acknowledged_at: Optional[datetime]
+    resolved_at: Optional[datetime]
+    notification_sent: bool
+    notification_sent_at: Optional[datetime]
+    notification_channel: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AlertCreateRequest(BaseModel):
+    """Alert creation request model."""
+    alert_type: str
+    severity: str = Field(default="medium", description="Alert severity: low, medium, high, critical")
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=1000)
+    context_data: Optional[Dict[str, AnyType]] = None
+    affected_urls: Optional[List[str]] = None
+
+
+class AlertUpdateRequest(BaseModel):
+    """Alert update request model."""
+    status: Optional[str] = Field(None, description="Alert status: active, acknowledged, resolved, dismissed")
+    severity: Optional[str] = Field(None, description="Alert severity: low, medium, high, critical")
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=1000)
+
+
 class AnalyticsResponse(BaseModel):
     """Analytics response model."""
     date_range: Dict[str, datetime]
@@ -139,6 +185,25 @@ class AnalyticsResponse(BaseModel):
     top_issues: List[Dict[str, AnyType]]
     usage_trends: Dict[str, List[Dict[str, AnyType]]]
     subscription_usage: Dict[str, AnyType]
+
+
+class ActivityLogResponse(BaseModel):
+    """Activity log response model."""
+    id: uuid.UUID
+    user_id: uuid.UUID
+    user_email: str
+    user_full_name: Optional[str]
+    project_id: uuid.UUID
+    action: str
+    resource_type: Optional[str]
+    resource_id: Optional[str]
+    details: Optional[Dict[str, AnyType]]
+    ip_address: Optional[str]
+    user_agent: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 # ------------------------------------------------------------------
@@ -188,6 +253,30 @@ def _to_alert_response(alert: ProjectAlert) -> AlertResponse:
         is_resolved=alert.is_resolved,
         created_at=alert.created_at,
         resolved_at=alert.resolved_at,
+    )
+
+
+def _to_alert_instance_response(alert: AlertInstance) -> AlertInstanceResponse:
+    """Convert AlertInstance to AlertInstanceResponse."""
+    return AlertInstanceResponse(
+        id=alert.id,
+        project_id=alert.project_id,
+        project_alert_id=alert.project_alert_id,
+        user_id=alert.user_id,
+        alert_type=alert.alert_type,
+        severity=alert.severity,
+        title=alert.title,
+        description=alert.description,
+        context_data=alert.context_data,
+        affected_urls=alert.affected_urls,
+        status=alert.status,
+        acknowledged_at=alert.acknowledged_at,
+        resolved_at=alert.resolved_at,
+        notification_sent=alert.notification_sent,
+        notification_sent_at=alert.notification_sent_at,
+        notification_channel=alert.notification_channel,
+        created_at=alert.created_at,
+        updated_at=alert.updated_at,
     )
 
 
@@ -363,6 +452,7 @@ class DashboardController(BaseController):
                 detail="Failed to retrieve projects"
             )
 
+    @rate_limit("project_creation")
     async def create_project(
         self,
         *,
@@ -422,7 +512,9 @@ class DashboardController(BaseController):
                 # Log activity
                 await self._log_project_activity(
                     project.id, user.id, "project_created", 
-                    {"name": project.name, "domain": domain}
+                    {"name": project.name, "domain": domain},
+                    resource_type="project",
+                    resource_id=str(project.id)
                 )
                 
                 return _to_project_response(project)
@@ -487,6 +579,7 @@ class DashboardController(BaseController):
                 detail="Failed to retrieve project"
             )
 
+    @rate_limit("project_modification")
     async def update_project(
         self,
         *,
@@ -536,7 +629,9 @@ class DashboardController(BaseController):
                 # Log activity
                 await self._log_project_activity(
                     project.id, user.id, "project_updated", 
-                    {"updated_fields": list(update_data.keys())}
+                    {"updated_fields": list(update_data.keys())},
+                    resource_type="project",
+                    resource_id=str(project.id)
                 )
                 
                 return _to_project_response(project)
@@ -550,6 +645,7 @@ class DashboardController(BaseController):
                 detail="Failed to update project"
             )
 
+    @rate_limit("project_modification")
     async def delete_project(
         self,
         *,
@@ -598,7 +694,9 @@ class DashboardController(BaseController):
                 # Log activity
                 await self._log_project_activity(
                     project.id, user.id, "project_deleted", 
-                    {"name": project.name}
+                    {"name": project.name},
+                    resource_type="project",
+                    resource_id=str(project.id)
                 )
                 
         except HTTPException:
@@ -666,7 +764,12 @@ class DashboardController(BaseController):
                 
                 # Log activity
                 action = "monitoring_enabled" if enabled else "monitoring_disabled"
-                await self._log_project_activity(project.id, user.id, action)
+                await self._log_project_activity(
+                    project.id, user.id, action,
+                    {"previous_state": not enabled},
+                    resource_type="config",
+                    resource_id=str(project.monitoring_config.id)
+                )
                 
                 return MonitoringConfigResponse(
                     id=project.monitoring_config.id,
@@ -838,7 +941,9 @@ class DashboardController(BaseController):
                 # Log activity
                 await self._log_project_activity(
                     project.id, user.id, "member_invited", 
-                    {"email": request_model.email, "role": request_model.role}
+                    {"email": request_model.email, "role": request_model.role},
+                    resource_type="member",
+                    resource_id=str(member.id)
                 )
                 
                 return _to_member_response(member)
@@ -850,6 +955,166 @@ class DashboardController(BaseController):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to invite team member"
+            )
+
+    # --------------------------------------------------------------
+    # Analytics Methods
+    # --------------------------------------------------------------
+    async def get_analytics(
+        self,
+        *,
+        user: User,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+    ) -> AnalyticsResponse:
+        """
+        Get comprehensive analytics for the user's projects.
+        
+        Args:
+            user: Current authenticated user
+            date_from: Start date for analytics (optional)
+            date_to: End date for analytics (optional)
+            
+        Returns:
+            AnalyticsResponse with detailed analytics data
+        """
+        try:
+            async with self.get_db_session() as session:
+                # Set default date range if not provided
+                if not date_to:
+                    date_to = datetime.now(timezone.utc)
+                if not date_from:
+                    date_from = date_to - timedelta(days=30)  # Default 30 days
+                
+                # Get user's projects
+                project_stmt = select(Project).where(Project.user_id == user.id)
+                result = await session.execute(project_stmt)
+                projects = result.scalars().all()
+                
+                if not projects:
+                    return AnalyticsResponse(
+                        date_range={"from": date_from, "to": date_to},
+                        total_scans=0,
+                        total_alerts=0,
+                        avg_scan_duration=0.0,
+                        top_issues=[],
+                        usage_trends={},
+                        subscription_usage={},
+                    )
+                
+                project_ids = [p.id for p in projects]
+                
+                # Get total scans (URL checks) in date range
+                scan_stmt = select(sql_func.count(URLCheck.id)).where(
+                    and_(
+                        URLCheck.user_id == user.id,
+                        URLCheck.created_at >= date_from,
+                        URLCheck.created_at <= date_to
+                    )
+                )
+                scan_result = await session.execute(scan_stmt)
+                total_scans = scan_result.scalar() or 0
+                
+                # Get total alerts in date range
+                alert_stmt = select(sql_func.count(AlertInstance.id)).where(
+                    and_(
+                        AlertInstance.project_id.in_(project_ids),
+                        AlertInstance.created_at >= date_from,
+                        AlertInstance.created_at <= date_to
+                    )
+                )
+                alert_result = await session.execute(alert_stmt)
+                total_alerts = alert_result.scalar() or 0
+                
+                # Get average scan duration
+                avg_duration_stmt = select(sql_func.avg(URLCheck.duration)).where(
+                    and_(
+                        URLCheck.user_id == user.id,
+                        URLCheck.duration.is_not(None),
+                        URLCheck.created_at >= date_from,
+                        URLCheck.created_at <= date_to
+                    )
+                )
+                avg_result = await session.execute(avg_duration_stmt)
+                avg_scan_duration = float(avg_result.scalar() or 0.0)
+                
+                # Get top issues (most common alert types)
+                top_issues_stmt = select(
+                    AlertInstance.alert_type,
+                    sql_func.count(AlertInstance.id).label('count')
+                ).where(
+                    and_(
+                        AlertInstance.project_id.in_(project_ids),
+                        AlertInstance.created_at >= date_from,
+                        AlertInstance.created_at <= date_to
+                    )
+                ).group_by(AlertInstance.alert_type).order_by(sql_func.count(AlertInstance.id).desc()).limit(5)
+                
+                top_issues_result = await session.execute(top_issues_stmt)
+                top_issues = [
+                    {"issue": row.alert_type, "count": row.count}
+                    for row in top_issues_result
+                ]
+                
+                # Get usage trends (scans per day)
+                trends_stmt = select(
+                    sql_func.date_trunc('day', URLCheck.created_at).label('day'),
+                    sql_func.count(URLCheck.id).label('count')
+                ).where(
+                    and_(
+                        URLCheck.user_id == user.id,
+                        URLCheck.created_at >= date_from,
+                        URLCheck.created_at <= date_to
+                    )
+                ).group_by(sql_func.date_trunc('day', URLCheck.created_at)).order_by('day')
+                
+                trends_result = await session.execute(trends_stmt)
+                usage_trends = {
+                    "scans_per_day": [
+                        {"date": row.day.isoformat(), "count": row.count}
+                        for row in trends_result
+                    ]
+                }
+                
+                # Get subscription usage
+                subscription = await self._get_user_subscription(user, session)
+                subscription_usage = {}
+                
+                if subscription:
+                    # Get current project count
+                    project_count_stmt = select(sql_func.count(Project.id)).where(Project.user_id == user.id)
+                    project_count_result = await session.execute(project_count_stmt)
+                    project_count = project_count_result.scalar()
+                    
+                    subscription_usage = {
+                        "plan_name": subscription.plan.name,
+                        "daily_checks_used": subscription.daily_checks_used,
+                        "daily_checks_limit": subscription.plan.daily_check_limit,
+                        "monthly_checks_used": subscription.monthly_checks_used,
+                        "monthly_checks_limit": subscription.plan.monthly_check_limit,
+                        "projects_used": project_count,
+                        "projects_limit": subscription.plan.max_projects,
+                        "alerts_used": total_alerts,
+                        "alerts_limit": subscription.plan.max_alerts_per_project,
+                    }
+                
+                return AnalyticsResponse(
+                    date_range={"from": date_from, "to": date_to},
+                    total_scans=total_scans,
+                    total_alerts=total_alerts,
+                    avg_scan_duration=round(avg_scan_duration, 2),
+                    top_issues=top_issues,
+                    usage_trends=usage_trends,
+                    subscription_usage=subscription_usage,
+                )
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.error(f"Error getting analytics: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve analytics"
             )
 
     # --------------------------------------------------------------
@@ -969,10 +1234,50 @@ class DashboardController(BaseController):
         user_id: uuid.UUID,
         action: str,
         details: Optional[Dict[str, AnyType]] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ) -> None:
-        """Log project activity."""
-        # In a real implementation, this would write to an activity log table
-        self.logger.info(f"Project activity: {project_id} - {user_id} - {action} - {details}")
+        """
+        Log project activity with proper ActivityLog model.
+        
+        Args:
+            project_id: Project UUID
+            user_id: User UUID
+            action: Activity action type
+            details: Additional details as dictionary
+            resource_type: Type of resource affected (e.g., 'alert', 'member', 'config')
+            resource_id: ID of the affected resource
+            ip_address: IP address of the user
+            user_agent: User agent string
+        """
+        try:
+            async with self.get_db_session() as session:
+                # Validate action type
+                if not ActivityLogManager.is_valid_action(action):
+                    self.logger.warning(f"Unknown activity action: {action}")
+                
+                # Create activity log entry
+                activity_log = ActivityLog(
+                    user_id=user_id,
+                    project_id=project_id,
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    details=details,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+                
+                session.add(activity_log)
+                await session.commit()
+                
+                self.logger.info(f"Activity logged: {project_id} - {user_id} - {action}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to log activity: {e}")
+            # Don't raise the exception to avoid breaking the main operation
 
     async def _send_invitation_email(
         self,
@@ -984,6 +1289,132 @@ class DashboardController(BaseController):
         """Send project invitation email."""
         # This would integrate with the email service
         self.logger.info(f"Sending invitation email to {invitee_email} for project {project.name} with role {role}")
+
+    async def create_alert(
+        self,
+        *,
+        user: User,
+        project_id: uuid.UUID,
+        alert_request: AlertCreateRequest,
+    ) -> AlertInstanceResponse:
+        """
+        Create a new alert instance with email notification.
+        
+        Args:
+            user: Current authenticated user
+            project_id: Project ID
+            alert_request: Alert creation data
+            
+        Returns:
+            AlertInstanceResponse for the created alert
+        """
+        try:
+            async with self.get_db_session() as session:
+                # Get project with access check
+                stmt = select(Project).where(Project.id == project_id)
+                result = await session.execute(stmt)
+                project = result.scalar_one_or_none()
+                
+                if not project:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Project not found"
+                    )
+                
+                # Check access
+                if not project.can_user_access(user.id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied to this project"
+                    )
+                
+                # Create alert instance
+                alert_instance = AlertInstance(
+                    project_id=project.id,
+                    user_id=user.id,
+                    alert_type=alert_request.alert_type,
+                    severity=alert_request.severity,
+                    title=alert_request.title,
+                    description=alert_request.description,
+                    context_data=alert_request.context_data,
+                    affected_urls=alert_request.affected_urls,
+                    status="active"
+                )
+                
+                session.add(alert_instance)
+                await session.commit()
+                await session.refresh(alert_instance)
+                
+                # Log activity
+                await self._log_project_activity(
+                    project.id, user.id, "alert_created", 
+                    {"title": alert_instance.title, "severity": alert_instance.severity},
+                    resource_type="alert",
+                    resource_id=str(alert_instance.id)
+                )
+                
+                # Send email notification (don't wait for it to complete)
+                import asyncio
+                asyncio.create_task(self._send_alert_notification(
+                    alert_instance=alert_instance,
+                    project=project,
+                    user=user
+                ))
+                
+                return _to_alert_instance_response(alert_instance)
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.error(f"Error creating alert: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create alert"
+            )
+
+    async def _send_alert_notification(
+        self,
+        *,
+        alert_instance: AlertInstance,
+        project: Project,
+        user: User,
+    ) -> None:
+        """Send email notification for alert creation."""
+        try:
+            subject = f"LinkShield Alert: {alert_instance.title}"
+            body = f"""
+            Hello {user.get_full_name() or user.email},
+            
+            A new alert has been created for your project '{project.name}':
+            
+            Title: {alert_instance.title}
+            Severity: {alert_instance.severity.upper()}
+            Type: {alert_instance.alert_type}
+            {f'Description: {alert_instance.description}' if alert_instance.description else ''}
+            {f'Affected URLs: {", ".join(alert_instance.affected_urls)}' if alert_instance.affected_urls else ''}
+            
+            Please log in to your dashboard to review and take action.
+            
+            Best regards,
+            LinkShield Team
+            """
+            
+            await self.email_service.send_email(
+                to_email=user.email,
+                subject=subject,
+                body=body.strip()
+            )
+            
+            # Update notification status
+            alert_instance.notification_sent = True
+            alert_instance.notification_sent_at = utc_datetime()
+            
+            async with self.get_db_session() as session:
+                session.add(alert_instance)
+                await session.commit()
+                
+        except Exception as e:
+            self.logger.error(f"Failed to send alert notification: {e}")
 
     async def can_create_project(self, user: User) -> bool:
         """Check if user can create another project based on subscription limits."""
@@ -1004,3 +1435,87 @@ class DashboardController(BaseController):
         except Exception as e:
             self.logger.error(f"Error checking project creation limits: {e}")
             return False
+
+    @rate_limit("api_authenticated")
+    async def get_activity_logs(
+        self,
+        *,
+        user: User,
+        project_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[ActivityLogResponse]:
+        """
+        Get activity logs for a project.
+        
+        Args:
+            user: Current authenticated user
+            project_id: Project ID
+            limit: Maximum number of logs to return
+            offset: Number of logs to skip
+            
+        Returns:
+            List of ActivityLogResponse objects
+        """
+        try:
+            async with self.get_db_session() as session:
+                # Get project with access check
+                stmt = select(Project).where(Project.id == project_id)
+                result = await session.execute(stmt)
+                project = result.scalar_one_or_none()
+                
+                if not project:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Project not found"
+                    )
+                
+                # Check access
+                if not project.can_user_access(user.id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied to this project"
+                    )
+                
+                # Get activity logs with user information
+                logs_stmt = (
+                    select(ActivityLog, User)
+                    .join(User, ActivityLog.user_id == User.id)
+                    .where(ActivityLog.project_id == project_id)
+                    .order_by(ActivityLog.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+                
+                logs_result = await session.execute(logs_stmt)
+                logs_with_users = logs_result.all()
+                
+                # Convert to response models
+                responses = []
+                for activity_log, user_obj in logs_with_users:
+                    response = ActivityLogResponse(
+                        id=activity_log.id,
+                        user_id=activity_log.user_id,
+                        user_email=user_obj.email,
+                        user_full_name=user_obj.get_full_name(),
+                        project_id=activity_log.project_id,
+                        action=activity_log.action,
+                        resource_type=activity_log.resource_type,
+                        resource_id=activity_log.resource_id,
+                        details=activity_log.details,
+                        ip_address=activity_log.ip_address,
+                        user_agent=activity_log.user_agent,
+                        created_at=activity_log.created_at
+                    )
+                    responses.append(response)
+                
+                return responses
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.error(f"Error retrieving activity logs: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve activity logs"
+            )
