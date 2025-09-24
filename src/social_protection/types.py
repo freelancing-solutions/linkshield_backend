@@ -18,6 +18,8 @@ class PlatformType(Enum):
     META_INSTAGRAM = "meta_instagram"
     TIKTOK = "tiktok"
     LINKEDIN = "linkedin"
+    TELEGRAM = "telegram"
+    DISCORD = "discord"
 
 
 class RiskLevel(Enum):
@@ -46,11 +48,24 @@ class AlertSeverity(Enum):
 
 
 class MonitoringFrequency(Enum):
-    """Monitoring frequency options"""
+    """Monitoring frequency options."""
+    REAL_TIME = "real_time"
     HOURLY = "hourly"
     DAILY = "daily"
     WEEKLY = "weekly"
     MONTHLY = "monthly"
+
+
+class ContentType(Enum):
+    """Content type enumeration for social media content."""
+    POST = "post"
+    COMMENT = "comment"
+    STORY = "story"
+    REEL = "reel"
+    VIDEO = "video"
+    IMAGE = "image"
+    LINK = "link"
+    PROFILE = "profile"
 
 
 class ScanDepth(Enum):

@@ -93,6 +93,63 @@ platforms:
       industry_regulation_monitoring: true
       connection_authenticity: true
 
+  telegram:
+    api_base_url: "https://api.telegram.org/bot"
+    rate_limits:
+      profile_scan: 30  # requests per hour
+      content_analysis: 100  # requests per hour
+      realtime_assessment: 200  # requests per hour
+      bot_api_calls: 30  # per second
+    risk_thresholds:
+      spam_detection: 0.7
+      scam_probability: 0.8
+      malicious_bot: 0.9
+      channel_authenticity: 0.6
+      fake_subscriber: 0.7
+      phishing_content: 0.8
+    features:
+      channel_analysis: true
+      bot_detection: true
+      message_content_scanning: true
+      subscriber_authenticity_check: true
+      scam_detection: true
+      phishing_protection: true
+      forward_chain_analysis: true
+      admin_verification: true
+    credentials:
+      bot_token_env: "TELEGRAM_BOT_TOKEN"
+      api_id_env: "TELEGRAM_API_ID"
+      api_hash_env: "TELEGRAM_API_HASH"
+
+  discord:
+    api_base_url: "https://discord.com/api/v10"
+    rate_limits:
+      profile_scan: 50  # requests per hour
+      content_analysis: 150  # requests per hour
+      realtime_assessment: 300  # requests per hour
+      guild_analysis: 20  # requests per hour
+    risk_thresholds:
+      server_security: 0.6
+      raid_detection: 0.8
+      bot_verification: 0.7
+      toxic_content: 0.7
+      doxxing_risk: 0.9
+      harassment_detection: 0.8
+    features:
+      server_analysis: true
+      member_verification: true
+      message_content_scanning: true
+      bot_security_check: true
+      raid_protection: true
+      toxicity_detection: true
+      doxxing_prevention: true
+      invite_link_analysis: true
+      role_permission_audit: true
+    credentials:
+      bot_token_env: "DISCORD_BOT_TOKEN"
+      client_id_env: "DISCORD_CLIENT_ID"
+      client_secret_env: "DISCORD_CLIENT_SECRET"
+
 # Browser extension settings
 extension:
   authentication:

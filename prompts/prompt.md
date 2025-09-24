@@ -2,236 +2,460 @@ I have created the following plan after thorough exploration and analysis of the
 
 ### Observations
 
-I've thoroughly explored the LinkShield backend codebase and understand the existing architecture:
-
-**Current Infrastructure:**
-- FastAPI with SQLAlchemy ORM and Alembic migrations
-- PostgreSQL database with comprehensive user, project, and URL checking models
-- Authentication system with JWT tokens and API keys with permissions
-- Advanced rate limiting with Redis/in-memory storage and subscription-based multipliers
-- Project-based dashboard with monitoring, alerts, and team collaboration
-- AI analysis integration with OpenAI
-- Comprehensive admin system and audit logging
-
-**Existing Social Media Planning:**
-- Documentation shows Twitter protection analysis and business strategy
-- Clear understanding of platform penalties and algorithmic impacts
-- Pricing strategy with multi-tier approach already defined
-
-**Key Patterns Identified:**
-- UUID primary keys with timezone-aware timestamps
-- Enum-based status and type fields with JSONB for flexible data
-- Relationship patterns with cascade deletes and back_populates
-- Rate limiting decorators with scope-based configuration
-- Controller pattern with typed Pydantic models and error handling
-- Project-based organization with role-based access control
+I can see that the current social protection implementation is missing Telegram and Discord platform adapters. The PlatformType enum in types.py only includes TWITTER, META_FACEBOOK, META_INSTAGRAM, TIKTOK, and LINKEDIN - but not TELEGRAM and DISCORD. The platform_adapters directory has adapters for Twitter, Meta, TikTok, and LinkedIn, but is missing Telegram and Discord adapters. The user wants complete social media protection services and endpoints for these missing platforms.
 
 ### Approach
 
-The implementation will extend the existing LinkShield architecture by adding a new social protection domain layer that integrates seamlessly with current patterns. The approach follows the modular plugin architecture specified in the requirements:
-
-**Phase 1 (Core Foundation):** Create the social protection module structure, database models, and basic API endpoints for browser extension integration.
-
-**Phase 2 (Platform Adapters):** Implement Twitter/X protection adapter and content analysis engine with integration to existing AI services.
-
-**Phase 3 (Dashboard Integration):** Extend the existing dashboard to surface social protection data and alerts within the current project-based structure.
-
-The implementation leverages existing infrastructure (authentication, rate limiting, project management, AI services) while adding new specialized functionality for social media protection. This approach minimizes disruption to existing functionality while providing a solid foundation for the multi-platform social protection system.
+I'll add comprehensive social media protection support for Telegram and Discord by: 1) Adding TELEGRAM and DISCORD to the PlatformType enum, 2) Creating TelegramProtectionAdapter and DiscordProtectionAdapter following the same pattern as existing adapters, 3) Updating the platform registry and imports, 4) Adding platform-specific configuration, and 5) Updating documentation. The adapters will implement the full SocialPlatformAdapter interface with platform-specific risk analysis, content scanning, algorithm health monitoring, and crisis detection capabilities.
 
 ### Reasoning
 
-I explored the LinkShield backend codebase systematically to understand the existing architecture. I examined the project structure, requirements file, configuration patterns, and core models (User, URLCheck, Project) to understand the database patterns and relationships. I analyzed the authentication service to understand API key management and JWT token handling. I studied the advanced rate limiter to understand how to apply rate limiting to new endpoints. I reviewed the dashboard controller to understand the existing project-based organization and how to integrate social protection features. I also examined the existing social media shield documentation to understand the business requirements and technical approach already planned.
-
-## Mermaid Diagram
-
-sequenceDiagram
-    participant BE as Browser Extension
-    participant API as Extension API
-    participant EDP as ExtensionDataProcessor
-    participant PA as Platform Adapter
-    participant SSS as SocialScanService
-    participant DB as Database
-    participant AS as Alert System
-    participant Dashboard as User Dashboard
-
-    BE->>API: POST /api/v1/extension/scan
-    Note over BE,API: Real-time content analysis
-    
-    API->>API: Authenticate API Key
-    API->>EDP: Process extension payload
-    
-    EDP->>EDP: Validate & sanitize data
-    EDP->>PA: Route to platform adapter
-    Note over PA: Twitter/Meta/TikTok/LinkedIn
-    
-    PA->>PA: Analyze content/profile
-    PA->>SSS: Return risk assessment
-    
-    SSS->>DB: Persist scan results
-    SSS->>AS: Generate alerts if needed
-    SSS->>API: Return immediate response
-    
-    API->>BE: Risk score & recommendations
-    
-    AS->>Dashboard: Update protection health
-    Dashboard->>Dashboard: Combine with URL safety data
-    
-    Note over Dashboard: Comprehensive protection overview
+I examined the social protection types, registry, and platform adapters directory to understand the current implementation. I found that Telegram and Discord are completely missing from the platform types enum and have no corresponding adapter implementations, despite the infrastructure being ready to support them through the existing base adapter pattern and registry system.
 
 ## Proposed File Changes
 
-### src\social_protection\__init__.py(NEW)
+### src\social_protection\types.py(MODIFY)
+
+Add TELEGRAM and DISCORD to the PlatformType enum. Update the enum to include:
+```python
+TELEGRAM = "telegram"
+DISCORD = "discord"
+```
+These additions will enable the social protection system to recognize and handle Telegram and Discord platforms alongside the existing platforms.
 
-Create the main social protection module initialization file. Export the core classes and interfaces for the social protection system including `SocialPlatformAdapter`, `PlatformRegistry`, `ExtensionDataProcessor`, and the main service classes.
+### src\social_protection\platform_adapters\telegram_adapter.py(NEW)
 
-### src\social_protection\profile_scanner\__init__.py(NEW)
+References: 
 
-Create profile scanner module initialization. This module will handle social media profile security auditing including follower authenticity analysis, account age verification, and verification status checks.
+- src\social_protection\platform_adapters\base_adapter.py
+- src\social_protection\platform_adapters\twitter_adapter.py
 
-### src\social_protection\content_analyzer\__init__.py(NEW)
+Create comprehensive TelegramProtectionAdapter class that implements the SocialPlatformAdapter interface. Include Telegram-specific risk analysis for:
 
-Create content analyzer module initialization. This module will handle post and content risk assessment including external link penalties, spam pattern detection, and Community Notes trigger analysis.
+**Profile Analysis:**
+- Bot detection and verification status
+- Channel/group authenticity assessment
+- Subscriber count validation
+- Profile completeness and suspicious indicators
 
-### src\social_protection\reputation_monitor\__init__.py(NEW)
+**Content Analysis:**
+- Message spam detection
+- Malicious link identification
+- Scam pattern recognition
+- Forward chain analysis
+- Media content safety assessment
 
-Create reputation monitor module initialization. This module will handle brand and mention tracking across social platforms, monitoring for reputation damage and negative sentiment.
+**Algorithm Health:**
+- Message delivery rates
+- Engagement patterns
+- Channel/group visibility metrics
+- Search discoverability
 
-### src\social_protection\algorithm_health\__init__.py(NEW)
+**Crisis Detection:**
+- Viral negative content spread
+- Mass reporting campaigns
+- Coordinated harassment detection
+- Misinformation propagation
 
-Create algorithm health module initialization. This module will handle platform visibility scoring, engagement pattern analysis, and algorithmic penalty detection.
+Implement all abstract methods from `SocialPlatformAdapter` with Telegram-specific logic, rate limits, and risk thresholds.
 
-### src\social_protection\crisis_detector\__init__.py(NEW)
+### src\social_protection\platform_adapters\discord_adapter.py(NEW)
 
-Create crisis detector module initialization. This module will handle real-time risk alerts, crisis intervention notifications, and emergency response coordination.
+References: 
 
-### src\social_protection\platform_adapters\__init__.py(NEW)
+- src\social_protection\platform_adapters\base_adapter.py
+- src\social_protection\platform_adapters\twitter_adapter.py
 
-Create platform adapters module initialization. Export the abstract `SocialPlatformAdapter` interface and concrete implementations for each social media platform.
+Create comprehensive DiscordProtectionAdapter class that implements the SocialPlatformAdapter interface. Include Discord-specific risk analysis for:
 
-### src\social_protection\platform_adapters\base_adapter.py(NEW)
+**Profile Analysis:**
+- User verification and badge status
+- Server membership patterns
+- Account age and activity validation
+- Suspicious behavior indicators
+- Bot account detection
 
-Create the abstract base class `SocialPlatformAdapter` that defines the interface for all platform-specific implementations. Include abstract methods for `scan_profile()`, `analyze_content()`, `get_algorithm_health()`, and `detect_crisis_signals()`. Follow the same pattern as existing LinkShield base classes with proper typing and documentation.
+**Content Analysis:**
+- Message content safety scanning
+- Embed and attachment analysis
+- Invite link validation
+- Spam and raid detection
+- Voice/video content monitoring
 
-### src\social_protection\platform_adapters\twitter_adapter.py(NEW)
+**Algorithm Health:**
+- Message visibility and engagement
+- Server discovery metrics
+- Role and permission effectiveness
+- Community growth patterns
 
-Implement the `TwitterProtectionAdapter` class that extends `SocialPlatformAdapter`. Include methods for Twitter-specific risk analysis including external link penalties (as documented in `e:/projects/linkshield_backend/docs/social_media_shield/twitter.md`), Community Notes trigger detection, follower authenticity analysis, and engagement pattern monitoring. Integrate with existing AI analysis patterns from `e:/projects/linkshield_backend/src/services/ai_analysis_service.py`.
+**Crisis Detection:**
+- Server raids and coordinated attacks
+- Harassment campaign detection
+- Doxxing and privacy violations
+- Malicious bot infiltration
+- Community toxicity escalation
 
-### src\social_protection\platform_adapters\meta_adapter.py(NEW)
+Implement all abstract methods from `SocialPlatformAdapter` with Discord-specific logic, API integration patterns, and community safety features.
 
-Implement the `MetaProtectionAdapter` class for Facebook and Instagram protection. Include platform-specific rules for link reach reduction algorithms, content review flagging, engagement bait detection, and ad policy violations as outlined in the business strategy documentation.
+### src\social_protection\platform_adapters\__init__.py(MODIFY)
 
-### src\social_protection\platform_adapters\tiktok_adapter.py(NEW)
+References: 
 
-Implement the `TikTokProtectionAdapter` class with TikTok-specific risk factors including fake engagement detection, community guideline violations, bio link restrictions, and Creator Fund compliance monitoring.
+- src\social_protection\platform_adapters\telegram_adapter.py(NEW)
+- src\social_protection\platform_adapters\discord_adapter.py(NEW)
 
-### src\social_protection\platform_adapters\linkedin_adapter.py(NEW)
+Add imports and exports for the new Telegram and Discord adapters:
 
-Implement the `LinkedInProtectionAdapter` class with professional content standards, spam link detection, B2B compliance requirements, and industry-specific regulation monitoring.
+```python
+from .telegram_adapter import TelegramProtectionAdapter
+from .discord_adapter import DiscordProtectionAdapter
+```
 
-### src\social_protection\data_models\__init__.py(NEW)
+Update the `__all__` list to include:
+```python
+"TelegramProtectionAdapter",
+"DiscordProtectionAdapter",
+```
+
+Update the module docstring to mention Telegram and Discord protection adapters alongside the existing platforms.
+
+### src\social_protection\data_models\telegram_models.py(NEW)
+
+References: 
 
-Create data models module initialization. Export the Pydantic models for social protection including `SocialProfileScan`, `ContentRiskAssessment`, `ExtensionScanPayload`, and response models.
+- src\social_protection\data_models\assessment_models.py
 
-### src\social_protection\data_models\scan_models.py(NEW)
+Create Telegram-specific data models for social protection including:
 
-Create Pydantic models for social protection scans. Include `SocialProfileScanRequest`, `ContentRiskAssessmentRequest`, `ExtensionScanPayload`, and corresponding response models. Follow the same patterns as existing models in `e:/projects/linkshield_backend/src/controllers/dashboard_models.py` with proper validation and typing.
-
-### src\social_protection\registry.py(NEW)
-
-Create the `PlatformRegistry` class for dynamic platform adapter registration and management. Include methods for registering adapters, retrieving adapters by platform name, and listing available platforms. Follow singleton pattern for global registry access.
-
-### src\social_protection\services\__init__.py(NEW)
-
-Create services module initialization for social protection business logic services.
-
-### src\social_protection\services\extension_data_processor.py(NEW)
-
-Create the `ExtensionDataProcessor` service class for handling real-time data from browser extensions. Include methods for payload validation, sanitization, and routing to appropriate analyzers. Follow the same service patterns as `e:/projects/linkshield_backend/src/services/url_analysis_service.py` with proper error handling and logging.
-
-### src\social_protection\services\social_scan_service.py(NEW)
-
-Create the main `SocialScanService` class for orchestrating social media protection scans. Include methods for persisting scan results, generating alerts, and coordinating between different platform adapters. Integrate with existing project alert system from `e:/projects/linkshield_backend/src/models/project.py`.
-
-### src\models\social_protection.py(NEW)
-
-Create SQLAlchemy models for social protection data persistence. Include `SocialProfileScan` and `ContentRiskAssessment` models following the same patterns as existing models in `e:/projects/linkshield_backend/src/models/url_check.py`. Use UUID primary keys, timezone-aware timestamps, foreign key relationships to User and Project models, and JSONB fields for flexible data storage. Include proper indexes and relationships.
-
-### src\models\__init__.py(MODIFY)
-
-Add imports for the new social protection models. Import `SocialProfileScan` and `ContentRiskAssessment` from `social_protection` module and add them to the `__all__` list to make them available for Alembic auto-generation.
-
-### src\alembic\versions\007_add_social_protection_models.py(NEW)
-
-Create Alembic migration for social protection models. Add tables for `social_profile_scans` and `content_risk_assessments` with proper foreign key constraints to users and projects tables. Follow the same migration patterns as existing migrations in `e:/projects/linkshield_backend/src/alembic/versions/`.
-
-### src\routes\social_protection.py(NEW)
-
-Create FastAPI router for social protection endpoints. Include routes for `/api/v1/social-scan/profile`, `/api/v1/social-scan/content`, `/api/v1/social-scan/realtime`, `/api/v1/social-scan/report/{scan_id}`, and `/api/v1/extension/scan`. Apply rate limiting decorators from `e:/projects/linkshield_backend/src/services/advanced_rate_limiter.py` and follow the same patterns as `e:/projects/linkshield_backend/src/routes/url_check.py`.
-
-### src\controllers\social_protection_controller.py(NEW)
-
-Create the `SocialProtectionController` class extending `BaseController` from `e:/projects/linkshield_backend/src/controllers/base_controller.py`. Include methods for handling profile scans, content analysis, real-time assessments, and extension data processing. Follow the same patterns as `e:/projects/linkshield_backend/src/controllers/dashboard_controller.py` with proper error handling, logging, and typed responses.
-
-### src\controllers\extension_controller.py(NEW)
-
-Create the `ExtensionController` class specifically for browser extension API endpoints. Include authentication via API keys with extension scope, payload processing, and real-time response generation. Integrate with the rate limiting system and follow security patterns from existing controllers.
-
-### src\routes\dashboard.py(MODIFY)
-
-Extend the existing dashboard routes to include social protection endpoints. Add routes for `/api/v1/dashboard/social-protection/overview` and `/api/v1/dashboard/social-protection/health/{user_id}` that integrate social protection data with existing project-based dashboard functionality.
-
-### src\controllers\dashboard_controller.py(MODIFY)
-
-Extend the `DashboardController` class to include social protection methods. Add `get_social_protection_overview()` and `get_protection_health()` methods that combine link safety data with social media protection scores. Integrate with existing project and alert systems to show comprehensive protection status.
-
-### src\controllers\dashboard_models.py(MODIFY)
-
-Add Pydantic response models for social protection dashboard data. Include `SocialProtectionOverviewResponse`, `ProtectionHealthResponse`, and extend existing models like `DashboardOverviewResponse` to include social protection metrics.
-
-### src\models\project.py(MODIFY)
-
-Extend the `AlertType` enum to include social media protection alert types such as `SOCIAL_CRISIS`, `ALGORITHM_PENALTY`, `REPUTATION_DAMAGE`, and `CONTENT_VIOLATION`. This allows the existing alert system to handle social protection notifications.
-
-### src\models\user.py(MODIFY)
-
-Add relationships to the `User` model for social protection scans. Include `social_profile_scans` and `content_risk_assessments` relationships that link to the new social protection models, following the same patterns as existing relationships.
-
-### src\services\advanced_rate_limiter.py(MODIFY)
-
-Add new rate limiting scopes for social protection endpoints. Include `SOCIAL_PROFILE_SCAN`, `SOCIAL_CONTENT_ANALYSIS`, `EXTENSION_SCAN`, and `SOCIAL_REALTIME_ASSESSMENT` in the `RateLimitScope` enum and `DEFAULT_RATE_LIMITS` configuration.
-
-### src\config\social_protection_config.yaml(NEW)
-
-Create configuration file for social protection settings. Include platform-specific configurations for Twitter, Facebook, TikTok, and LinkedIn with API endpoints, risk thresholds, and feature flags. Include browser extension settings for API key rotation and rate limits as specified in the requirements.
-
-### src\config\settings.py(MODIFY)
-
-Extend the `Settings` class to include social protection configuration. Add fields for loading the `social_protection_config.yaml` file and include settings for platform API credentials, extension authentication, and social protection feature flags. Follow the existing configuration patterns in the settings file.
-
-### app.py(MODIFY)
-
-Register the new social protection router in the main FastAPI application. Import and include the social protection router following the same pattern as existing routers like `url_check_router` and `dashboard_router`.
+**TelegramProfileData:**
+- User/channel/group information
+- Subscriber counts and verification status
+- Bio and description content
+- Profile photo and media
+
+**TelegramContentData:**
+- Message content and metadata
+- Forward chain information
+- Media attachments and files
+- Reaction and engagement data
+
+**TelegramRiskFactors:**
+- Bot detection indicators
+- Spam pattern markers
+- Scam content flags
+- Malicious link indicators
+
+**TelegramAnalysisRequest/Response:**
+- Platform-specific request parameters
+- Telegram API integration data
+- Risk assessment results
+- Recommendation actions
+
+All models should inherit from appropriate base classes and include proper validation, serialization, and documentation.
+
+### src\social_protection\data_models\discord_models.py(NEW)
+
+References: 
+
+- src\social_protection\data_models\assessment_models.py
+
+Create Discord-specific data models for social protection including:
+
+**DiscordProfileData:**
+- User profile information and badges
+- Server membership and roles
+- Activity status and presence
+- Account creation and verification data
+
+**DiscordContentData:**
+- Message content and embeds
+- Attachment and media files
+- Reaction and interaction data
+- Thread and reply context
+
+**DiscordServerData:**
+- Server information and settings
+- Member count and activity metrics
+- Channel structure and permissions
+- Moderation and safety features
+
+**DiscordRiskFactors:**
+- Raid and spam indicators
+- Harassment pattern markers
+- Malicious bot detection
+- Community toxicity signals
+
+**DiscordAnalysisRequest/Response:**
+- Platform-specific request parameters
+- Discord API integration data
+- Risk assessment results
+- Moderation recommendations
+
+Include proper validation, type hints, and integration with existing data model patterns.
+
+### src\social_protection\data_models\__init__.py(MODIFY)
+
+References: 
+
+- src\social_protection\data_models\telegram_models.py(NEW)
+- src\social_protection\data_models\discord_models.py(NEW)
+
+Add imports and exports for the new Telegram and Discord data models:
+
+```python
+from .telegram_models import (
+    TelegramProfileData,
+    TelegramContentData,
+    TelegramRiskFactors,
+    TelegramAnalysisRequest,
+    TelegramAnalysisResponse
+)
+from .discord_models import (
+    DiscordProfileData,
+    DiscordContentData,
+    DiscordServerData,
+    DiscordRiskFactors,
+    DiscordAnalysisRequest,
+    DiscordAnalysisResponse
+)
+```
+
+Update the `__all__` list to include all the new model classes. This ensures the models are properly exposed for use by the adapters and other components.
+
+### src\config\social_protection_config.yaml(MODIFY)
+
+Add configuration sections for Telegram and Discord platforms including:
+
+**Telegram Configuration:**
+```yaml
+telegram:
+  enabled: true
+  api_credentials:
+    bot_token: ${TELEGRAM_BOT_TOKEN}
+    api_id: ${TELEGRAM_API_ID}
+    api_hash: ${TELEGRAM_API_HASH}
+  rate_limits:
+    profile_scans_per_hour: 100
+    content_analyses_per_hour: 500
+    api_requests_per_minute: 30
+  risk_thresholds:
+    bot_detection: 0.7
+    spam_content: 0.6
+    malicious_links: 0.8
+    scam_patterns: 0.75
+```
+
+**Discord Configuration:**
+```yaml
+discord:
+  enabled: true
+  api_credentials:
+    bot_token: ${DISCORD_BOT_TOKEN}
+    client_id: ${DISCORD_CLIENT_ID}
+    client_secret: ${DISCORD_CLIENT_SECRET}
+  rate_limits:
+    profile_scans_per_hour: 150
+    content_analyses_per_hour: 600
+    api_requests_per_minute: 50
+  risk_thresholds:
+    raid_detection: 0.8
+    harassment_patterns: 0.7
+    malicious_bots: 0.85
+    toxicity_levels: 0.6
+```
+
+### src\social_protection\controllers\social_protection_controller.py(MODIFY)
+
+References: 
+
+- src\social_protection\types.py(MODIFY)
+
+Update the `_is_valid_profile_url()` method to include validation for Telegram and Discord URLs. Add to the `platform_domains` dictionary:
+
+```python
+PlatformType.TELEGRAM: ["t.me", "telegram.me", "telegram.org"],
+PlatformType.DISCORD: ["discord.com", "discord.gg", "discordapp.com"],
+```
+
+This ensures that the social protection controller can properly validate URLs for Telegram channels/groups and Discord servers/users when initiating scans.
 
 ### requirements.txt(MODIFY)
 
-Add any new dependencies required for social protection functionality. This may include additional libraries for social media API integration, content analysis, or specialized security scanning tools.
+Add dependencies required for Telegram and Discord API integration:
 
-### tests\test_social_protection.py(NEW)
+```
+# Telegram API integration
+pyrogram
+tgcrypto
+telethon
 
-Create comprehensive test suite for social protection functionality. Include unit tests for platform adapters, integration tests for extension data processing, and API endpoint tests. Follow the same testing patterns as existing tests in `e:/projects/linkshield_backend/tests/` directory.
+# Discord API integration
+discord.py
+aiohttp
 
-### tests\test_twitter_adapter.py(NEW)
+# Additional utilities for social media analysis
+python-telegram-bot
+discord-webhook
+```
 
-Create specific test suite for the Twitter protection adapter. Include tests for external link penalty detection, Community Notes trigger analysis, and follower authenticity checks. Mock external API calls and test error handling scenarios.
+These libraries provide comprehensive API access for both platforms, enabling the adapters to fetch profile data, analyze content, and monitor platform-specific metrics.
 
-### tests\test_extension_integration.py(NEW)
+### .env.example(MODIFY)
 
-Create integration tests for browser extension data intake. Test the complete flow from extension payload to database persistence, including authentication, rate limiting, and real-time response generation.
+Add environment variable examples for Telegram and Discord API credentials:
 
-### docs\api\endpoints\social-protection.md(NEW)
+```bash
+# Telegram API Configuration
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_API_ID=your_telegram_api_id
+TELEGRAM_API_HASH=your_telegram_api_hash
 
-Create comprehensive API documentation for social protection endpoints. Include request/response schemas, authentication requirements, rate limiting information, and usage examples for both web dashboard and browser extension integration.
+# Discord API Configuration
+DISCORD_BOT_TOKEN=your_discord_bot_token_here
+DISCORD_CLIENT_ID=your_discord_client_id
+DISCORD_CLIENT_SECRET=your_discord_client_secret
 
-### docs\social_media_shield\implementation-guide.md(NEW)
+# Platform-specific settings
+TELEGRAM_RATE_LIMIT_PER_MINUTE=30
+DISCORD_RATE_LIMIT_PER_MINUTE=50
+```
 
-Create implementation guide for developers working with the social protection system. Include architecture overview, platform adapter development guide, extension integration instructions, and deployment considerations.
+Include comments explaining how to obtain these credentials from Telegram BotFather and Discord Developer Portal.
+
+### src\config\settings.py(MODIFY)
+
+Add configuration settings for Telegram and Discord platforms to the Settings class:
+
+```python
+# Telegram Configuration
+TELEGRAM_BOT_TOKEN: Optional[str] = None
+TELEGRAM_API_ID: Optional[str] = None
+TELEGRAM_API_HASH: Optional[str] = None
+TELEGRAM_RATE_LIMIT_PER_MINUTE: int = 30
+
+# Discord Configuration
+DISCORD_BOT_TOKEN: Optional[str] = None
+DISCORD_CLIENT_ID: Optional[str] = None
+DISCORD_CLIENT_SECRET: Optional[str] = None
+DISCORD_RATE_LIMIT_PER_MINUTE: int = 50
+```
+
+Add validation methods to ensure required credentials are provided when the respective platforms are enabled. Include proper type hints and default values.
+
+### docs\social_media_shield\telegram.md(NEW)
+
+References: 
+
+- docs\social_media_shield\twitter.md
+
+Create comprehensive documentation for Telegram social protection features including:
+
+**Overview:**
+- Telegram platform protection capabilities
+- Supported analysis types and features
+- Integration with LinkShield ecosystem
+
+**Setup and Configuration:**
+- Telegram Bot API setup instructions
+- Required credentials and permissions
+- Rate limiting and API quotas
+
+**Protection Features:**
+- Profile and channel analysis
+- Content safety scanning
+- Bot detection and verification
+- Scam and spam identification
+- Forward chain analysis
+
+**API Endpoints:**
+- Available endpoints for Telegram analysis
+- Request/response examples
+- Error handling and status codes
+
+**Best Practices:**
+- Optimal scanning strategies
+- Privacy and compliance considerations
+- Performance optimization tips
+
+Include code examples, troubleshooting guides, and integration patterns.
+
+### docs\social_media_shield\discord.md(NEW)
+
+References: 
+
+- docs\social_media_shield\twitter.md
+
+Create comprehensive documentation for Discord social protection features including:
+
+**Overview:**
+- Discord platform protection capabilities
+- Server and user analysis features
+- Community safety and moderation tools
+
+**Setup and Configuration:**
+- Discord Bot setup and permissions
+- OAuth2 application configuration
+- Required scopes and intents
+
+**Protection Features:**
+- User profile and behavior analysis
+- Server health and safety assessment
+- Content moderation and filtering
+- Raid and harassment detection
+- Bot and automation analysis
+
+**API Endpoints:**
+- Available endpoints for Discord analysis
+- Request/response examples
+- Webhook integration options
+
+**Community Safety:**
+- Toxicity detection algorithms
+- Moderation recommendation system
+- Crisis response procedures
+- Privacy and data protection
+
+**Integration Examples:**
+- Bot integration patterns
+- Webhook configuration
+- Real-time monitoring setup
+
+Include detailed examples, security considerations, and compliance guidelines.
+
+### src\alembic\versions\009_add_telegram_discord_support.py(NEW)
+
+References: 
+
+- src\alembic\versions\007_add_social_protection_models.py
+- src\models\social_protection.py
+
+Create Alembic migration to update the database schema for Telegram and Discord support:
+
+**Update PlatformType enum:**
+- Add 'telegram' and 'discord' values to the platform_type enum in the database
+- Ensure existing data remains intact
+
+**Update existing tables:**
+- Modify any tables that reference platform types to support the new values
+- Update constraints and indexes as needed
+
+**Add platform-specific columns:**
+- Add any Telegram/Discord-specific fields to relevant tables
+- Include proper data types and constraints
+
+**Migration structure:**
+```python
+def upgrade():
+    # Add new platform types to enum
+    op.execute("ALTER TYPE platformtype ADD VALUE 'telegram'")
+    op.execute("ALTER TYPE platformtype ADD VALUE 'discord'")
+    
+    # Update any platform-specific configurations
+    # Add indexes for new platform types
+    
+def downgrade():
+    # Remove new platform types (with data cleanup)
+    # Restore previous schema state
+```
+
+Include proper error handling and data migration procedures.

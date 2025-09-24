@@ -81,6 +81,42 @@ from .assessment_models import (
     AssessmentHistory
 )
 
+# Telegram platform models
+from .telegram_models import (
+    TelegramEntityType,
+    TelegramChannelType,
+    TelegramMessageType,
+    TelegramProfileData,
+    TelegramMessageData,
+    TelegramRiskFactors,
+    TelegramAnalysisRequest,
+    TelegramAnalysisResponse,
+    TelegramContentAnalysisRequest,
+    TelegramContentAnalysisResponse,
+    TelegramBotAnalysis,
+    TelegramChannelMetrics
+)
+
+# Discord platform models
+from .discord_models import (
+    DiscordEntityType,
+    DiscordChannelType,
+    DiscordServerFeature,
+    DiscordVerificationLevel,
+    DiscordContentFilterLevel,
+    DiscordProfileData,
+    DiscordMessageData,
+    DiscordRiskFactors,
+    DiscordAnalysisRequest,
+    DiscordAnalysisResponse,
+    DiscordServerAnalysis,
+    DiscordBotAnalysis,
+    DiscordContentAnalysisRequest,
+    DiscordContentAnalysisResponse,
+    DiscordRaidDetection,
+    DiscordCommunityMetrics
+)
+
 __all__ = [
     # Profile scanning
     "ProfileVerificationStatus",
@@ -145,5 +181,37 @@ __all__ = [
     "CrisisIndicator",
     "CrisisAssessment",
     "ComprehensiveAssessment",
-    "AssessmentHistory"
+    "AssessmentHistory",
+    
+    # Telegram platform models
+    "TelegramEntityType",
+    "TelegramChannelType",
+    "TelegramMessageType",
+    "TelegramProfileData",
+    "TelegramMessageData",
+    "TelegramRiskFactors",
+    "TelegramAnalysisRequest",
+    "TelegramAnalysisResponse",
+    "TelegramContentAnalysisRequest",
+    "TelegramContentAnalysisResponse",
+    "TelegramBotAnalysis",
+    "TelegramChannelMetrics",
+    
+    # Discord platform models
+    "DiscordEntityType",
+    "DiscordChannelType",
+    "DiscordServerFeature",
+    "DiscordVerificationLevel",
+    "DiscordContentFilterLevel",
+    "DiscordProfileData",
+    "DiscordMessageData",
+    "DiscordRiskFactors",
+    "DiscordAnalysisRequest",
+    "DiscordAnalysisResponse",
+    "DiscordServerAnalysis",
+    "DiscordBotAnalysis",
+    "DiscordContentAnalysisRequest",
+    "DiscordContentAnalysisResponse",
+    "DiscordRaidDetection",
+    "DiscordCommunityMetrics"
 ]

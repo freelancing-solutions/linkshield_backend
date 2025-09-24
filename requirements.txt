@@ -67,6 +67,10 @@ pillow
 furl
 tldextract
 
+# Social Platform APIs
+python-telegram-bot
+discord.py
+
 # Security Scanning
 pyopenssl
 certifi

@@ -1,298 +1,193 @@
-## Revised Investigation: Social Media Platform Bots for In-Platform Quick Access
+I have created the following plan after thorough exploration and analysis of the codebase. Follow the below plan verbatim. Trust the files and references. Do not re-verify what's written in the plan. Explore only when absolutely necessary. First implement all the proposed file changes and then I'll review all the changes together at the end.
 
-### **Platform Bot Feasibility Analysis**
+### Observations
 
-**Twitter/X: ✅ EXCELLENT FIT**
-- **Bot Capabilities**: Full DM support, mentions, quick replies
-- **Mobile Experience**: Native Twitter app supports bot interactions
-- **Use Case**: User DMs @LinkShieldBot with post content → instant analysis
-- **Advantage**: No app switching required
+I've thoroughly analyzed the LinkShield backend codebase and understand the comprehensive social protection infrastructure already in place. The system has mature FastAPI architecture with social media scanning, platform adapters, authentication, and database models. The user wants to add bot functionality for Twitter, Telegram, and Discord that provides quick-access (≤3 second) responses using existing analysis capabilities. The current `SocialScanService` performs comprehensive multi-minute scans, so we need a lightweight "quick analysis" path that reuses existing logic with timeouts and caching.
 
-**Facebook: ❌ LIMITED**
-- **Bot Restrictions**: Messenger bots heavily restricted, require business verification
-- **Mobile Limitations**: Poor bot integration in main Facebook app
-- **Alternative**: Facebook Workplace might support bots, but not mainstream users
+### Approach
 
-**Instagram: ❌ NOT VIABLE**
-- **Bot Support**: No meaningful bot API for consumer accounts
-- **Mobile Limitations**: Instagram restricts automated interactions
-- **Alternative**: Could work with Business accounts via Facebook API, but complex
+The implementation will add a new bot layer on top of the existing social protection infrastructure. We'll create platform-specific bot handlers (Twitter, Telegram, Discord) that connect to a unified `QuickAccessBotGateway`. This gateway will use a new `QuickAnalysisService` that wraps existing platform adapters with 3-second timeouts and caching. Bot webhooks will be handled through new FastAPI routes with bot-specific authentication. The design reuses existing models, services, and database infrastructure while adding the minimal components needed for real-time bot interactions.
 
-**LinkedIn: ⚠️ ENTERPRISE-ONLY**
-- **Bot Access**: Limited to approved enterprise applications
-- **Mobile Support**: Poor bot integration in mobile app
-- **Verdict**: Skip for consumer-focused quick access
+### Reasoning
 
-**TikTok: ❌ NOT SUPPORTED**
-- **Bot API**: No public bot framework available
-- **Platform Policy**: Strict against automated interactions
-- **Verdict**: Not feasible for bot integration
+I explored the codebase structure starting with the main application entry point and social protection module. I examined the existing platform adapters, services, controllers, routes, and authentication system to understand integration patterns. I reviewed the data models to understand request/response structures and checked the requirements.txt for available dependencies. This gave me a complete picture of the current architecture and how bot functionality should integrate.
 
-### **Viable Platforms for Quick-Access Bots:**
-- **✅ Twitter/X** - Primary target
-- **✅ Telegram** - Excellent bot support, global reach
-- **✅ Discord** - Great for communities and power users
-- **✅ Slack** - Workplace/team environments
+## Mermaid Diagram
 
----
+sequenceDiagram
+    participant User as Platform User
+    participant Bot as Bot Handler
+    participant Gateway as QuickAccessBotGateway
+    participant QuickService as QuickAnalysisService
+    participant Adapter as Platform Adapter
+    participant DB as Database
 
-## 🤖 Prompt 1: Twitter/X Quick-Access Bot
-
-**CREATE TWITTER BOT FOR IN-PLATFORM SOCIAL PROTECTION**
-
-**Objective:** Build a Twitter bot that allows users to analyze profiles, posts, and content without leaving Twitter app.
-
-**User Workflow Examples:**
-1. **Profile Analysis**: DM `@LinkShieldBot analyze @username` → Get security report
-2. **Post Risk Check**: Quote tweet with `@LinkShieldBot check this` → Instant risk assessment
-3. **Quick Scan**: Mention `@LinkShieldBot scan my profile` → Comprehensive security audit
-
-**Technical Implementation:**
-
-```python
-class TwitterQuickAccessBot:
-    def __init__(self):
-        self.supported_commands = {
-            'analyze': self.handle_profile_analysis,
-            'check': self.handle_content_check,
-            'scan': self.handle_full_scan,
-            'help': self.show_commands
-        }
+    User->>Bot: Send command (DM/mention)
+    Bot->>Bot: Parse command & validate
+    Bot->>Gateway: handle_quick_request(command, user_context)
+    Gateway->>Gateway: classify_request(command)
     
-    async def process_direct_command(self, tweet_text, user_info):
-        """Parse commands from mentions and DMs"""
-        command = self.extract_command(tweet_text)
-        if command in self.supported_commands:
-            return await self.supported_commands[command](tweet_text, user_info)
-```
-
-**Key Features:**
-- **Profile Security Scan**: Analyze any Twitter profile for risks
-- **Content Pre-Check**: Assess tweet drafts before posting
-- **Real-time Monitoring**: Get alerts when followed accounts show risks
-- **Quick Actions**: "Secure this", "Alternative suggestion" buttons
-
-**Mobile-Optimized Responses:**
-- Character-limited clear messages
-- Interactive buttons for next actions
-- Visual risk indicators (🟢🟡🔴)
-- Deep links to full LinkShield dashboard
-
----
-
-## 🤖 Prompt 2: Telegram Quick-Access Bot
-
-**CREATE TELEGRAM BOT FOR MOBILE-FIRST SOCIAL PROTECTION**
-
-**Objective:** Build a Telegram bot that works seamlessly in mobile chats for instant social media analysis.
-
-**User Workflow:**
-1. **Inline Queries**: Type `@LinkShieldBot @username` in any chat → instant analysis
-2. **Channel Monitoring**: Add bot to groups/channels for automatic protection
-3. **Deep Analysis**: Send profile link to bot → detailed security report
-
-**Technical Architecture:**
-
-```python
-class TelegramSocialShieldBot:
-    def __init__(self):
-        self.bot = TeleBot(API_KEY)
-        self.quick_actions = [
-            "🔍 Analyze Profile",
-            "📊 Content Risk Check", 
-            "🛡️ Security Audit",
-            "📈 Algorithm Health"
-        ]
+    alt Profile Analysis
+        Gateway->>QuickService: quick_profile_analysis(username)
+        QuickService->>Adapter: scan_profile(minimal_data, timeout=3s)
+        Adapter-->>QuickService: risk_assessment
+        QuickService->>DB: Cache result
+    else Content Analysis
+        Gateway->>QuickService: quick_content_analysis(content)
+        QuickService->>Adapter: analyze_content(content, timeout=3s)
+        Adapter-->>QuickService: content_risk
+        QuickService->>DB: Cache result
+    end
     
-    def handle_inline_query(self, query):
-        """Process @LinkShieldBot mentions in chats"""
-        if query.query.startswith('@'):
-            return self.analyze_profile_inline(query.query[1:])
-        elif 'http' in query.query:
-            return self.analyze_content_inline(query.query)
-```
-
-**Mobile-First Features:**
-- **Inline Mode**: Works in any chat without switching apps
-- **Custom Keyboards**: Quick action buttons after each analysis
-- **Media Support**: Send screenshots for analysis
-- **Push Notifications**: Real-time protection alerts
-
-**Advanced Capabilities:**
-- **Group Protection**: Monitor entire Telegram groups for shared risks
-- **Scheduled Scans**: Automatic daily profile health checks
-- **Cross-Platform**: Analyze links to other social platforms
-
----
-
-## 🤖 Prompt 3: Central Bot Gateway for Quick-Access
-
-**CREATE UNIFIED BOT GATEWAY FOR MOBILE QUICK-ACCESS**
-
-**Objective:** Build a central system that powers all quick-access bots with consistent features.
-
-**Gateway Architecture:**
-
-```python
-class QuickAccessBotGateway:
-    def __init__(self):
-        self.platforms = {
-            'twitter': TwitterBotHandler(),
-            'telegram': TelegramBotHandler(),
-            'discord': DiscordBotHandler()  # Bonus platform
-        }
-        self.quick_services = {
-            'profile_analyzer': ProfileQuickAnalyzer(),
-            'content_scanner': ContentQuickScanner(),
-            'risk_assessor': InstantRiskAssessor()
-        }
+    QuickService-->>Gateway: analysis_result
+    Gateway->>Gateway: format_platform_response(result, platform)
+    Gateway-->>Bot: formatted_response
+    Bot->>User: Send response (DM/reply)
     
-    async def handle_quick_request(self, platform, user_input, user_context):
-        """Process quick-access requests from any platform"""
-        # Parse input (profile URL, content text, command)
-        request_type = self.classify_request(user_input)
-        
-        # Quick analysis (under 3-second response time)
-        result = await self.quick_services[request_type].analyze(user_input, user_context)
-        
-        # Platform-optimized response
-        return self.platforms[platform].format_quick_response(result)
-```
+    opt Background Deep Analysis
+        Bot->>QuickService: schedule_deep_analysis(scan_id)
+        QuickService->>DB: Create full scan record
+        Note over QuickService: Async full analysis using existing SocialScanService
+    end
 
-**Quick-Analysis Engine:**
+## Proposed File Changes
 
-```python
-class ProfileQuickAnalyzer:
-    async def analyze_twitter_profile(self, username):
-        """60-second comprehensive profile scan"""
-        return {
-            'risk_score': 65,  # 0-100 scale
-            'critical_issues': ['suspicious_followers', 'recent_suspension'],
-            'recommendations': ['enable_2fa', 'review_followers'],
-            'quick_fixes': ['Remove 15 suspicious followers', 'Update bio']
-        }
+### src\config\settings.py(MODIFY)
 
-class ContentQuickScanner:
-    async def analyze_post_content(self, text, platform):
-        """Instant content risk assessment"""
-        return {
-            'platform_penalties': ['external_link_penalty', 'spam_trigger'],
-            'suggested_edits': ['Use LinkShield verified link', 'Add context'],
-            'posting_risk': 'medium'  # low/medium/high
-        }
-```
+Add new environment variables for bot configuration including `TWITTER_BOT_BEARER_TOKEN`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `QUICK_ANALYSIS_TIMEOUT_SECONDS`, `BOT_RATE_LIMIT_PER_MINUTE`, and `BOT_SERVICE_ACCOUNT_ID`. Update the `Settings` class to include these new configuration options with appropriate defaults and validation.
 
-**Mobile Response Formatter:**
+### src\bots(NEW)
 
-```python
-class MobileResponseBuilder:
-    def build_twitter_response(self, analysis):
-        """Twitter-optimized response for mobile"""
-        if analysis['risk_score'] > 70:
-            return f"🚨 High Risk ({analysis['risk_score']}/100)\n" \
-                   f"Issues: {', '.join(analysis['critical_issues'][:2])}\n" \
-                   f"Quick fix: {analysis['quick_fixes'][0]}"
-    
-    def build_telegram_response(self, analysis):
-        """Telegram-rich response with buttons"""
-        return {
-            'text': f"🛡️ Security Analysis\nScore: {analysis['risk_score']}/100",
-            'reply_markup': self.build_quick_action_buttons(analysis)
-        }
-```
+Create new directory for bot-related modules and services.
 
----
+### src\bots\__init__.py(NEW)
 
-## 🤖 Prompt 4: Platform-Specific Quick Commands
+Initialize the bots package with exports for the main bot components including `QuickAccessBotGateway`, `TwitterBotHandler`, `TelegramBotHandler`, and `DiscordBotHandler`.
 
-**CREATE STANDARDIZED QUICK-COMMAND SYSTEM**
+### src\bots\gateway.py(NEW)
 
-**Objective:** Define consistent commands across all bot platforms for unified user experience.
+References: 
 
-**Universal Command Set:**
+- src\social_protection\services\social_scan_service.py
+- src\social_protection\platform_adapters\base_adapter.py
 
-```python
-QUICK_ACCESS_COMMANDS = {
-    # Profile Analysis
-    'analyze @username': 'Quick profile security scan',
-    'scan me': 'Analyze your own profile',
-    'audit @target': 'Deep security audit',
-    
-    # Content Checking
-    'check this': 'Analyze quoted/replied content',
-    'preview [text]': 'Risk assessment before posting',
-    'link safety [url]': 'Check link platform safety',
-    
-    # Quick Protection
-    'protect me': 'Enable real-time monitoring',
-    'alerts on': 'Turn on risk notifications',
-    'report @user': 'Report suspicious account',
-    
-    # Dashboard Access
-    'dashboard': 'Get LinkShield dashboard link',
-    'upgrade': 'Premium features information'
-}
-```
+Implement the `QuickAccessBotGateway` class that serves as the central coordinator for all bot platforms. This class will handle command parsing, route requests to the appropriate quick analysis service, and format responses for each platform. Include methods for `handle_quick_request()`, `classify_request()`, and `format_platform_response()`. The gateway will integrate with the existing `SocialScanService` and platform adapters but with strict 3-second timeouts.
 
-**Platform-Specific Adaptations:**
+### src\bots\handlers(NEW)
 
-```python
-class CommandAdapter:
-    def adapt_for_twitter(self, command):
-        """Twitter character-limited commands"""
-        adaptations = {
-            'analyze @username': 'analyze @username',
-            'scan me': 'scan me', 
-            'check this': 'check this',  # Works with quote tweets
-            'dashboard': 'get dashboard'
-        }
-        return adaptations.get(command, command)
-    
-    def adapt_for_telegram(self, command):
-        """Telegram slash command style"""
-        return f"/{command.replace(' ', '_')}"
-```
+Create directory for platform-specific bot handlers.
 
-**Quick-Response Templates:**
+### src\bots\handlers\__init__.py(NEW)
 
-```python
-QUICK_RESPONSE_TEMPLATES = {
-    'profile_analysis': {
-        'high_risk': "🚨 HIGH RISK: {score}/100\nIssues: {issues}\nAction: {action}",
-        'medium_risk': "⚠️ MEDIUM RISK: {score}/100\nWatch: {issues}\nTip: {tip}",
-        'low_risk': "✅ LOW RISK: {score}/100\nStatus: Good\nMaintain: {advice}"
-    },
-    'content_check': {
-        'safe': "✅ SAFE TO POST\nPlatforms: {platforms}\nReach: Good",
-        'risky': "⚠️ EDIT RECOMMENDED\nIssues: {issues}\nFix: {fix}",
-        'dangerous': "🚨 DO NOT POST\nViolations: {violations}\nAlternative: {alt}"
-    }
-}
-```
+Initialize handlers package with exports for all bot handler classes.
 
----
+### src\bots\handlers\twitter_bot_handler.py(NEW)
 
-## 🎯 Implementation Priority:
+References: 
 
-**Phase 1 (Weeks 1-2): Twitter Quick-Access Bot**
-- Mobile-optimized command processing
-- Profile and content analysis
-- Quick-response system
+- src\bots\gateway.py(NEW)
 
-**Phase 2 (Weeks 3-4): Telegram Bot Integration**
-- Inline query support
-- Group/channel monitoring
-- Cross-platform analysis
+Implement `TwitterBotHandler` class that handles Twitter webhook events, parses DMs and mentions, extracts commands, and sends responses via Twitter API. Include methods for `process_webhook()`, `parse_dm_command()`, `parse_mention_command()`, `send_dm_response()`, and `send_mention_reply()`. The handler will validate Twitter webhook signatures and handle rate limiting according to Twitter's API limits.
 
-**Phase 3 (Weeks 5-6): Unified Gateway & Features**
-- Consistent command experience
-- Advanced quick-analysis engine
-- User preference synchronization
+### src\bots\handlers\telegram_bot_handler.py(NEW)
 
-**SKIPPED PLATFORMS:**
-- ❌ Facebook (poor bot support)
-- ❌ Instagram (no bot API)  
-- ❌ LinkedIn (enterprise-only)
-- ❌ TikTok (no bot framework)
+References: 
 
-This approach focuses on platforms where users can genuinely get quick, in-app access to LinkShield features without interrupting their mobile social media experience.
+- src\bots\gateway.py(NEW)
+
+Implement `TelegramBotHandler` class that processes Telegram webhook updates, handles both direct messages and inline queries, parses bot commands, and sends responses. Include methods for `process_webhook()`, `handle_message()`, `handle_inline_query()`, `send_message()`, and `answer_inline_query()`. Support Telegram's custom keyboards for quick actions and handle file uploads for content analysis.
+
+### src\bots\handlers\discord_bot_handler.py(NEW)
+
+References: 
+
+- src\bots\gateway.py(NEW)
+
+Implement `DiscordBotHandler` class that processes Discord webhook interactions, handles slash commands and direct messages, and sends responses with Discord's embed formatting. Include methods for `process_webhook()`, `handle_slash_command()`, `handle_dm()`, `send_response()`, and `create_embed_response()`. Support Discord's interaction responses and follow-up messages for longer analyses.
+
+### src\services\quick_analysis_service.py(NEW)
+
+References: 
+
+- src\social_protection\services\social_scan_service.py
+- src\social_protection\platform_adapters\twitter_adapter.py
+- src\social_protection\platform_adapters\base_adapter.py
+
+Create `QuickAnalysisService` class that provides fast, lightweight analysis by wrapping existing social protection services with strict timeouts and caching. Implement methods for `quick_profile_analysis()`, `quick_content_analysis()`, and `quick_risk_assessment()` that reuse logic from `SocialScanService` and platform adapters but with 3-second limits. Include caching mechanisms to store recent analysis results and fallback responses for timeout scenarios.
+
+### src\models\bot.py(NEW)
+
+References: 
+
+- src\models\user.py
+
+Create database models for bot operations including `BotCommand` for logging bot interactions, `BotUser` for mapping external platform users to LinkShield users, and `BotSession` for tracking conversation state. Include fields for platform, external_user_id, command_type, response_time, and success status. These models will help with analytics, debugging, and user mapping.
+
+### src\routes\bot_webhooks.py(NEW)
+
+References: 
+
+- src\routes\social_protection.py
+- src\bots\handlers\twitter_bot_handler.py(NEW)
+- src\bots\handlers\telegram_bot_handler.py(NEW)
+- src\bots\handlers\discord_bot_handler.py(NEW)
+
+Create FastAPI router for bot webhook endpoints including `/api/v1/bots/twitter/webhook`, `/api/v1/bots/telegram/webhook`, and `/api/v1/bots/discord/webhook`. Each endpoint will validate platform-specific webhook signatures, parse incoming requests, and delegate to the appropriate bot handler. Include proper error handling, rate limiting, and logging for all webhook interactions.
+
+### src\controllers\bot_controller.py(NEW)
+
+References: 
+
+- src\controllers\base_controller.py
+- src\social_protection\controllers\social_protection_controller.py
+
+Implement `BotController` class that handles business logic for bot operations including user mapping, command validation, rate limiting, and analytics. Include methods for `map_external_user()`, `validate_bot_command()`, `log_bot_interaction()`, and `get_bot_analytics()`. The controller will integrate with existing authentication and rate limiting systems while providing bot-specific functionality.
+
+### src\controllers\depends.py(MODIFY)
+
+References: 
+
+- src\controllers\bot_controller.py(NEW)
+
+Add dependency injection function `get_bot_controller()` that creates and returns a `BotController` instance with all required services. Follow the same pattern as `get_social_protection_controller()` to ensure consistent dependency management across the application.
+
+### src\authentication\dependencies.py(MODIFY)
+
+References: 
+
+- src\models\user.py
+
+Add new authentication dependency `get_bot_service_user()` that returns a service account user for bot operations. This allows bots to perform analysis without requiring individual user authentication while still maintaining audit trails. Include validation for bot-specific tokens and rate limiting.
+
+### app.py(MODIFY)
+
+References: 
+
+- src\routes\bot_webhooks.py(NEW)
+
+Import and include the new bot webhooks router in the FastAPI application. Add `from src.routes.bot_webhooks import router as bot_webhooks_router` and `app.include_router(bot_webhooks_router)` to register the bot endpoints with the main application.
+
+### requirements.txt(MODIFY)
+
+Add new dependencies for bot functionality including `python-telegram-bot` for Telegram bot API, `tweepy` for Twitter API v2 integration, `discord.py` for Discord bot functionality, and `cachetools` for response caching (if not already present). These libraries will handle platform-specific API interactions and webhook processing.
+
+### .env.example(MODIFY)
+
+Add example environment variables for bot configuration including `TWITTER_BOT_BEARER_TOKEN=your_twitter_bearer_token`, `TELEGRAM_BOT_TOKEN=your_telegram_bot_token`, `DISCORD_BOT_TOKEN=your_discord_bot_token`, `QUICK_ANALYSIS_TIMEOUT_SECONDS=3`, `BOT_RATE_LIMIT_PER_MINUTE=60`, and `BOT_SERVICE_ACCOUNT_ID=bot_service_account_uuid`. Include comments explaining how to obtain these tokens from each platform.
+
+### src\alembic\versions\008_add_bot_models.py(NEW)
+
+References: 
+
+- src\models\bot.py(NEW)
+- src\alembic\versions\007_add_social_protection_models.py
+
+Create Alembic migration to add bot-related database tables including `bot_commands`, `bot_users`, and `bot_sessions`. The migration will create tables with appropriate indexes, foreign key constraints, and follow the same patterns as existing social protection models. Include proper rollback functionality for the migration.
+
+### docs\social_media_shield\bots.md(NEW)
+
+References: 
+
+- docs\social_media_shield\twitter.md
+
+Create comprehensive documentation for the bot functionality including setup instructions for each platform, webhook configuration, command reference, rate limiting details, and troubleshooting guide. Include examples of bot interactions and integration with existing LinkShield features. Document the architecture and how bots integrate with the social protection system.
