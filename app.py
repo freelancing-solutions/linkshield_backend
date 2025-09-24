@@ -37,6 +37,7 @@ from src.routes.report import router as report_router
 from src.routes.ai_analysis import router as ai_analysis_router
 from src.routes.admin import router as admin_router
 from src.routes.dashboard import router as dashboard_router
+from src.routes.social_protection import router as social_protection_router
 # from src.routes.tasks import router as tasks_router
 
 # Initialize settings
@@ -122,6 +123,7 @@ app.include_router(report_router)
 app.include_router(ai_analysis_router)
 app.include_router(admin_router)
 app.include_router(dashboard_router)
+app.include_router(social_protection_router)
 # app.include_router(tasks_router)
 
 

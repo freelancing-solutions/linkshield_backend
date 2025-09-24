@@ -19,6 +19,35 @@ class DashboardOverviewResponse(BaseModel):
     recent_projects: List[Dict[str, AnyType]]
     recent_alerts: List[Dict[str, AnyType]]
     subscription_status: Dict[str, AnyType]
+    social_protection: Optional[Dict[str, AnyType]] = None  # Social protection overview data
+
+
+class SocialProtectionOverviewResponse(BaseModel):
+    """Social protection overview response model."""
+    total_social_scans: int
+    active_monitoring: int
+    risk_assessments_today: int
+    high_risk_alerts: int
+    platform_coverage: Dict[str, int]  # Platform -> scan count
+    recent_assessments: List[Dict[str, AnyType]]
+    protection_health_score: float  # 0-100 overall protection health
+    
+    class Config:
+        from_attributes = True
+
+
+class ProtectionHealthResponse(BaseModel):
+    """Protection health metrics response model."""
+    overall_score: float  # 0-100 combined protection score
+    url_safety_score: float  # Existing URL safety metrics
+    social_protection_score: float  # New social media protection metrics
+    risk_breakdown: Dict[str, float]  # Risk category -> score
+    trending: str  # "improving", "stable", "declining"
+    last_updated: datetime
+    recommendations: List[str]  # Action items for improvement
+    
+    class Config:
+        from_attributes = True
 
 
 class ProjectResponse(BaseModel):

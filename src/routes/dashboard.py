@@ -28,6 +28,8 @@ from src.controllers.dashboard_models import (
     AlertUpdateRequest,
     AnalyticsResponse,
     ActivityLogResponse,
+    SocialProtectionOverviewResponse,
+    ProtectionHealthResponse,
 )
 
 from src.controllers.depends import get_dashboard_controller
@@ -488,4 +490,45 @@ async def resolve_alert(
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="Alert resolution not yet implemented"
+    )
+
+
+# ------------------------------------------------------------------
+# Social Protection Dashboard Endpoints
+# ------------------------------------------------------------------
+@router.get(
+    "/social-protection/overview",
+    response_model=SocialProtectionOverviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get social protection overview",
+    description="Get comprehensive social protection overview including scans, assessments, and metrics",
+)
+async def get_social_protection_overview(
+    project_id: uuid.UUID = Query(None, description="Optional project ID to filter by"),
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> SocialProtectionOverviewResponse:
+    """Get social protection overview for the user or specific project."""
+    return await controller.get_social_protection_overview(
+        user=current_user,
+        project_id=project_id,
+    )
+
+
+@router.get(
+    "/protection-health",
+    response_model=ProtectionHealthResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get protection health metrics",
+    description="Get comprehensive protection health combining URL safety and social protection",
+)
+async def get_protection_health(
+    project_id: uuid.UUID = Query(None, description="Optional project ID to filter by"),
+    current_user: User = Depends(get_current_user),
+    controller: DashboardController = Depends(get_dashboard_controller),
+) -> ProtectionHealthResponse:
+    """Get comprehensive protection health metrics."""
+    return await controller.get_protection_health(
+        user=current_user,
+        project_id=project_id,
     )

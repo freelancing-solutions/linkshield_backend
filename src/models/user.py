@@ -118,6 +118,8 @@ class User(Base):
     project_alerts = relationship("ProjectAlert", back_populates="user", cascade="all, delete-orphan")
     alert_instances = relationship("AlertInstance", back_populates="user", cascade="all, delete-orphan")
     activity_logs = relationship("ActivityLog", back_populates="user", cascade="all, delete-orphan")
+    social_profile_scans = relationship("SocialProfileScan", back_populates="user", cascade="all, delete-orphan")
+    content_risk_assessments = relationship("ContentRiskAssessment", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"

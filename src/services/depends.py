@@ -9,6 +9,7 @@ from src.services.ai_analysis_service import AIAnalysisService
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 from src.services.url_analysis_service import URLAnalysisService
+from src.social_protection.services import ExtensionDataProcessor, SocialScanService
 from src.models import User
 
 async def get_email_service():
@@ -70,3 +71,15 @@ async def get_url_analysis_service(ai_service: AIService = Depends(get_ai_servic
     Get URL analysis service instance (pure business logic, no database dependency).
     """
     return URLAnalysisService(ai_service=ai_service)
+
+async def get_extension_data_processor() -> ExtensionDataProcessor:
+    """
+    Get ExtensionDataProcessor instance for processing browser extension data.
+    """
+    return ExtensionDataProcessor()
+
+async def get_social_scan_service(ai_service: AIService = Depends(get_ai_service)) -> SocialScanService:
+    """
+    Get SocialScanService instance for social media profile scanning.
+    """
+    return SocialScanService(ai_service=ai_service)

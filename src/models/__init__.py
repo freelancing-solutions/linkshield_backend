@@ -39,6 +39,9 @@ from .project import (
 
 # Activity log models
 from .activity_log import ActivityLog, ActivityLogManager
+
+# Social protection models
+from .social_protection import SocialProfileScan, ContentRiskAssessment
 __all__ = [
     # User models
     "User",
@@ -92,4 +95,8 @@ __all__ = [
     # Activity log models
     "ActivityLog",
     "ActivityLogManager",
+    
+    # Social protection models
+    "SocialProfileScan",
+    "ContentRiskAssessment",
 ]

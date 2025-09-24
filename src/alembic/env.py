@@ -9,7 +9,7 @@ from alembic import context
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # import every model package so SQLModel.metadata is complete
-from src.models import user, url_check, report, subscription, ai_analysis  # noqa: F401
+from src.models import user, url_check, report, subscription, ai_analysis, social_protection  # noqa: F401
 from src.config.database import Base   # <- single Base you used in metadata
 from src.config.settings import Settings
 # ------------- Alembic config -------------

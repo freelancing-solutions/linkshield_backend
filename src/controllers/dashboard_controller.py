@@ -31,6 +31,8 @@ from src.controllers.dashboard_models import (
     AlertUpdateRequest,
     AnalyticsResponse,
     ActivityLogResponse,
+    SocialProtectionOverviewResponse,
+    ProtectionHealthResponse,
 )
 from src.models.project import Project, ProjectMember, MonitoringConfig, ProjectAlert, ProjectRole, AlertInstance, AlertType, AlertChannel
 from src.models.subscription import SubscriptionPlan, UserSubscription
@@ -198,6 +200,13 @@ class DashboardController(BaseController):
                 # Get monitoring summary
                 monitoring_summary = await self._get_monitoring_summary(projects, session)
                 
+                # Get social protection overview (optional)
+                social_protection = None
+                try:
+                    social_protection = await self.get_social_protection_overview(user=user)
+                except Exception as e:
+                    self.logger.warning(f"Failed to get social protection overview: {e}")
+                
                 return DashboardOverviewResponse(
                     total_projects=total_projects,
                     active_projects=active_projects,
@@ -206,6 +215,7 @@ class DashboardController(BaseController):
                     usage_stats=usage_stats,
                     recent_activity=recent_activity,
                     monitoring_summary=monitoring_summary,
+                    social_protection=social_protection,
                 )
                 
         except Exception as e:
@@ -1357,3 +1367,320 @@ class DashboardController(BaseController):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve activity logs"
             )
+
+    # --------------------------------------------------------------
+    # Social Protection Methods
+    # --------------------------------------------------------------
+    async def get_social_protection_overview(
+        self,
+        *,
+        user: User,
+        project_id: Optional[uuid.UUID] = None,
+    ) -> SocialProtectionOverviewResponse:
+        """
+        Get social protection overview for the user or specific project.
+        
+        Args:
+            user: Current authenticated user
+            project_id: Optional project ID to filter by
+            
+        Returns:
+            SocialProtectionOverviewResponse with social protection metrics
+        """
+        try:
+            async with self.get_db_session() as session:
+                from src.models.social_protection import SocialProfileScan, ContentRiskAssessment
+                
+                # Build base query for user's data
+                scan_stmt = select(SocialProfileScan).where(SocialProfileScan.user_id == user.id)
+                assessment_stmt = select(ContentRiskAssessment).where(ContentRiskAssessment.user_id == user.id)
+                
+                # Filter by project if specified
+                if project_id:
+                    scan_stmt = scan_stmt.where(SocialProfileScan.project_id == project_id)
+                    assessment_stmt = assessment_stmt.where(ContentRiskAssessment.project_id == project_id)
+                
+                # Get social scans
+                scan_result = await session.execute(scan_stmt)
+                scans = scan_result.scalars().all()
+                
+                # Get risk assessments
+                assessment_result = await session.execute(assessment_stmt)
+                assessments = assessment_result.scalars().all()
+                
+                # Calculate metrics
+                total_social_scans = len(scans)
+                active_monitoring = len([s for s in scans if s.status == "IN_PROGRESS"])
+                
+                # Risk assessments from today
+                today = datetime.utcnow().date()
+                risk_assessments_today = len([
+                    a for a in assessments 
+                    if a.created_at.date() == today
+                ])
+                
+                # High risk alerts
+                high_risk_alerts = len([
+                    a for a in assessments 
+                    if a.risk_level in ["HIGH", "CRITICAL"]
+                ])
+                
+                # Platform coverage
+                platform_coverage = {}
+                for scan in scans:
+                    platform = scan.platform.value
+                    platform_coverage[platform] = platform_coverage.get(platform, 0) + 1
+                
+                # Recent assessments (last 10)
+                recent_assessments = sorted(assessments, key=lambda x: x.created_at, reverse=True)[:10]
+                recent_assessments_data = [
+                    {
+                        "id": str(a.id),
+                        "content_type": a.content_type.value,
+                        "risk_level": a.risk_level.value if a.risk_level else "UNKNOWN",
+                        "confidence_score": a.confidence_score,
+                        "created_at": a.created_at.isoformat(),
+                    }
+                    for a in recent_assessments
+                ]
+                
+                # Calculate protection health score (0-100)
+                protection_health_score = self._calculate_protection_health_score(scans, assessments)
+                
+                return SocialProtectionOverviewResponse(
+                    total_social_scans=total_social_scans,
+                    active_monitoring=active_monitoring,
+                    risk_assessments_today=risk_assessments_today,
+                    high_risk_alerts=high_risk_alerts,
+                    platform_coverage=platform_coverage,
+                    recent_assessments=recent_assessments_data,
+                    protection_health_score=protection_health_score,
+                )
+                
+        except Exception as e:
+            self.logger.error(f"Error getting social protection overview: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve social protection overview"
+            )
+
+    async def get_protection_health(
+        self,
+        *,
+        user: User,
+        project_id: Optional[uuid.UUID] = None,
+    ) -> ProtectionHealthResponse:
+        """
+        Get comprehensive protection health metrics combining URL safety and social protection.
+        
+        Args:
+            user: Current authenticated user
+            project_id: Optional project ID to filter by
+            
+        Returns:
+            ProtectionHealthResponse with combined protection metrics
+        """
+        try:
+            async with self.get_db_session() as session:
+                from src.models.social_protection import SocialProfileScan, ContentRiskAssessment
+                from src.models.url_check import URLCheck
+                
+                # Get URL safety data
+                url_stmt = select(URLCheck).where(URLCheck.user_id == user.id)
+                if project_id:
+                    url_stmt = url_stmt.where(URLCheck.project_id == project_id)
+                
+                url_result = await session.execute(url_stmt)
+                url_checks = url_result.scalars().all()
+                
+                # Get social protection data
+                scan_stmt = select(SocialProfileScan).where(SocialProfileScan.user_id == user.id)
+                assessment_stmt = select(ContentRiskAssessment).where(ContentRiskAssessment.user_id == user.id)
+                
+                if project_id:
+                    scan_stmt = scan_stmt.where(SocialProfileScan.project_id == project_id)
+                    assessment_stmt = assessment_stmt.where(ContentRiskAssessment.project_id == project_id)
+                
+                scan_result = await session.execute(scan_stmt)
+                scans = scan_result.scalars().all()
+                
+                assessment_result = await session.execute(assessment_stmt)
+                assessments = assessment_result.scalars().all()
+                
+                # Calculate URL safety score
+                url_safety_score = self._calculate_url_safety_score(url_checks)
+                
+                # Calculate social protection score
+                social_protection_score = self._calculate_protection_health_score(scans, assessments)
+                
+                # Calculate overall score (weighted average)
+                overall_score = (url_safety_score * 0.6) + (social_protection_score * 0.4)
+                
+                # Risk breakdown
+                risk_breakdown = {
+                    "url_threats": self._calculate_url_threat_score(url_checks),
+                    "social_risks": self._calculate_social_risk_score(assessments),
+                    "reputation_health": self._calculate_reputation_score(scans, assessments),
+                    "monitoring_coverage": self._calculate_coverage_score(scans, url_checks),
+                }
+                
+                # Determine trending
+                trending = self._calculate_trending(user, session)
+                
+                # Generate recommendations
+                recommendations = self._generate_protection_recommendations(
+                    url_checks, scans, assessments, overall_score
+                )
+                
+                return ProtectionHealthResponse(
+                    overall_score=round(overall_score, 2),
+                    url_safety_score=round(url_safety_score, 2),
+                    social_protection_score=round(social_protection_score, 2),
+                    risk_breakdown={k: round(v, 2) for k, v in risk_breakdown.items()},
+                    trending=trending,
+                    last_updated=datetime.utcnow(),
+                    recommendations=recommendations,
+                )
+                
+        except Exception as e:
+            self.logger.error(f"Error getting protection health: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve protection health"
+            )
+
+    def _calculate_protection_health_score(self, scans, assessments) -> float:
+        """Calculate protection health score based on scans and assessments."""
+        if not scans and not assessments:
+            return 100.0  # No data means no known risks
+        
+        # Base score
+        score = 100.0
+        
+        # Deduct points for high-risk assessments
+        high_risk_count = len([a for a in assessments if a.risk_level in ["HIGH", "CRITICAL"]])
+        score -= min(high_risk_count * 10, 50)  # Max 50 point deduction
+        
+        # Deduct points for failed scans
+        failed_scans = len([s for s in scans if s.status == "FAILED"])
+        score -= min(failed_scans * 5, 25)  # Max 25 point deduction
+        
+        # Bonus for recent successful scans
+        recent_successful = len([
+            s for s in scans 
+            if s.status == "COMPLETED" and 
+            (datetime.utcnow() - s.completed_at).days <= 7
+        ])
+        score += min(recent_successful * 2, 10)  # Max 10 point bonus
+        
+        return max(0.0, min(100.0, score))
+
+    def _calculate_url_safety_score(self, url_checks) -> float:
+        """Calculate URL safety score based on URL checks."""
+        if not url_checks:
+            return 100.0
+        
+        # Simple scoring based on threat detection
+        total_checks = len(url_checks)
+        threat_checks = len([u for u in url_checks if u.is_threat])
+        
+        if total_checks == 0:
+            return 100.0
+        
+        safety_ratio = (total_checks - threat_checks) / total_checks
+        return safety_ratio * 100.0
+
+    def _calculate_url_threat_score(self, url_checks) -> float:
+        """Calculate URL threat score based on detected threats."""
+        if not url_checks:
+            return 100.0  # No checks means no known threats
+        
+        # Calculate threat ratio
+        total_checks = len(url_checks)
+        threat_checks = len([u for u in url_checks if u.is_threat])
+        
+        if total_checks == 0:
+            return 100.0
+        
+        # Invert the ratio so higher threats = lower score
+        threat_ratio = threat_checks / total_checks
+        return max(0.0, 100.0 - (threat_ratio * 100))
+
+    def _calculate_social_risk_score(self, assessments) -> float:
+        """Calculate social risk score."""
+        if not assessments:
+            return 100.0
+        
+        risk_weights = {"CRITICAL": 25, "HIGH": 15, "MEDIUM": 5, "LOW": 1, "VERY_LOW": 0}
+        total_risk = sum(risk_weights.get(a.risk_level.value if a.risk_level else "LOW", 1) for a in assessments)
+        max_possible_risk = len(assessments) * 25
+        
+        if max_possible_risk == 0:
+            return 100.0
+        
+        return max(0.0, 100.0 - (total_risk / max_possible_risk * 100))
+
+    def _calculate_reputation_score(self, scans, assessments) -> float:
+        """Calculate reputation health score."""
+        # Simplified reputation scoring
+        if not scans and not assessments:
+            return 100.0
+        
+        # Base on recent activity and risk levels
+        recent_high_risk = len([
+            a for a in assessments 
+            if a.risk_level in ["HIGH", "CRITICAL"] and 
+            (datetime.utcnow() - a.created_at).days <= 30
+        ])
+        
+        return max(0.0, 100.0 - (recent_high_risk * 10))
+
+    def _calculate_coverage_score(self, scans, url_checks) -> float:
+        """Calculate monitoring coverage score."""
+        # Simple coverage based on activity
+        total_activity = len(scans) + len(url_checks)
+        if total_activity == 0:
+            return 0.0
+        
+        # Score based on recent activity
+        recent_activity = len([
+            s for s in scans 
+            if (datetime.utcnow() - s.created_at).days <= 30
+        ]) + len([
+            u for u in url_checks 
+            if (datetime.utcnow() - u.created_at).days <= 30
+        ])
+        
+        return min(100.0, (recent_activity / max(1, total_activity)) * 100)
+
+    def _calculate_trending(self, user, session) -> str:
+        """Calculate trending direction for protection health."""
+        # Simplified trending calculation
+        # In a real implementation, this would compare recent metrics to historical data
+        return "stable"
+
+    def _generate_protection_recommendations(self, url_checks, scans, assessments, overall_score) -> List[str]:
+        """Generate actionable recommendations based on protection data."""
+        recommendations = []
+        
+        if overall_score < 70:
+            recommendations.append("Your protection score is below optimal. Consider increasing monitoring frequency.")
+        
+        if not scans:
+            recommendations.append("Enable social media monitoring to protect your online reputation.")
+        
+        high_risk_assessments = [a for a in assessments if a.risk_level in ["HIGH", "CRITICAL"]]
+        if high_risk_assessments:
+            recommendations.append(f"Address {len(high_risk_assessments)} high-risk content issues immediately.")
+        
+        if not url_checks:
+            recommendations.append("Start monitoring your website URLs for security threats.")
+        
+        failed_scans = [s for s in scans if s.status == "FAILED"]
+        if failed_scans:
+            recommendations.append("Review and retry failed social media scans.")
+        
+        if len(recommendations) == 0:
+            recommendations.append("Your protection setup looks good! Continue regular monitoring.")
+        
+        return recommendations[:5]  # Limit to 5 recommendations
