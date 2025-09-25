@@ -2,460 +2,192 @@ I have created the following plan after thorough exploration and analysis of the
 
 ### Observations
 
-I can see that the current social protection implementation is missing Telegram and Discord platform adapters. The PlatformType enum in types.py only includes TWITTER, META_FACEBOOK, META_INSTAGRAM, TIKTOK, and LINKEDIN - but not TELEGRAM and DISCORD. The platform_adapters directory has adapters for Twitter, Meta, TikTok, and LinkedIn, but is missing Telegram and Discord adapters. The user wants complete social media protection services and endpoints for these missing platforms.
+I've thoroughly analyzed the LinkShield backend codebase and understand the comprehensive social protection infrastructure already in place. The system has mature FastAPI architecture with social media scanning, platform adapters, authentication, and database models. The user wants to add bot functionality for Twitter, Telegram, and Discord that provides quick-access (≤3 second) responses using existing analysis capabilities. The current `SocialScanService` performs comprehensive multi-minute scans, so we need a lightweight "quick analysis" path that reuses existing logic with timeouts and caching.
 
 ### Approach
 
-I'll add comprehensive social media protection support for Telegram and Discord by: 1) Adding TELEGRAM and DISCORD to the PlatformType enum, 2) Creating TelegramProtectionAdapter and DiscordProtectionAdapter following the same pattern as existing adapters, 3) Updating the platform registry and imports, 4) Adding platform-specific configuration, and 5) Updating documentation. The adapters will implement the full SocialPlatformAdapter interface with platform-specific risk analysis, content scanning, algorithm health monitoring, and crisis detection capabilities.
+The implementation will add a new bot layer on top of the existing social protection infrastructure. We'll create platform-specific bot handlers (Twitter, Telegram, Discord) that connect to a unified `QuickAccessBotGateway`. This gateway will use a new `QuickAnalysisService` that wraps existing platform adapters with 3-second timeouts and caching. Bot webhooks will be handled through new FastAPI routes with bot-specific authentication. The design reuses existing models, services, and database infrastructure while adding the minimal components needed for real-time bot interactions.
 
 ### Reasoning
 
-I examined the social protection types, registry, and platform adapters directory to understand the current implementation. I found that Telegram and Discord are completely missing from the platform types enum and have no corresponding adapter implementations, despite the infrastructure being ready to support them through the existing base adapter pattern and registry system.
+I explored the codebase structure starting with the main application entry point and social protection module. I examined the existing platform adapters, services, controllers, routes, and authentication system to understand integration patterns. I reviewed the data models to understand request/response structures and checked the requirements.txt for available dependencies. This gave me a complete picture of the current architecture and how bot functionality should integrate.
+
+## Mermaid Diagram
+
+sequenceDiagram
+    participant User as Platform User
+    participant Bot as Bot Handler
+    participant Gateway as QuickAccessBotGateway
+    participant QuickService as QuickAnalysisService
+    participant Adapter as Platform Adapter
+    participant DB as Database
+
+    User->>Bot: Send command (DM/mention)
+    Bot->>Bot: Parse command & validate
+    Bot->>Gateway: handle_quick_request(command, user_context)
+    Gateway->>Gateway: classify_request(command)
+    
+    alt Profile Analysis
+        Gateway->>QuickService: quick_profile_analysis(username)
+        QuickService->>Adapter: scan_profile(minimal_data, timeout=3s)
+        Adapter-->>QuickService: risk_assessment
+        QuickService->>DB: Cache result
+    else Content Analysis
+        Gateway->>QuickService: quick_content_analysis(content)
+        QuickService->>Adapter: analyze_content(content, timeout=3s)
+        Adapter-->>QuickService: content_risk
+        QuickService->>DB: Cache result
+    end
+    
+    QuickService-->>Gateway: analysis_result
+    Gateway->>Gateway: format_platform_response(result, platform)
+    Gateway-->>Bot: formatted_response
+    Bot->>User: Send response (DM/reply)
+    
+    opt Background Deep Analysis
+        Bot->>QuickService: schedule_deep_analysis(scan_id)
+        QuickService->>DB: Create full scan record
+        Note over QuickService: Async full analysis using existing SocialScanService
+    end
 
 ## Proposed File Changes
 
-### src\social_protection\types.py(MODIFY)
+### src\config\settings.py(MODIFY)
 
-Add TELEGRAM and DISCORD to the PlatformType enum. Update the enum to include:
-```python
-TELEGRAM = "telegram"
-DISCORD = "discord"
-```
-These additions will enable the social protection system to recognize and handle Telegram and Discord platforms alongside the existing platforms.
+Add new environment variables for bot configuration including `TWITTER_BOT_BEARER_TOKEN`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `QUICK_ANALYSIS_TIMEOUT_SECONDS`, `BOT_RATE_LIMIT_PER_MINUTE`, and `BOT_SERVICE_ACCOUNT_ID`. Update the `Settings` class to include these new configuration options with appropriate defaults and validation.
 
-### src\social_protection\platform_adapters\telegram_adapter.py(NEW)
+### src\bots(NEW)
+
+Create new directory for bot-related modules and services.
+
+### src\bots\__init__.py(NEW)
+
+Initialize the bots package with exports for the main bot components including `QuickAccessBotGateway`, `TwitterBotHandler`, `TelegramBotHandler`, and `DiscordBotHandler`.
+
+### src\bots\gateway.py(NEW)
 
 References: 
 
+- src\social_protection\services\social_scan_service.py
 - src\social_protection\platform_adapters\base_adapter.py
-- src\social_protection\platform_adapters\twitter_adapter.py
 
-Create comprehensive TelegramProtectionAdapter class that implements the SocialPlatformAdapter interface. Include Telegram-specific risk analysis for:
+Implement the `QuickAccessBotGateway` class that serves as the central coordinator for all bot platforms. This class will handle command parsing, route requests to the appropriate quick analysis service, and format responses for each platform. Include methods for `handle_quick_request()`, `classify_request()`, and `format_platform_response()`. The gateway will integrate with the existing `SocialScanService` and platform adapters but with strict 3-second timeouts.
 
-**Profile Analysis:**
-- Bot detection and verification status
-- Channel/group authenticity assessment
-- Subscriber count validation
-- Profile completeness and suspicious indicators
+### src\bots\handlers(NEW)
 
-**Content Analysis:**
-- Message spam detection
-- Malicious link identification
-- Scam pattern recognition
-- Forward chain analysis
-- Media content safety assessment
+Create directory for platform-specific bot handlers.
 
-**Algorithm Health:**
-- Message delivery rates
-- Engagement patterns
-- Channel/group visibility metrics
-- Search discoverability
+### src\bots\handlers\__init__.py(NEW)
 
-**Crisis Detection:**
-- Viral negative content spread
-- Mass reporting campaigns
-- Coordinated harassment detection
-- Misinformation propagation
+Initialize handlers package with exports for all bot handler classes.
 
-Implement all abstract methods from `SocialPlatformAdapter` with Telegram-specific logic, rate limits, and risk thresholds.
-
-### src\social_protection\platform_adapters\discord_adapter.py(NEW)
+### src\bots\handlers\twitter_bot_handler.py(NEW)
 
 References: 
 
+- src\bots\gateway.py(NEW)
+
+Implement `TwitterBotHandler` class that handles Twitter webhook events, parses DMs and mentions, extracts commands, and sends responses via Twitter API. Include methods for `process_webhook()`, `parse_dm_command()`, `parse_mention_command()`, `send_dm_response()`, and `send_mention_reply()`. The handler will validate Twitter webhook signatures and handle rate limiting according to Twitter's API limits.
+
+### src\bots\handlers\telegram_bot_handler.py(NEW)
+
+References: 
+
+- src\bots\gateway.py(NEW)
+
+Implement `TelegramBotHandler` class that processes Telegram webhook updates, handles both direct messages and inline queries, parses bot commands, and sends responses. Include methods for `process_webhook()`, `handle_message()`, `handle_inline_query()`, `send_message()`, and `answer_inline_query()`. Support Telegram's custom keyboards for quick actions and handle file uploads for content analysis.
+
+### src\bots\handlers\discord_bot_handler.py(NEW)
+
+References: 
+
+- src\bots\gateway.py(NEW)
+
+Implement `DiscordBotHandler` class that processes Discord webhook interactions, handles slash commands and direct messages, and sends responses with Discord's embed formatting. Include methods for `process_webhook()`, `handle_slash_command()`, `handle_dm()`, `send_response()`, and `create_embed_response()`. Support Discord's interaction responses and follow-up messages for longer analyses.
+
+### src\services\quick_analysis_service.py(NEW)
+
+References: 
+
+- src\social_protection\services\social_scan_service.py
+- src\social_protection\platform_adapters\twitter_adapter.py
 - src\social_protection\platform_adapters\base_adapter.py
-- src\social_protection\platform_adapters\twitter_adapter.py
 
-Create comprehensive DiscordProtectionAdapter class that implements the SocialPlatformAdapter interface. Include Discord-specific risk analysis for:
+Create `QuickAnalysisService` class that provides fast, lightweight analysis by wrapping existing social protection services with strict timeouts and caching. Implement methods for `quick_profile_analysis()`, `quick_content_analysis()`, and `quick_risk_assessment()` that reuse logic from `SocialScanService` and platform adapters but with 3-second limits. Include caching mechanisms to store recent analysis results and fallback responses for timeout scenarios.
 
-**Profile Analysis:**
-- User verification and badge status
-- Server membership patterns
-- Account age and activity validation
-- Suspicious behavior indicators
-- Bot account detection
-
-**Content Analysis:**
-- Message content safety scanning
-- Embed and attachment analysis
-- Invite link validation
-- Spam and raid detection
-- Voice/video content monitoring
-
-**Algorithm Health:**
-- Message visibility and engagement
-- Server discovery metrics
-- Role and permission effectiveness
-- Community growth patterns
-
-**Crisis Detection:**
-- Server raids and coordinated attacks
-- Harassment campaign detection
-- Doxxing and privacy violations
-- Malicious bot infiltration
-- Community toxicity escalation
-
-Implement all abstract methods from `SocialPlatformAdapter` with Discord-specific logic, API integration patterns, and community safety features.
-
-### src\social_protection\platform_adapters\__init__.py(MODIFY)
+### src\models\bot.py(NEW)
 
 References: 
 
-- src\social_protection\platform_adapters\telegram_adapter.py(NEW)
-- src\social_protection\platform_adapters\discord_adapter.py(NEW)
+- src\models\user.py
 
-Add imports and exports for the new Telegram and Discord adapters:
+Create database models for bot operations including `BotCommand` for logging bot interactions, `BotUser` for mapping external platform users to LinkShield users, and `BotSession` for tracking conversation state. Include fields for platform, external_user_id, command_type, response_time, and success status. These models will help with analytics, debugging, and user mapping.
 
-```python
-from .telegram_adapter import TelegramProtectionAdapter
-from .discord_adapter import DiscordProtectionAdapter
-```
-
-Update the `__all__` list to include:
-```python
-"TelegramProtectionAdapter",
-"DiscordProtectionAdapter",
-```
-
-Update the module docstring to mention Telegram and Discord protection adapters alongside the existing platforms.
-
-### src\social_protection\data_models\telegram_models.py(NEW)
+### src\routes\bot_webhooks.py(NEW)
 
 References: 
 
-- src\social_protection\data_models\assessment_models.py
+- src\routes\social_protection.py
+- src\bots\handlers\twitter_bot_handler.py(NEW)
+- src\bots\handlers\telegram_bot_handler.py(NEW)
+- src\bots\handlers\discord_bot_handler.py(NEW)
 
-Create Telegram-specific data models for social protection including:
+Create FastAPI router for bot webhook endpoints including `/api/v1/bots/twitter/webhook`, `/api/v1/bots/telegram/webhook`, and `/api/v1/bots/discord/webhook`. Each endpoint will validate platform-specific webhook signatures, parse incoming requests, and delegate to the appropriate bot handler. Include proper error handling, rate limiting, and logging for all webhook interactions.
 
-**TelegramProfileData:**
-- User/channel/group information
-- Subscriber counts and verification status
-- Bio and description content
-- Profile photo and media
-
-**TelegramContentData:**
-- Message content and metadata
-- Forward chain information
-- Media attachments and files
-- Reaction and engagement data
-
-**TelegramRiskFactors:**
-- Bot detection indicators
-- Spam pattern markers
-- Scam content flags
-- Malicious link indicators
-
-**TelegramAnalysisRequest/Response:**
-- Platform-specific request parameters
-- Telegram API integration data
-- Risk assessment results
-- Recommendation actions
-
-All models should inherit from appropriate base classes and include proper validation, serialization, and documentation.
-
-### src\social_protection\data_models\discord_models.py(NEW)
+### src\controllers\bot_controller.py(NEW)
 
 References: 
 
-- src\social_protection\data_models\assessment_models.py
+- src\controllers\base_controller.py
+- src\social_protection\controllers\social_protection_controller.py
 
-Create Discord-specific data models for social protection including:
+Implement `BotController` class that handles business logic for bot operations including user mapping, command validation, rate limiting, and analytics. Include methods for `map_external_user()`, `validate_bot_command()`, `log_bot_interaction()`, and `get_bot_analytics()`. The controller will integrate with existing authentication and rate limiting systems while providing bot-specific functionality.
 
-**DiscordProfileData:**
-- User profile information and badges
-- Server membership and roles
-- Activity status and presence
-- Account creation and verification data
-
-**DiscordContentData:**
-- Message content and embeds
-- Attachment and media files
-- Reaction and interaction data
-- Thread and reply context
-
-**DiscordServerData:**
-- Server information and settings
-- Member count and activity metrics
-- Channel structure and permissions
-- Moderation and safety features
-
-**DiscordRiskFactors:**
-- Raid and spam indicators
-- Harassment pattern markers
-- Malicious bot detection
-- Community toxicity signals
-
-**DiscordAnalysisRequest/Response:**
-- Platform-specific request parameters
-- Discord API integration data
-- Risk assessment results
-- Moderation recommendations
-
-Include proper validation, type hints, and integration with existing data model patterns.
-
-### src\social_protection\data_models\__init__.py(MODIFY)
+### src\controllers\depends.py(MODIFY)
 
 References: 
 
-- src\social_protection\data_models\telegram_models.py(NEW)
-- src\social_protection\data_models\discord_models.py(NEW)
+- src\controllers\bot_controller.py(NEW)
 
-Add imports and exports for the new Telegram and Discord data models:
+Add dependency injection function `get_bot_controller()` that creates and returns a `BotController` instance with all required services. Follow the same pattern as `get_social_protection_controller()` to ensure consistent dependency management across the application.
 
-```python
-from .telegram_models import (
-    TelegramProfileData,
-    TelegramContentData,
-    TelegramRiskFactors,
-    TelegramAnalysisRequest,
-    TelegramAnalysisResponse
-)
-from .discord_models import (
-    DiscordProfileData,
-    DiscordContentData,
-    DiscordServerData,
-    DiscordRiskFactors,
-    DiscordAnalysisRequest,
-    DiscordAnalysisResponse
-)
-```
-
-Update the `__all__` list to include all the new model classes. This ensures the models are properly exposed for use by the adapters and other components.
-
-### src\config\social_protection_config.yaml(MODIFY)
-
-Add configuration sections for Telegram and Discord platforms including:
-
-**Telegram Configuration:**
-```yaml
-telegram:
-  enabled: true
-  api_credentials:
-    bot_token: ${TELEGRAM_BOT_TOKEN}
-    api_id: ${TELEGRAM_API_ID}
-    api_hash: ${TELEGRAM_API_HASH}
-  rate_limits:
-    profile_scans_per_hour: 100
-    content_analyses_per_hour: 500
-    api_requests_per_minute: 30
-  risk_thresholds:
-    bot_detection: 0.7
-    spam_content: 0.6
-    malicious_links: 0.8
-    scam_patterns: 0.75
-```
-
-**Discord Configuration:**
-```yaml
-discord:
-  enabled: true
-  api_credentials:
-    bot_token: ${DISCORD_BOT_TOKEN}
-    client_id: ${DISCORD_CLIENT_ID}
-    client_secret: ${DISCORD_CLIENT_SECRET}
-  rate_limits:
-    profile_scans_per_hour: 150
-    content_analyses_per_hour: 600
-    api_requests_per_minute: 50
-  risk_thresholds:
-    raid_detection: 0.8
-    harassment_patterns: 0.7
-    malicious_bots: 0.85
-    toxicity_levels: 0.6
-```
-
-### src\social_protection\controllers\social_protection_controller.py(MODIFY)
+### src\authentication\dependencies.py(MODIFY)
 
 References: 
 
-- src\social_protection\types.py(MODIFY)
+- src\models\user.py
 
-Update the `_is_valid_profile_url()` method to include validation for Telegram and Discord URLs. Add to the `platform_domains` dictionary:
+Add new authentication dependency `get_bot_service_user()` that returns a service account user for bot operations. This allows bots to perform analysis without requiring individual user authentication while still maintaining audit trails. Include validation for bot-specific tokens and rate limiting.
 
-```python
-PlatformType.TELEGRAM: ["t.me", "telegram.me", "telegram.org"],
-PlatformType.DISCORD: ["discord.com", "discord.gg", "discordapp.com"],
-```
+### app.py(MODIFY)
 
-This ensures that the social protection controller can properly validate URLs for Telegram channels/groups and Discord servers/users when initiating scans.
+References: 
+
+- src\routes\bot_webhooks.py(NEW)
+
+Import and include the new bot webhooks router in the FastAPI application. Add `from src.routes.bot_webhooks import router as bot_webhooks_router` and `app.include_router(bot_webhooks_router)` to register the bot endpoints with the main application.
 
 ### requirements.txt(MODIFY)
 
-Add dependencies required for Telegram and Discord API integration:
-
-```
-# Telegram API integration
-pyrogram
-tgcrypto
-telethon
-
-# Discord API integration
-discord.py
-aiohttp
-
-# Additional utilities for social media analysis
-python-telegram-bot
-discord-webhook
-```
-
-These libraries provide comprehensive API access for both platforms, enabling the adapters to fetch profile data, analyze content, and monitor platform-specific metrics.
+Add new dependencies for bot functionality including `python-telegram-bot` for Telegram bot API, `tweepy` for Twitter API v2 integration, `discord.py` for Discord bot functionality, and `cachetools` for response caching (if not already present). These libraries will handle platform-specific API interactions and webhook processing.
 
 ### .env.example(MODIFY)
 
-Add environment variable examples for Telegram and Discord API credentials:
+Add example environment variables for bot configuration including `TWITTER_BOT_BEARER_TOKEN=your_twitter_bearer_token`, `TELEGRAM_BOT_TOKEN=your_telegram_bot_token`, `DISCORD_BOT_TOKEN=your_discord_bot_token`, `QUICK_ANALYSIS_TIMEOUT_SECONDS=3`, `BOT_RATE_LIMIT_PER_MINUTE=60`, and `BOT_SERVICE_ACCOUNT_ID=bot_service_account_uuid`. Include comments explaining how to obtain these tokens from each platform.
 
-```bash
-# Telegram API Configuration
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-TELEGRAM_API_ID=your_telegram_api_id
-TELEGRAM_API_HASH=your_telegram_api_hash
-
-# Discord API Configuration
-DISCORD_BOT_TOKEN=your_discord_bot_token_here
-DISCORD_CLIENT_ID=your_discord_client_id
-DISCORD_CLIENT_SECRET=your_discord_client_secret
-
-# Platform-specific settings
-TELEGRAM_RATE_LIMIT_PER_MINUTE=30
-DISCORD_RATE_LIMIT_PER_MINUTE=50
-```
-
-Include comments explaining how to obtain these credentials from Telegram BotFather and Discord Developer Portal.
-
-### src\config\settings.py(MODIFY)
-
-Add configuration settings for Telegram and Discord platforms to the Settings class:
-
-```python
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN: Optional[str] = None
-TELEGRAM_API_ID: Optional[str] = None
-TELEGRAM_API_HASH: Optional[str] = None
-TELEGRAM_RATE_LIMIT_PER_MINUTE: int = 30
-
-# Discord Configuration
-DISCORD_BOT_TOKEN: Optional[str] = None
-DISCORD_CLIENT_ID: Optional[str] = None
-DISCORD_CLIENT_SECRET: Optional[str] = None
-DISCORD_RATE_LIMIT_PER_MINUTE: int = 50
-```
-
-Add validation methods to ensure required credentials are provided when the respective platforms are enabled. Include proper type hints and default values.
-
-### docs\social_media_shield\telegram.md(NEW)
+### src\alembic\versions\008_add_bot_models.py(NEW)
 
 References: 
 
-- docs\social_media_shield\twitter.md
-
-Create comprehensive documentation for Telegram social protection features including:
-
-**Overview:**
-- Telegram platform protection capabilities
-- Supported analysis types and features
-- Integration with LinkShield ecosystem
-
-**Setup and Configuration:**
-- Telegram Bot API setup instructions
-- Required credentials and permissions
-- Rate limiting and API quotas
-
-**Protection Features:**
-- Profile and channel analysis
-- Content safety scanning
-- Bot detection and verification
-- Scam and spam identification
-- Forward chain analysis
-
-**API Endpoints:**
-- Available endpoints for Telegram analysis
-- Request/response examples
-- Error handling and status codes
-
-**Best Practices:**
-- Optimal scanning strategies
-- Privacy and compliance considerations
-- Performance optimization tips
-
-Include code examples, troubleshooting guides, and integration patterns.
-
-### docs\social_media_shield\discord.md(NEW)
-
-References: 
-
-- docs\social_media_shield\twitter.md
-
-Create comprehensive documentation for Discord social protection features including:
-
-**Overview:**
-- Discord platform protection capabilities
-- Server and user analysis features
-- Community safety and moderation tools
-
-**Setup and Configuration:**
-- Discord Bot setup and permissions
-- OAuth2 application configuration
-- Required scopes and intents
-
-**Protection Features:**
-- User profile and behavior analysis
-- Server health and safety assessment
-- Content moderation and filtering
-- Raid and harassment detection
-- Bot and automation analysis
-
-**API Endpoints:**
-- Available endpoints for Discord analysis
-- Request/response examples
-- Webhook integration options
-
-**Community Safety:**
-- Toxicity detection algorithms
-- Moderation recommendation system
-- Crisis response procedures
-- Privacy and data protection
-
-**Integration Examples:**
-- Bot integration patterns
-- Webhook configuration
-- Real-time monitoring setup
-
-Include detailed examples, security considerations, and compliance guidelines.
-
-### src\alembic\versions\009_add_telegram_discord_support.py(NEW)
-
-References: 
-
+- src\models\bot.py(NEW)
 - src\alembic\versions\007_add_social_protection_models.py
-- src\models\social_protection.py
 
-Create Alembic migration to update the database schema for Telegram and Discord support:
+Create Alembic migration to add bot-related database tables including `bot_commands`, `bot_users`, and `bot_sessions`. The migration will create tables with appropriate indexes, foreign key constraints, and follow the same patterns as existing social protection models. Include proper rollback functionality for the migration.
 
-**Update PlatformType enum:**
-- Add 'telegram' and 'discord' values to the platform_type enum in the database
-- Ensure existing data remains intact
+### docs\social_media_shield\bots.md(NEW)
 
-**Update existing tables:**
-- Modify any tables that reference platform types to support the new values
-- Update constraints and indexes as needed
+References: 
 
-**Add platform-specific columns:**
-- Add any Telegram/Discord-specific fields to relevant tables
-- Include proper data types and constraints
+- docs\social_media_shield\twitter.md
 
-**Migration structure:**
-```python
-def upgrade():
-    # Add new platform types to enum
-    op.execute("ALTER TYPE platformtype ADD VALUE 'telegram'")
-    op.execute("ALTER TYPE platformtype ADD VALUE 'discord'")
-    
-    # Update any platform-specific configurations
-    # Add indexes for new platform types
-    
-def downgrade():
-    # Remove new platform types (with data cleanup)
-    # Restore previous schema state
-```
-
-Include proper error handling and data migration procedures.
+Create comprehensive documentation for the bot functionality including setup instructions for each platform, webhook configuration, command reference, rate limiting details, and troubleshooting guide. Include examples of bot interactions and integration with existing LinkShield features. Document the architecture and how bots integrate with the social protection system.

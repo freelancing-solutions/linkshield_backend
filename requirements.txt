@@ -70,6 +70,11 @@ tldextract
 # Social Platform APIs
 python-telegram-bot
 discord.py
+tweepy
+
+# Bot & Webhook Security
+hmac
+hashlib
 
 # Security Scanning
 pyopenssl

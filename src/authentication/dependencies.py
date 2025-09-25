@@ -7,7 +7,7 @@ Provides user authentication, session validation, and permission checks.
 """
 
 from typing import Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from src.config.database import get_db_session
 from src.models.user import User
 from src.authentication.auth_service import AuthService, AuthenticationError
 from src.services.security_service import SecurityService
+from src.auth.bot_auth import verify_webhook_signature, verify_api_key
 
 # Security scheme for JWT tokens
 security = HTTPBearer(auto_error=False)
@@ -184,3 +185,35 @@ async def get_super_admin_user(
         )
     
     return current_user
+
+async def verify_bot_webhook(request: Request, platform: str):
+    """
+    Verify bot webhook signature for the specified platform.
+    
+    Args:
+        request: FastAPI request object
+        platform: Platform name (twitter, telegram, discord)
+        
+    Returns:
+        Authentication context for the webhook
+        
+    Raises:
+        HTTPException: If webhook verification fails
+    """
+    return await verify_webhook_signature(request, platform)
+
+async def verify_bot_api_key(api_key: str, platform: str):
+    """
+    Verify bot API key for the specified platform.
+    
+    Args:
+        api_key: API key to verify
+        platform: Platform name (twitter, telegram, discord)
+        
+    Returns:
+        Authentication context for the API key
+        
+    Raises:
+        HTTPException: If API key verification fails
+    """
+    return await verify_api_key(api_key, platform)

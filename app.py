@@ -38,7 +38,11 @@ from src.routes.ai_analysis import router as ai_analysis_router
 from src.routes.admin import router as admin_router
 from src.routes.dashboard import router as dashboard_router
 from src.routes.social_protection import router as social_protection_router
+from src.routes.bot_webhooks import router as bot_webhooks_router
 # from src.routes.tasks import router as tasks_router
+
+# Bot Gateway
+from src.bots.gateway import bot_gateway
 
 # Initialize settings
 settings = get_settings()
@@ -65,8 +69,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting LinkShield Backend API...")
     await init_db()
     logger.info("Database initialized successfully")
+    
+    # Initialize bot gateway
+    try:
+        await bot_gateway.initialize()
+        logger.info("Bot gateway initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize bot gateway: {e}")
+        # Don't fail startup if bot gateway fails
+    
     yield
+    
     logger.info("Shutting down LinkShield Backend API...")
+    
+    # Shutdown bot gateway
+    try:
+        await bot_gateway.shutdown()
+        logger.info("Bot gateway shutdown completed")
+    except Exception as e:
+        logger.error(f"Error during bot gateway shutdown: {e}")
+    
     await close_db()
     logger.info("Database connections closed")
 
@@ -124,6 +146,7 @@ app.include_router(ai_analysis_router)
 app.include_router(admin_router)
 app.include_router(dashboard_router)
 app.include_router(social_protection_router)
+app.include_router(bot_webhooks_router)
 # app.include_router(tasks_router)
 
 

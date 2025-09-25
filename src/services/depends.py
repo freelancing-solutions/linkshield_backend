@@ -9,6 +9,7 @@ from src.services.ai_analysis_service import AIAnalysisService
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 from src.services.url_analysis_service import URLAnalysisService
+from src.services.quick_analysis_service import QuickAnalysisService
 from src.social_protection.services import ExtensionDataProcessor, SocialScanService
 from src.models import User
 
@@ -83,3 +84,11 @@ async def get_social_scan_service(ai_service: AIService = Depends(get_ai_service
     Get SocialScanService instance for social media profile scanning.
     """
     return SocialScanService(ai_service=ai_service)
+
+async def get_quick_analysis_service(
+    ai_service: AIService = Depends(get_ai_service)
+) -> QuickAnalysisService:
+    """
+    Get QuickAnalysisService instance for fast bot responses.
+    """
+    return QuickAnalysisService(ai_service=ai_service)

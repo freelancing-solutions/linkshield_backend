@@ -85,6 +85,7 @@ The LinkShield API is organized into the following main sections:
 - **[URL Analysis](endpoints/url-analysis.md)** - URL security scanning and threat detection
 - **[User Management](endpoints/user-management.md)** - User registration, authentication, and profile management
 - **[AI Analysis](endpoints/ai-analysis.md)** - AI-powered content analysis and insights
+- **[Bot Integration](endpoints/bot-integration.md)** - Social media bot webhooks and analysis services
 
 ### Community Features
 - **[Reports](endpoints/reports.md)** - Community reporting system with voting and moderation

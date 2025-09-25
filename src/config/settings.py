@@ -189,6 +189,33 @@ class Settings(BaseSettings):
     GOOGLE_SAFE_BROWSING_API_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_GOOGLE_SAFE_BROWSING_API_KEY")
     URLVOID_API_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_URLVOID_API_KEY")
     
+    # Bot Configuration
+    TWITTER_BOT_BEARER_TOKEN: Optional[str] = Field(default=None, env="LINKSHIELD_TWITTER_BOT_BEARER_TOKEN")
+    TELEGRAM_BOT_TOKEN: Optional[str] = Field(default=None, env="LINKSHIELD_TELEGRAM_BOT_TOKEN")
+    DISCORD_BOT_TOKEN: Optional[str] = Field(default=None, env="LINKSHIELD_DISCORD_BOT_TOKEN")
+    QUICK_ANALYSIS_TIMEOUT_SECONDS: int = Field(default=3, env="LINKSHIELD_QUICK_ANALYSIS_TIMEOUT_SECONDS")
+    BOT_RATE_LIMIT_PER_MINUTE: int = Field(default=30, env="LINKSHIELD_BOT_RATE_LIMIT_PER_MINUTE")
+    BOT_SERVICE_ACCOUNT_ID: Optional[str] = Field(default=None, env="LINKSHIELD_BOT_SERVICE_ACCOUNT_ID")
+    BOT_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_BOT_WEBHOOK_SECRET")
+    BOT_CACHE_TTL_SECONDS: int = Field(default=300, env="LINKSHIELD_BOT_CACHE_TTL_SECONDS")
+    BOT_MAX_RESPONSE_LENGTH: int = Field(default=2000, env="LINKSHIELD_BOT_MAX_RESPONSE_LENGTH")
+    BOT_ENABLE_DEEP_ANALYSIS: bool = Field(default=False, env="LINKSHIELD_BOT_ENABLE_DEEP_ANALYSIS")
+    
+    # Platform-specific bot settings
+    TWITTER_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_TWITTER_WEBHOOK_SECRET")
+    TELEGRAM_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_TELEGRAM_WEBHOOK_SECRET")
+    DISCORD_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_DISCORD_WEBHOOK_SECRET")
+    
+    # Bot feature flags
+    BOT_ENABLE_TWITTER: bool = Field(default=True, env="LINKSHIELD_BOT_ENABLE_TWITTER")
+    BOT_ENABLE_TELEGRAM: bool = Field(default=True, env="LINKSHIELD_BOT_ENABLE_TELEGRAM")
+    BOT_ENABLE_DISCORD: bool = Field(default=True, env="LINKSHIELD_BOT_ENABLE_DISCORD")
+    
+    # Bot analytics and logging
+    BOT_ENABLE_ANALYTICS: bool = Field(default=True, env="LINKSHIELD_BOT_ENABLE_ANALYTICS")
+    BOT_LOG_INTERACTIONS: bool = Field(default=True, env="LINKSHIELD_BOT_LOG_INTERACTIONS")
+    BOT_ANALYTICS_RETENTION_DAYS: int = Field(default=90, env="LINKSHIELD_BOT_ANALYTICS_RETENTION_DAYS")
+    
     # Email Settings
     SMTP_HOST: Optional[str] = Field(default=None, env="LINKSHIELD_SMTP_HOST")
     SMTP_PORT: int = Field(default=587, env="LINKSHIELD_SMTP_PORT")

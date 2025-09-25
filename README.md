@@ -12,6 +12,7 @@ A comprehensive URL security analysis API built with FastAPI, providing real-tim
 - **Advanced Rate Limiting**: Multi-strategy rate limiting with Redis/in-memory backends, user-specific limits, and endpoint-specific restrictions
 - **Real-time Monitoring**: Health checks and metrics collection
 - **Webhook Support**: Real-time notifications for scan results
+- **Social Media Bot Integration**: Twitter, Telegram, and Discord bots for real-time URL analysis and threat detection
 
 ## Tech Stack
 
@@ -29,6 +30,8 @@ A comprehensive URL security analysis API built with FastAPI, providing real-tim
 linkshield_backend/
 ├── src/
 │   ├── authentication/          # Authentication services
+│   ├── auth/                    # Bot authentication and webhook verification
+│   ├── bots/                    # Social media bot handlers and gateway
 │   ├── config/                  # Configuration management
 │   ├── controllers/             # Business logic controllers
 │   ├── models/                  # SQLAlchemy database models
