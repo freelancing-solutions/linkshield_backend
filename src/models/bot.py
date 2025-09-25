@@ -11,7 +11,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 from typing import Optional
 
-from ..database.base import Base
+from src.config.database import Base
 
 
 class BotUser(Base):

@@ -11,9 +11,9 @@ import asyncio
 from typing import Dict, Any, Optional, List
 import aiohttp
 from datetime import datetime
-
-from ...config.settings import settings
-
+# Import here to avoid circular imports
+from src.config.settings import settings
+from src.bots.gateway import bot_gateway
 logger = logging.getLogger(__name__)
 
 
@@ -125,7 +125,7 @@ class TwitterBotHandler:
                 # No URLs found, send help message
                 response_text = ("👋 Hi! I can help analyze URLs for security threats. "
                                "Just mention me with a URL and I'll check it for you! "
-                               "Example: @linkshield_bot https://example.com")\n            
+                               "Example: @linkshield_bot https://example.com")        
                 await self._reply_to_tweet(tweet_id, response_text)
                 
                 return {
@@ -138,8 +138,8 @@ class TwitterBotHandler:
             # Analyze the first URL found
             url = urls[0]
             
-            # Import here to avoid circular imports
-            from ...bots.gateway import bot_gateway
+            
+
             analysis_result = await bot_gateway.analyze_url_quick(url, user_id, "twitter")
             
             # Format response based on analysis

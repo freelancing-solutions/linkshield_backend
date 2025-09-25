@@ -13,14 +13,14 @@ import hashlib
 import json
 
 from sqlalchemy.orm import Session
-from ..database.connection import get_db
-from ..models.bot import (
+from src.config.database import get_db
+from src.models.bot import (
     BotUser, BotAnalysisRequest, BotRateLimit, BotSession, 
     BotAnalyticsEvent, get_or_create_bot_user, update_user_stats, 
     check_rate_limit
 )
-from ..services.quick_analysis_service import QuickAnalysisService
-from ..config.settings import settings
+from src.services.quick_analysis_service import QuickAnalysisService
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
