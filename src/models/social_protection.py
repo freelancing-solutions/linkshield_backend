@@ -451,3 +451,79 @@ class ContentRiskAssessment(Base):
             })
         
         return base_dict
+
+
+class ProfileAuditORM(Base):
+    id = Column(Integer, primary_key=True, index=True)
+    platform = Column(String(64), nullable=False, index=True)
+    handle = Column(String(256), nullable=False, index=True)
+    platform_id = Column(String(256), nullable=True, index=True)
+
+
+    account_created_at = Column(DateTime, nullable=True)
+    account_age_days = Column(Integer, nullable=True)
+
+
+    profile_completeness = Column(Integer, nullable=True) # percent 0-100
+    verified = Column(Boolean, default=False)
+
+
+    suspicious_signals = Column(JSON, default=list) # list of strings
+    profile_raw = Column(JSON, default=dict) # raw profile payload from adapter
+
+
+    last_checked = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+    followers = relationship("FollowerORM", back_populates="profile", cascade="all, delete-orphan")
+
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "platform": self.platform,
+            "handle": self.handle,
+            "platform_id": self.platform_id,
+            "account_created_at": self.account_created_at.isoformat() if self.account_created_at else None,
+            "account_age_days": self.account_age_days,
+            "profile_completeness": self.profile_completeness,
+            "verified": self.verified,
+            "suspicious_signals": self.suspicious_signals,
+            "last_checked": self.last_checked.isoformat() if self.last_checked else None,
+        }
+
+
+
+
+class FollowerORM(Base):
+    __tablename__ = "sp_followers"
+    __table_args__ = (UniqueConstraint("profile_id", "platform_id", name="uq_profile_platformid"),)
+
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey("sp_profile_audits.id"), nullable=False, index=True)
+    username = Column(String(256), nullable=False, index=True)
+    platform_id = Column(String(256), nullable=False, index=True)
+    is_suspicious = Column(Boolean, default=False)
+    metadata = Column(JSON, default=dict)
+
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+    profile = relationship("ProfileAuditORM", back_populates="followers")
+
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "profile_id": self.profile_id,
+            "username": self.username,
+            "platform_id": self.platform_id,
+            "is_suspicious": self.is_suspicious,
+            "metadata": self.metadata,
+            }
+
