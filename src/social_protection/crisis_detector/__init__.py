@@ -1,4 +1,4 @@
-"""
+ """
 Crisis Detector Module
 
 Handles real-time risk alerts and crisis intervention including:

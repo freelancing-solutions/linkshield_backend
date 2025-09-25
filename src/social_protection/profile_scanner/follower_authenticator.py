@@ -1,144 +1,82 @@
-#!/usr/bin/env python3
-"""
-FollowerAuthenticator
+# src/social_protection/follower_authenticator.py
 
-Fetches followers for a profile via platform adapters, persists follower records,
-and runs heuristic + AI-based authenticity checks.
-"""
-from __future__ import annotations
+from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
 
-import asyncio
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
-
-from pydantic import BaseModel
-
-from src.models.social_protection import FollowerORM, ProfileAuditORM
-
-try:
-    from src.services.depends import get_ai_service
-    from src.services.ai_service import AIService
-except Exception:
-    AIService = None
-    def get_ai_service():
-        return None
-
-
-class FollowerAuthResult(BaseModel):
-    platform: str
-    handle: str
-    total_followers_scanned: int
-    suspicious_count: int
-    authenticity_score: float  # 0..1 where 1 is fully authentic
-
+from src.social_protection.registry import registry
+from src.services.depends import get_ai_service
+from src.models.social_protection import FollowerORM
+from src.social_protection.data_models.social_profile_models import (
+    FollowerAuthResult,
+    FollowerCheck,
+)
 
 class FollowerAuthenticator:
-    def __init__(self, ai_service: Optional[AIService] = None, sample_limit: int = 500):
-        self.ai_service = ai_service or get_ai_service()
-        self.sample_limit = sample_limit
+    def __init__(self):
+        self.ai_service = get_ai_service()
 
-    @staticmethod
-    def _is_suspicious_account(follower: Dict[str, Any]) -> bool:
-        # heuristic checks
-        if not follower:
-            return True
-        # missing avatar
-        if not follower.get("profile_picture"):
-            return True
-        # very low followers and following counts often bot-like
-        followers = int(follower.get("followers_count") or 0)
-        following = int(follower.get("following_count") or 0)
-        if followers == 0 and following > 100:
-            return True
-        # username with many digits
-        uname = (follower.get("username") or "").lower()
-        digits = sum(c.isdigit() for c in uname)
-        if len(uname) >= 6 and digits / len(uname) > 0.5:
-            return True
-        return False
+    async def analyze_followers(
+        self,
+        platform: str,
+        handle: str,
+        session: AsyncSession,
+        limit: int = 100
+    ) -> FollowerAuthResult:
+        """
+        Fetch followers, analyze authenticity, persist to DB, and return result.
+        """
+        adapter = registry.get_adapter(platform)
+        if not adapter:
+            raise ValueError(f"No adapter registered for platform {platform}")
 
-    async def scan_and_persist(self, platform: str, handle: str, adapter, db_session) -> FollowerAuthResult:
-        # fetch profile to get internal id
-        profile = await adapter.get_profile(handle)
-        if not profile:
-            return FollowerAuthResult(platform=platform, handle=handle, total_followers_scanned=0, suspicious_count=0, authenticity_score=0.0)
+        followers = await adapter.fetch_followers(handle, limit=limit)
 
-        # adapter must implement get_followers(profile, limit)
-        followers = []
-        try:
-            followers = await adapter.get_followers(profile, limit=self.sample_limit)
-        except Exception:
-            # adapter may not support follower enumeration; treat as empty
-            followers = []
+        checks: List[FollowerCheck] = []
 
-        suspicious = 0
-        tasks = []
-        now = datetime.now(timezone.utc)
-
-        # batch persistence
         for f in followers:
-            try:
-                platform_id = f.get("id") or f.get("platform_id") or f.get("user_id")
-                username = f.get("username") or f.get("handle") or str(platform_id)
-                is_susp = self._is_suspicious_account(f)
-                if is_susp:
-                    suspicious += 1
+            suspicion_score = 0.0
 
-                # optional AI classification
-                if self.ai_service:
-                    try:
-                        prompt = f"Classify whether this follower is likely a bot or fake account: {f}"
-                        ai_resp = await self.ai_service.classify(prompt)
-                        if isinstance(ai_resp, dict) and ai_resp.get("is_bot"):
-                            is_susp = True
-                    except Exception:
-                        pass
+            # Heuristics
+            if f.followers_count == 0:
+                suspicion_score += 0.3
+            if f.bio is None or len(f.bio.strip()) < 5:
+                suspicion_score += 0.2
+            if f.posts_count == 0:
+                suspicion_score += 0.2
 
-                # upsert follower
-                orm = None
-                try:
-                    # try naive upsert with query (sync/async compatibility)
-                    orm = db_session.query(FollowerORM).filter_by(profile_id=profile.get("id"), platform_id=platform_id).one_or_none()
-                except Exception:
-                    orm = None
+            # AI enrichment
+            if self.ai_service:
+                ai_result = await self.ai_service.classify(
+                    text=f.bio or "",
+                    task="follower_authenticity"
+                )
+                if ai_result and "score" in ai_result:
+                    suspicion_score = max(suspicion_score, ai_result["score"])
 
-                if orm:
-                    orm.username = username
-                    orm.is_suspicious = is_susp
-                    orm.metadata = f
-                    orm.updated_at = now
-                    db_session.add(orm)
-                else:
-                    # find or create profile audit
-                    profile_orm = db_session.query(ProfileAuditORM).filter_by(platform=platform, handle=handle).one_or_none()
-                    if not profile_orm:
-                        profile_orm = ProfileAuditORM(platform=platform, handle=handle, profile_raw=profile)
-                        db_session.add(profile_orm)
-                        try:
-                            db_session.commit()
-                        except Exception:
-                            db_session.flush()
-                    follower_orm = FollowerORM(
-                        profile_id=profile_orm.id,
-                        username=username,
-                        platform_id=platform_id,
-                        is_suspicious=is_susp,
-                        metadata=f,
-                    )
-                    db_session.add(follower_orm)
-            except Exception:
-                # continue processing other followers
-                continue
+            # Build Pydantic
+            check = FollowerCheck(
+                id=f.id,
+                username=f.username,
+                followers_count=f.followers_count,
+                posts_count=f.posts_count,
+                suspicion_score=suspicion_score
+            )
+            checks.append(check)
 
-        # commit once
-        try:
-            db_session.commit()
-        except Exception:
-            try:
-                db_session.flush()
-            except Exception:
-                pass
+            # Persist ORM
+            follower_record = FollowerORM(
+                platform=platform,
+                handle=handle,
+                follower_id=f.id,
+                username=f.username,
+                followers_count=f.followers_count,
+                posts_count=f.posts_count,
+                suspicion_score=suspicion_score,
+            )
+            await session.merge(follower_record)
 
-        total = len(followers)
-        authenticity_score = 1.0 - (suspicious / total) if total else 0.0
-        return FollowerAuthResult(platform=platform, handle=handle, total_followers_scanned=total, suspicious_count=suspicious, authenticity_score=authenticity_score)
+        return FollowerAuthResult(
+            platform=platform,
+            handle=handle,
+            checks=checks,
+        )
