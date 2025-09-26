@@ -1,414 +1,482 @@
 """
-Bot webhook endpoints for handling platform-specific webhook requests.
+Bot Webhook Routes.
 
-This module provides FastAPI endpoints for Twitter, Telegram, and Discord
-webhook handling with proper authentication and request validation.
+This module provides FastAPI routes for handling webhook requests from
+Discord, Telegram, and Twitter platforms. Includes signature verification
+and proper error handling.
 """
 
 import logging
-import hmac
-import hashlib
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Request, HTTPException, Depends, Header
+from typing import Dict, Any
+from fastapi import APIRouter, Request, HTTPException, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+import json
 
 from ..config.settings import settings
+from ..bots.registration import bot_registration_manager
 from ..bots.gateway import bot_gateway
-from ..middleware.rate_limiting import rate_limit
-from ..middleware.authentication import verify_webhook_signature
+from ..bots.lifecycle import bot_lifecycle_manager
+from ..bots.error_handler import bot_error_handler
+from ..auth.bot_auth import verify_webhook_signature
 
 logger = logging.getLogger(__name__)
 
-# Create router for bot webhooks
 router = APIRouter(prefix="/api/v1/bots", tags=["Bot Webhooks"])
 
 
-class WebhookResponse(BaseModel):
-    """Standard webhook response model."""
-    status: str = Field(..., description="Response status")
-    message: Optional[str] = Field(None, description="Response message")
-    data: Optional[Dict[str, Any]] = Field(None, description="Response data")
-
-
-class TwitterWebhookPayload(BaseModel):
-    """Twitter webhook payload model."""
-    tweet_create_events: Optional[list] = Field(None, description="Tweet creation events")
-    direct_message_events: Optional[list] = Field(None, description="Direct message events")
-    users: Optional[Dict[str, Any]] = Field(None, description="User data")
-    for_user_id: Optional[str] = Field(None, description="Target user ID")
-
-
-class TelegramWebhookPayload(BaseModel):
-    """Telegram webhook payload model."""
-    update_id: int = Field(..., description="Update identifier")
-    message: Optional[Dict[str, Any]] = Field(None, description="Message data")
-    edited_message: Optional[Dict[str, Any]] = Field(None, description="Edited message data")
-    channel_post: Optional[Dict[str, Any]] = Field(None, description="Channel post data")
-    edited_channel_post: Optional[Dict[str, Any]] = Field(None, description="Edited channel post data")
-    inline_query: Optional[Dict[str, Any]] = Field(None, description="Inline query data")
-    chosen_inline_result: Optional[Dict[str, Any]] = Field(None, description="Chosen inline result data")
-    callback_query: Optional[Dict[str, Any]] = Field(None, description="Callback query data")
-
-
-class DiscordWebhookPayload(BaseModel):
-    """Discord webhook payload model."""
-    type: int = Field(..., description="Interaction type")
-    id: str = Field(..., description="Interaction ID")
-    application_id: str = Field(..., description="Application ID")
-    token: str = Field(..., description="Interaction token")
-    version: int = Field(..., description="Version")
-    data: Optional[Dict[str, Any]] = Field(None, description="Interaction data")
-    guild_id: Optional[str] = Field(None, description="Guild ID")
-    channel_id: Optional[str] = Field(None, description="Channel ID")
-    member: Optional[Dict[str, Any]] = Field(None, description="Guild member data")
-    user: Optional[Dict[str, Any]] = Field(None, description="User data")
-
-
-async def verify_twitter_webhook(
+@router.post("/discord/webhook")
+async def discord_webhook(
     request: Request,
-    x_twitter_webhooks_signature: Optional[str] = Header(None)
-) -> bool:
-    """
-    Verify Twitter webhook signature.
-    
-    Args:
-        request: FastAPI request object
-        x_twitter_webhooks_signature: Twitter webhook signature header
-        
-    Returns:
-        True if signature is valid
-        
-    Raises:
-        HTTPException: If signature verification fails
-    """
-    if not settings.BOT_WEBHOOK_SECRET:
-        logger.warning("Bot webhook secret not configured")
-        return True  # Skip verification if no secret configured
-    
-    if not x_twitter_webhooks_signature:
-        raise HTTPException(status_code=401, detail="Missing Twitter webhook signature")
-    
-    try:
-        body = await request.body()
-        expected_signature = hmac.new(
-            settings.BOT_WEBHOOK_SECRET.encode(),
-            body,
-            hashlib.sha256
-        ).hexdigest()
-        
-        # Twitter uses sha256= prefix
-        expected_signature = f"sha256={expected_signature}"
-        
-        if not hmac.compare_digest(x_twitter_webhooks_signature, expected_signature):
-            raise HTTPException(status_code=401, detail="Invalid Twitter webhook signature")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error verifying Twitter webhook signature: {e}")
-        raise HTTPException(status_code=401, detail="Webhook signature verification failed")
-
-
-async def verify_telegram_webhook(request: Request) -> bool:
-    """
-    Verify Telegram webhook by checking bot token in URL path.
-    
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        True if verification passes
-        
-    Raises:
-        HTTPException: If verification fails
-    """
-    # Telegram webhook verification is typically done via the URL path
-    # containing the bot token, which is handled in the endpoint path
-    return True
-
-
-async def verify_discord_webhook(
-    request: Request,
-    x_signature_ed25519: Optional[str] = Header(None),
-    x_signature_timestamp: Optional[str] = Header(None)
-) -> bool:
-    """
-    Verify Discord webhook signature using Ed25519.
-    
-    Args:
-        request: FastAPI request object
-        x_signature_ed25519: Discord signature header
-        x_signature_timestamp: Discord timestamp header
-        
-    Returns:
-        True if signature is valid
-        
-    Raises:
-        HTTPException: If signature verification fails
-    """
-    if not settings.BOT_WEBHOOK_SECRET:
-        logger.warning("Bot webhook secret not configured")
-        return True  # Skip verification if no secret configured
-    
-    if not x_signature_ed25519 or not x_signature_timestamp:
-        raise HTTPException(status_code=401, detail="Missing Discord webhook headers")
-    
-    try:
-        # Discord uses Ed25519 signature verification
-        # This is a simplified implementation - in production, use proper Ed25519 verification
-        body = await request.body()
-        timestamp_body = x_signature_timestamp + body.decode()
-        
-        # For now, just validate that headers are present
-        # In production, implement proper Ed25519 signature verification
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error verifying Discord webhook signature: {e}")
-        raise HTTPException(status_code=401, detail="Webhook signature verification failed")
-
-
-@router.post("/twitter/webhook", response_model=WebhookResponse)
-@rate_limit("bot_webhook", requests_per_minute=60)
-async def twitter_webhook(
-    payload: TwitterWebhookPayload,
-    request: Request,
-    verified: bool = Depends(verify_twitter_webhook)
+    background_tasks: BackgroundTasks,
+    x_signature_ed25519: str = Header(None),
+    x_signature_timestamp: str = Header(None)
 ):
     """
-    Handle Twitter webhook events.
+    Handle Discord webhook interactions.
     
-    Args:
-        payload: Twitter webhook payload
-        request: FastAPI request object
-        verified: Webhook signature verification result
-        
-    Returns:
-        Webhook response
+    Processes Discord slash commands, message components, and other interactions.
+    Includes signature verification for security.
     """
     try:
-        logger.info("Received Twitter webhook")
+        # Get raw payload for signature verification
+        payload = await request.body()
         
-        # Convert payload to dict for processing
-        payload_dict = payload.dict()
-        
-        # Process webhook through bot gateway
-        result = await bot_gateway.handle_webhook("twitter", payload_dict)
-        
-        if "error" in result:
-            logger.error(f"Twitter webhook processing error: {result['error']}")
-            return WebhookResponse(
-                status="error",
-                message=result["error"]
+        # Verify webhook signature if secret is configured
+        if settings.DISCORD_WEBHOOK_SECRET and x_signature_ed25519:
+            is_valid = await bot_registration_manager.verify_webhook_signature(
+                platform="discord",
+                payload=payload,
+                signature=x_signature_ed25519,
+                timestamp=x_signature_timestamp
             )
+            
+            if not is_valid:
+                logger.warning("Discord webhook signature verification failed")
+                raise HTTPException(status_code=401, detail="Invalid signature")
         
-        return WebhookResponse(
-            status="success",
-            message="Twitter webhook processed successfully",
-            data=result
+        # Parse JSON payload
+        try:
+            interaction_data = json.loads(payload.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Discord webhook payload: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+        # Handle PING interaction (Discord verification)
+        if interaction_data.get("type") == 1:
+            return {"type": 1}  # PONG response
+        
+        # Process interaction through bot gateway
+        response = await bot_gateway.handle_webhook("discord", interaction_data)
+        
+        # Update metrics
+        success = "error" not in response
+        bot_lifecycle_manager.update_metrics(success, 0.0)  # Response time would be calculated elsewhere
+        
+        # Log interaction
+        background_tasks.add_task(
+            _log_webhook_interaction,
+            platform="discord",
+            interaction_data=interaction_data,
+            response=response,
+            success=success
         )
         
+        return response
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error processing Twitter webhook: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Discord webhook error: {e}")
+        bot_lifecycle_manager.record_platform_error("discord")
+        
+        # Return appropriate Discord error response
+        return {
+            "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+            "data": {
+                "content": "❌ An error occurred while processing your request. Please try again later.",
+                "flags": 64  # EPHEMERAL
+            }
+        }
 
 
-@router.post("/telegram/webhook/{bot_token}", response_model=WebhookResponse)
-@rate_limit("bot_webhook", requests_per_minute=60)
+@router.post("/telegram/webhook")
 async def telegram_webhook(
-    bot_token: str,
-    payload: TelegramWebhookPayload,
     request: Request,
-    verified: bool = Depends(verify_telegram_webhook)
+    background_tasks: BackgroundTasks,
+    x_telegram_bot_api_secret_token: str = Header(None)
 ):
     """
     Handle Telegram webhook updates.
     
-    Args:
-        bot_token: Telegram bot token from URL path
-        payload: Telegram webhook payload
-        request: FastAPI request object
-        verified: Webhook verification result
-        
-    Returns:
-        Webhook response
+    Processes Telegram messages, commands, callback queries, and other updates.
+    Includes secret token verification for security.
     """
     try:
-        # Verify bot token matches configured token
-        if bot_token != settings.TELEGRAM_BOT_TOKEN:
-            raise HTTPException(status_code=401, detail="Invalid bot token")
+        # Get raw payload
+        payload = await request.body()
         
-        logger.info(f"Received Telegram webhook for update {payload.update_id}")
+        # Verify secret token if configured
+        if settings.TELEGRAM_WEBHOOK_SECRET and x_telegram_bot_api_secret_token:
+            if x_telegram_bot_api_secret_token != settings.TELEGRAM_WEBHOOK_SECRET:
+                logger.warning("Telegram webhook secret token verification failed")
+                raise HTTPException(status_code=401, detail="Invalid secret token")
         
-        # Convert payload to dict for processing
-        payload_dict = payload.dict()
+        # Parse JSON payload
+        try:
+            update_data = json.loads(payload.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Telegram webhook payload: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
         
-        # Process webhook through bot gateway
-        result = await bot_gateway.handle_webhook("telegram", payload_dict)
+        # Process update through bot gateway
+        response = await bot_gateway.handle_webhook("telegram", update_data)
         
-        if "error" in result:
-            logger.error(f"Telegram webhook processing error: {result['error']}")
-            return WebhookResponse(
-                status="error",
-                message=result["error"]
-            )
+        # Update metrics
+        success = "error" not in response
+        bot_lifecycle_manager.update_metrics(success, 0.0)
         
-        return WebhookResponse(
-            status="success",
-            message="Telegram webhook processed successfully",
-            data=result
+        # Log interaction
+        background_tasks.add_task(
+            _log_webhook_interaction,
+            platform="telegram",
+            interaction_data=update_data,
+            response=response,
+            success=success
         )
+        
+        # Telegram expects 200 OK response
+        return JSONResponse(content={"ok": True}, status_code=200)
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing Telegram webhook: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Telegram webhook error: {e}")
+        bot_lifecycle_manager.record_platform_error("telegram")
+        
+        # Return 200 OK to prevent Telegram from retrying
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=200)
 
 
-@router.post("/discord/webhook", response_model=WebhookResponse)
-@rate_limit("bot_webhook", requests_per_minute=60)
-async def discord_webhook(
-    payload: DiscordWebhookPayload,
+@router.post("/twitter/webhook")
+async def twitter_webhook(
     request: Request,
-    verified: bool = Depends(verify_discord_webhook)
+    background_tasks: BackgroundTasks,
+    x_twitter_webhooks_signature: str = Header(None)
 ):
     """
-    Handle Discord interaction webhooks.
+    Handle Twitter webhook events.
     
-    Args:
-        payload: Discord webhook payload
-        request: FastAPI request object
-        verified: Webhook signature verification result
-        
-    Returns:
-        Webhook response
+    Processes Twitter mentions, direct messages, and other Account Activity API events.
+    Includes signature verification for security.
     """
     try:
-        logger.info(f"Received Discord webhook for interaction {payload.id}")
+        # Get raw payload
+        payload = await request.body()
         
-        # Handle Discord ping (type 1)
-        if payload.type == 1:
-            return JSONResponse(content={"type": 1})
-        
-        # Convert payload to dict for processing
-        payload_dict = payload.dict()
-        
-        # Process webhook through bot gateway
-        result = await bot_gateway.handle_webhook("discord", payload_dict)
-        
-        if "error" in result:
-            logger.error(f"Discord webhook processing error: {result['error']}")
-            return WebhookResponse(
-                status="error",
-                message=result["error"]
+        # Verify webhook signature if secret is configured
+        if settings.TWITTER_WEBHOOK_SECRET and x_twitter_webhooks_signature:
+            is_valid = await bot_registration_manager.verify_webhook_signature(
+                platform="twitter",
+                payload=payload,
+                signature=x_twitter_webhooks_signature
             )
+            
+            if not is_valid:
+                logger.warning("Twitter webhook signature verification failed")
+                raise HTTPException(status_code=401, detail="Invalid signature")
         
-        return WebhookResponse(
-            status="success",
-            message="Discord webhook processed successfully",
-            data=result
+        # Parse JSON payload
+        try:
+            event_data = json.loads(payload.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Twitter webhook payload: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+        # Process event through bot gateway
+        response = await bot_gateway.handle_webhook("twitter", event_data)
+        
+        # Update metrics
+        success = "error" not in response
+        bot_lifecycle_manager.update_metrics(success, 0.0)
+        
+        # Log interaction
+        background_tasks.add_task(
+            _log_webhook_interaction,
+            platform="twitter",
+            interaction_data=event_data,
+            response=response,
+            success=success
         )
         
-    except Exception as e:
-        logger.error(f"Error processing Discord webhook: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.get("/twitter/webhook", response_model=Dict[str, str])
-async def twitter_webhook_challenge(
-    crc_token: str,
-    request: Request
-):
-    """
-    Handle Twitter webhook CRC challenge.
-    
-    Args:
-        crc_token: Challenge token from Twitter
-        request: FastAPI request object
+        return JSONResponse(content=response, status_code=200)
         
-    Returns:
-        CRC response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Twitter webhook error: {e}")
+        bot_lifecycle_manager.record_platform_error("twitter")
+        
+        return JSONResponse(
+            content={"error": "Internal server error"},
+            status_code=500
+        )
+
+
+@router.get("/discord/webhook")
+async def discord_webhook_verification(request: Request):
+    """
+    Handle Discord webhook verification (if needed).
+    
+    Some Discord webhook setups may require GET endpoint verification.
+    """
+    return {"message": "Discord webhook endpoint active"}
+
+
+@router.get("/telegram/webhook")
+async def telegram_webhook_verification(request: Request):
+    """
+    Handle Telegram webhook verification.
+    
+    Provides endpoint verification for Telegram webhook setup.
+    """
+    return {"message": "Telegram webhook endpoint active"}
+
+
+@router.get("/twitter/webhook")
+async def twitter_webhook_verification(request: Request):
+    """
+    Handle Twitter webhook verification (CRC challenge).
+    
+    Twitter requires CRC challenge response for webhook verification.
+    """
+    crc_token = request.query_params.get("crc_token")
+    
+    if not crc_token:
+        raise HTTPException(status_code=400, detail="Missing crc_token parameter")
+    
+    if not settings.TWITTER_WEBHOOK_SECRET:
+        raise HTTPException(status_code=500, detail="Twitter webhook secret not configured")
+    
+    # Generate CRC response
+    import hmac
+    import hashlib
+    import base64
+    
+    signature = hmac.new(
+        settings.TWITTER_WEBHOOK_SECRET.encode('utf-8'),
+        crc_token.encode('utf-8'),
+        hashlib.sha256
+    ).digest()
+    
+    response_token = base64.b64encode(signature).decode('utf-8')
+    
+    return {"response_token": f"sha256={response_token}"}
+
+
+@router.get("/status")
+async def bot_status():
+    """
+    Get bot service status.
+    
+    Returns comprehensive status information for all bot platforms.
     """
     try:
-        if not settings.BOT_WEBHOOK_SECRET:
-            raise HTTPException(status_code=500, detail="Webhook secret not configured")
-        
-        # Generate CRC response
-        response_token = hmac.new(
-            settings.BOT_WEBHOOK_SECRET.encode(),
-            crc_token.encode(),
-            hashlib.sha256
-        ).digest()
-        
-        # Encode as base64
-        import base64
-        response_token_b64 = base64.b64encode(response_token).decode()
-        
-        return {"response_token": f"sha256={response_token_b64}"}
+        status = await bot_lifecycle_manager.get_status()
+        return JSONResponse(content=status, status_code=200)
         
     except Exception as e:
-        logger.error(f"Error handling Twitter CRC challenge: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error getting bot status: {e}")
+        return JSONResponse(
+            content={"error": "Failed to get bot status"},
+            status_code=500
+        )
 
 
 @router.get("/health")
-async def bot_webhook_health():
+async def bot_health():
     """
-    Health check endpoint for bot webhooks.
+    Get bot service health status.
     
-    Returns:
-        Health status
+    Returns health information for monitoring systems.
     """
     try:
-        # Check if bot gateway is initialized
-        if not bot_gateway.is_initialized:
-            await bot_gateway.initialize()
+        health = await bot_lifecycle_manager.get_health_status()
+        status_code = 200 if health["healthy"] else 503
         
-        return {
-            "status": "healthy",
-            "timestamp": "2024-01-01T00:00:00Z",  # This would be actual timestamp
-            "platforms": list(bot_gateway.platform_handlers.keys())
-        }
+        return JSONResponse(content=health, status_code=status_code)
         
     except Exception as e:
-        logger.error(f"Bot webhook health check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service unavailable")
+        logger.error(f"Error getting bot health: {e}")
+        return JSONResponse(
+            content={
+                "healthy": False,
+                "error": "Failed to get health status"
+            },
+            status_code=503
+        )
 
 
-@router.post("/analyze")
-@rate_limit("bot_analysis", requests_per_minute=30)
-async def analyze_url_endpoint(
-    request: Dict[str, Any]
-):
+@router.post("/commands/register")
+async def register_bot_commands():
     """
-    Direct URL analysis endpoint for bot testing.
+    Manually trigger bot command registration.
+    
+    Useful for updating commands without restarting the service.
+    """
+    try:
+        results = await bot_registration_manager.register_all_commands()
+        
+        return JSONResponse(
+            content={
+                "message": "Command registration completed",
+                "results": results
+            },
+            status_code=200
+        )
+        
+    except Exception as e:
+        logger.error(f"Error registering bot commands: {e}")
+        return JSONResponse(
+            content={"error": "Failed to register commands"},
+            status_code=500
+        )
+
+
+@router.post("/platforms/{platform}/restart")
+async def restart_platform(platform: str):
+    """
+    Restart a specific bot platform.
     
     Args:
-        request: Analysis request with URL and user info
-        
-    Returns:
-        Analysis results
+        platform: Platform name (discord, telegram, twitter)
     """
     try:
-        url = request.get("url")
-        user_id = request.get("user_id", "test_user")
-        platform = request.get("platform", "api")
+        if platform not in ["discord", "telegram", "twitter"]:
+            raise HTTPException(status_code=400, detail="Invalid platform")
         
-        if not url:
-            raise HTTPException(status_code=400, detail="URL is required")
+        await bot_lifecycle_manager.restart_platform(platform)
         
-        # Perform quick analysis
-        result = await bot_gateway.analyze_url_quick(url, user_id, platform)
+        return JSONResponse(
+            content={"message": f"Platform {platform} restart initiated"},
+            status_code=200
+        )
         
-        return {
-            "status": "success",
-            "analysis": result
+    except Exception as e:
+        logger.error(f"Error restarting platform {platform}: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to restart platform {platform}"},
+            status_code=500
+        )
+
+
+@router.get("/platforms/{platform}/info")
+async def get_platform_info(platform: str):
+    """
+    Get information about a specific bot platform.
+    
+    Args:
+        platform: Platform name (discord, telegram, twitter)
+    """
+    try:
+        if platform not in ["discord", "telegram", "twitter"]:
+            raise HTTPException(status_code=400, detail="Invalid platform")
+        
+        # Get bot info
+        bot_info = await bot_registration_manager.get_bot_info(platform)
+        
+        # Get platform configuration
+        config = await bot_registration_manager.bot_configuration_manager.get_platform_config(platform)
+        
+        # Get platform status
+        status = await bot_lifecycle_manager.get_status()
+        platform_status = status.get("platform_statuses", {}).get(platform, "unknown")
+        
+        return JSONResponse(
+            content={
+                "platform": platform,
+                "status": platform_status,
+                "bot_info": bot_info,
+                "config": {
+                    "enabled": config.get("enabled", False) if config else False,
+                    "features": config.get("features", {}) if config else {},
+                    "limits": config.get("limits", {}) if config else {}
+                },
+                "health": status.get("platform_health", {}).get(platform, {})
+            },
+            status_code=200
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting platform info for {platform}: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to get platform info for {platform}"},
+            status_code=500
+        )
+
+
+# Background task functions
+
+async def _log_webhook_interaction(
+    platform: str,
+    interaction_data: Dict[str, Any],
+    response: Dict[str, Any],
+    success: bool
+):
+    """
+    Log webhook interaction for analytics and debugging.
+    
+    Args:
+        platform: Platform name
+        interaction_data: Original interaction data
+        response: Response data
+        success: Whether the interaction was successful
+    """
+    try:
+        # Extract relevant information for logging
+        log_data = {
+            "platform": platform,
+            "timestamp": interaction_data.get("timestamp") or "unknown",
+            "success": success,
+            "response_type": response.get("type", "unknown")
         }
         
-    except HTTPException:
-        raise
+        # Platform-specific logging
+        if platform == "discord":
+            log_data.update({
+                "interaction_type": interaction_data.get("type"),
+                "command_name": interaction_data.get("data", {}).get("name"),
+                "user_id": interaction_data.get("member", {}).get("user", {}).get("id") or 
+                         interaction_data.get("user", {}).get("id"),
+                "guild_id": interaction_data.get("guild_id")
+            })
+        elif platform == "telegram":
+            log_data.update({
+                "update_id": interaction_data.get("update_id"),
+                "message_id": interaction_data.get("message", {}).get("message_id"),
+                "user_id": interaction_data.get("message", {}).get("from", {}).get("id"),
+                "chat_id": interaction_data.get("message", {}).get("chat", {}).get("id")
+            })
+        elif platform == "twitter":
+            log_data.update({
+                "event_type": "tweet" if "tweet_create_events" in interaction_data else "dm",
+                "user_id": interaction_data.get("for_user_id")
+            })
+        
+        # Log the interaction
+        if success:
+            logger.info(f"Bot interaction successful: {log_data}")
+        else:
+            logger.warning(f"Bot interaction failed: {log_data}")
+        
+        # Store analytics data if enabled
+        if settings.BOT_ENABLE_ANALYTICS:
+            # This would store analytics data in database
+            # Implementation depends on analytics requirements
+            pass
+            
     except Exception as e:
-        logger.error(f"Error in URL analysis endpoint: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error logging webhook interaction: {e}")
+
+
+# Error handlers for webhook routes - these should be handled at the app level
+# Removing router.exception_handler as it's not available on APIRouter

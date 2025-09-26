@@ -46,7 +46,11 @@ class BotUser(Base):
     is_active = Column(Boolean, default=True)
     
     # Relationships
+    rate_limits = relationship("BotRateLimit", back_populates="user")
+    sessions = relationship("BotSession", back_populates="user")
     analysis_requests = relationship("BotAnalysisRequest", back_populates="user")
+    interactions = relationship("BotInteraction", back_populates="user")
+    analytics_events = relationship("BotAnalyticsEvent", back_populates="user")
     
     def __repr__(self):
         return f"<BotUser(platform={self.platform}, user_id={self.platform_user_id}, username={self.username})>"
@@ -193,6 +197,32 @@ class BotConfiguration(Base):
     
     def __repr__(self):
         return f"<BotConfiguration(key={self.config_key}, value={self.config_value}, type={self.config_type})>"
+
+
+class BotInteraction(Base):
+    """
+    Bot interaction logging.
+    
+    Records all interactions between users and bots across platforms.
+    """
+    __tablename__ = "bot_interactions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("bot_users.id"), nullable=False)
+    platform = Column(String(20), nullable=False)  # 'twitter', 'telegram', 'discord'
+    interaction_type = Column(String(50), nullable=False)  # 'command', 'webhook', 'message'
+    request_data = Column(Text, nullable=True)  # Original request payload as JSON
+    response_data = Column(Text, nullable=True)  # Response sent back as JSON
+    success = Column(Boolean, default=True)
+    error_message = Column(Text)
+    response_time_ms = Column(Integer)  # Response time in milliseconds
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("BotUser", back_populates="interactions")
+    
+    def __repr__(self):
+        return f"<BotInteraction(id={self.id}, platform={self.platform}, type={self.interaction_type})>"
 
 
 class BotAnalyticsEvent(Base):

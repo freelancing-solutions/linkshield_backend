@@ -38,11 +38,12 @@ from src.routes.ai_analysis import router as ai_analysis_router
 from src.routes.admin import router as admin_router
 from src.routes.dashboard import router as dashboard_router
 from src.routes.social_protection import router as social_protection_router
+from src.routes.algorithm_health import router as algorithm_health_router
 from src.routes.bot_webhooks import router as bot_webhooks_router
 # from src.routes.tasks import router as tasks_router
 
-# Bot Gateway
-from src.bots.gateway import bot_gateway
+# Bot Service
+from src.bots.startup import initialize_bot_service, shutdown_bot_service
 
 # Initialize settings
 settings = get_settings()
@@ -70,24 +71,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database initialized successfully")
     
-    # Initialize bot gateway
+    # Initialize bot service
     try:
-        await bot_gateway.initialize()
-        logger.info("Bot gateway initialized successfully")
+        bot_results = await initialize_bot_service()
+        if bot_results["success"]:
+            logger.info("Bot service initialized successfully")
+            if bot_results["registered_platforms"]:
+                logger.info(f"Registered platforms: {bot_results['registered_platforms']}")
+        else:
+            logger.warning("Bot service initialization had issues")
+            for error in bot_results["errors"]:
+                logger.error(f"Bot service error: {error}")
     except Exception as e:
-        logger.error(f"Failed to initialize bot gateway: {e}")
-        # Don't fail startup if bot gateway fails
+        logger.error(f"Failed to initialize bot service: {e}")
+        # Don't fail startup if bot service fails
     
     yield
     
     logger.info("Shutting down LinkShield Backend API...")
     
-    # Shutdown bot gateway
+    # Shutdown bot service
     try:
-        await bot_gateway.shutdown()
-        logger.info("Bot gateway shutdown completed")
+        bot_results = await shutdown_bot_service()
+        if bot_results["success"]:
+            logger.info("Bot service shutdown completed")
+        else:
+            logger.warning("Bot service shutdown had issues")
+            for error in bot_results["errors"]:
+                logger.error(f"Bot service shutdown error: {error}")
     except Exception as e:
-        logger.error(f"Error during bot gateway shutdown: {e}")
+        logger.error(f"Error during bot service shutdown: {e}")
     
     await close_db()
     logger.info("Database connections closed")
@@ -146,6 +159,7 @@ app.include_router(ai_analysis_router)
 app.include_router(admin_router)
 app.include_router(dashboard_router)
 app.include_router(social_protection_router)
+app.include_router(algorithm_health_router)
 app.include_router(bot_webhooks_router)
 # app.include_router(tasks_router)
 

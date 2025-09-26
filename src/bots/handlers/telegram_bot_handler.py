@@ -2,7 +2,8 @@
 Telegram Bot Handler for processing webhook updates and bot commands.
 
 This module handles Telegram webhook updates, processes messages and commands,
-and provides URL analysis responses through Telegram Bot API.
+and provides social protection analysis responses through Telegram Bot API.
+Implements the standardized bot command interface for consistent cross-platform behavior.
 """
 
 import logging
@@ -13,6 +14,10 @@ import aiohttp
 from datetime import datetime
 
 from ...config.settings import settings
+from ..models import (
+    BotCommand, BotResponse, PlatformCommand, FormattedResponse,
+    CommandType, ResponseType, DeliveryMethod, CommandRegistry
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +26,9 @@ class TelegramBotHandler:
     """
     Handler for Telegram bot interactions and webhook processing.
     
-    Processes Telegram webhook updates including messages, commands,
-    and provides URL analysis responses.
+    Processes Telegram webhook updates including messages, slash commands,
+    and provides social protection analysis responses through standardized
+    bot command interface.
     """
     
     def __init__(self):
@@ -31,6 +37,7 @@ class TelegramBotHandler:
         self.http_session: Optional[aiohttp.ClientSession] = None
         self.api_base_url = f"https://api.telegram.org/bot{self.bot_token}" if self.bot_token else None
         self.is_initialized = False
+        self.platform = "telegram"
         
     async def initialize(self):
         """Initialize the Telegram bot handler with API session."""
@@ -87,6 +94,274 @@ class TelegramBotHandler:
             logger.error(f"Error handling Telegram webhook: {e}")
             return {"error": str(e)}
     
+    async def parse_command(self, message_data: Dict[str, Any]) -> Optional[BotCommand]:
+        """
+        Parse Telegram message into standardized BotCommand.
+        
+        Args:
+            message_data: Telegram message data
+            
+        Returns:
+            Standardized BotCommand or None if parsing fails
+        """
+        try:
+            text = message_data.get("text", "").strip()
+            user_id = str(message_data.get("from", {}).get("id", ""))
+            username = message_data.get("from", {}).get("username", "")
+            
+            if not text or not user_id:
+                return None
+            
+            # Check if it's a command (starts with /)
+            if not text.startswith("/"):
+                return None
+            
+            # Validate command syntax and get command type
+            command_type = CommandRegistry.validate_command_syntax(text, self.platform)
+            if not command_type:
+                return None
+            
+            # Extract parameters based on command type
+            parameters = CommandRegistry.extract_parameters(text, command_type, self.platform)
+            
+            # Create metadata with Telegram-specific context
+            metadata = {
+                "original_command": text,
+                "username": username,
+                "chat_id": message_data.get("chat", {}).get("id"),
+                "message_id": message_data.get("message_id"),
+                "chat_type": message_data.get("chat", {}).get("type", "private"),
+                "platform_data": message_data
+            }
+            
+            return BotCommand(
+                command_type=command_type,
+                platform=self.platform,
+                user_id=user_id,
+                parameters=parameters,
+                metadata=metadata
+            )
+            
+        except Exception as e:
+            logger.error(f"Error parsing Telegram command: {e}")
+            return None
+    
+    async def format_response(self, bot_response: BotResponse) -> FormattedResponse:
+        """
+        Format BotController response for Telegram platform.
+        
+        Args:
+            bot_response: Standardized bot response
+            
+        Returns:
+            Telegram-formatted response
+        """
+        try:
+            # Get platform formatting preferences
+            platform_formatting = CommandRegistry.get_platform_formatting(self.platform)
+            
+            # Determine delivery method
+            delivery_method = DeliveryMethod.MESSAGE
+            if bot_response.get_formatting_hint("use_inline_keyboard"):
+                delivery_method = DeliveryMethod.INLINE_KEYBOARD
+            
+            # Format response based on type
+            if bot_response.success:
+                if bot_response.response_type == ResponseType.ANALYSIS_RESULT:
+                    response_data = self._format_account_analysis(bot_response)
+                elif bot_response.response_type == ResponseType.COMPLIANCE_CHECK:
+                    response_data = self._format_compliance_check(bot_response)
+                elif bot_response.response_type == ResponseType.FOLLOWER_ANALYSIS:
+                    response_data = self._format_follower_analysis(bot_response)
+                else:
+                    response_data = self._format_generic_success(bot_response)
+            else:
+                response_data = self._format_error_response(bot_response)
+            
+            return FormattedResponse(
+                platform=self.platform,
+                response_data=response_data,
+                delivery_method=delivery_method,
+                formatting_applied=["telegram_markdown", "emoji_indicators", "structured_message"]
+            )
+            
+        except Exception as e:
+            logger.error(f"Error formatting Telegram response: {e}")
+            # Return basic error response
+            return FormattedResponse(
+                platform=self.platform,
+                response_data={
+                    "text": "❌ Error formatting response. Please try again.",
+                    "parse_mode": "Markdown"
+                },
+                delivery_method=DeliveryMethod.MESSAGE,
+                formatting_applied=["error_fallback"]
+            )
+    
+    async def send_response(self, formatted_response: FormattedResponse, chat_id: int) -> bool:
+        """
+        Send formatted response back to Telegram platform.
+        
+        Args:
+            formatted_response: Platform-formatted response
+            chat_id: Telegram chat ID to send to
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if formatted_response.delivery_method == DeliveryMethod.INLINE_KEYBOARD:
+                return await self._send_message_with_keyboard(
+                    chat_id, 
+                    formatted_response.response_data
+                )
+            else:
+                return await self._send_message(
+                    chat_id,
+                    formatted_response.response_data.get("text", ""),
+                    formatted_response.response_data.get("parse_mode", "Markdown")
+                ) is not None
+                
+        except Exception as e:
+            logger.error(f"Error sending Telegram response: {e}")
+            return False
+    
+    def _format_account_analysis(self, bot_response: BotResponse) -> Dict[str, Any]:
+        """Format account analysis result for Telegram."""
+        risk_level = bot_response.get_data("risk_level", "unknown")
+        risk_score = bot_response.get_data("risk_score", 0)
+        account_identifier = bot_response.get_data("account_identifier", "Unknown")
+        
+        # Get risk indicator emoji
+        risk_indicator = CommandRegistry.get_risk_indicator(risk_level)
+        
+        # Build formatted message
+        message = f"{risk_indicator} *Account Safety Analysis*\n\n"
+        message += f"📱 Account: `{account_identifier}`\n"
+        message += f"🎯 Risk Level: *{risk_level.title()}*\n"
+        message += f"📊 Risk Score: {risk_score}/100\n\n"
+        
+        # Add recommendations if available
+        recommendations = bot_response.get_data("recommendations", [])
+        if recommendations:
+            message += "💡 *Recommendations:*\n"
+            for i, rec in enumerate(recommendations[:3], 1):
+                message += f"{i}. {rec}\n"
+        
+        # Add threat details if available
+        threats = bot_response.get_data("threats_detected", [])
+        if threats:
+            message += f"\n⚠️ *Threats Detected:* {len(threats)}\n"
+            for threat in threats[:2]:
+                message += f"• {threat}\n"
+        
+        message += f"\n🕒 Analysis completed at {datetime.now().strftime('%H:%M:%S')}"
+        
+        return {
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+    
+    def _format_compliance_check(self, bot_response: BotResponse) -> Dict[str, Any]:
+        """Format compliance check result for Telegram."""
+        is_compliant = bot_response.get_data("is_compliant", True)
+        compliance_score = bot_response.get_data("compliance_score", 100)
+        
+        # Choose indicator based on compliance
+        indicator = "✅" if is_compliant else "⚠️"
+        status = "Compliant" if is_compliant else "Issues Found"
+        
+        message = f"{indicator} *Content Compliance Check*\n\n"
+        message += f"📋 Status: *{status}*\n"
+        message += f"📊 Compliance Score: {compliance_score}/100\n\n"
+        
+        # Add violations if any
+        violations = bot_response.get_data("violations", [])
+        if violations:
+            message += f"🚫 *Violations Found:* {len(violations)}\n"
+            for i, violation in enumerate(violations[:3], 1):
+                severity = violation.get("severity", "medium")
+                severity_emoji = {"low": "🟡", "medium": "🟠", "high": "🔴"}.get(severity, "⚪")
+                message += f"{severity_emoji} {violation.get('description', 'Policy violation')}\n"
+        
+        # Add remediation suggestions
+        suggestions = bot_response.get_data("remediation_suggestions", [])
+        if suggestions:
+            message += f"\n💡 *Suggestions:*\n"
+            for suggestion in suggestions[:2]:
+                message += f"• {suggestion}\n"
+        
+        message += f"\n🕒 Check completed at {datetime.now().strftime('%H:%M:%S')}"
+        
+        return {
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+    
+    def _format_follower_analysis(self, bot_response: BotResponse) -> Dict[str, Any]:
+        """Format follower analysis result for Telegram."""
+        verified_count = bot_response.get_data("verified_followers_count", 0)
+        total_followers = bot_response.get_data("total_followers", 0)
+        high_value_count = bot_response.get_data("high_value_followers", 0)
+        
+        message = f"👥 *Verified Followers Analysis*\n\n"
+        message += f"✅ Verified Followers: *{verified_count:,}*\n"
+        
+        if total_followers > 0:
+            verification_rate = (verified_count / total_followers) * 100
+            message += f"📊 Verification Rate: {verification_rate:.1f}%\n"
+        
+        if high_value_count > 0:
+            message += f"⭐ High-Value Followers: *{high_value_count:,}*\n"
+        
+        # Add follower categories
+        categories = bot_response.get_data("follower_categories", {})
+        if categories:
+            message += f"\n📈 *Follower Breakdown:*\n"
+            for category, count in categories.items():
+                if count > 0:
+                    emoji = {"influencers": "🌟", "businesses": "🏢", "media": "📺", "verified": "✅"}.get(category, "👤")
+                    message += f"{emoji} {category.title()}: {count:,}\n"
+        
+        # Add networking opportunities
+        opportunities = bot_response.get_data("networking_opportunities", [])
+        if opportunities:
+            message += f"\n🤝 *Networking Opportunities:*\n"
+            for opp in opportunities[:2]:
+                message += f"• {opp}\n"
+        
+        message += f"\n🕒 Analysis completed at {datetime.now().strftime('%H:%M:%S')}"
+        
+        return {
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+    
+    def _format_generic_success(self, bot_response: BotResponse) -> Dict[str, Any]:
+        """Format generic success response for Telegram."""
+        message = "✅ *Operation Completed Successfully*\n\n"
+        
+        # Add any data from the response
+        for key, value in bot_response.data.items():
+            if isinstance(value, (str, int, float)):
+                message += f"• {key.replace('_', ' ').title()}: {value}\n"
+        
+        return {
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+    
+    def _format_error_response(self, bot_response: BotResponse) -> Dict[str, Any]:
+        """Format error response for Telegram."""
+        message = f"❌ *Error*\n\n"
+        message += f"🚫 {bot_response.error_message}\n\n"
+        message += "Please try again or use /help for assistance."
+        
+        return {
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+
     async def _handle_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle incoming message.
@@ -106,62 +381,27 @@ class TelegramBotHandler:
             
             logger.info(f"Processing message from @{username} (ID: {user_id}): {text}")
             
-            # Handle commands
+            # Handle commands using standardized interface
             if text.startswith("/"):
-                return await self._handle_command(message)
+                return await self._handle_standardized_command(message)
             
-            # Extract URLs from message text
-            urls = self._extract_urls(text)
-            
-            if not urls:
-                # No URLs found, send help message
-                help_text = (
-                    "👋 Hi! I can help analyze URLs for security threats.\n\n"
-                    "Just send me a URL and I'll check it for you!\n"
-                    "Example: https://example.com\n\n"
-                    "Commands:\n"
-                    "/start - Get started\n"
-                    "/help - Show this help message\n"
-                    "/analyze <url> - Analyze a specific URL"
-                )
-                
-                await self._send_message(chat_id, help_text)
-                
-                return {
-                    "type": "message",
-                    "message_id": message_id,
-                    "action": "help_sent",
-                    "user": username
-                }
-            
-            # Analyze the first URL found
-            url = urls[0]
-            
-            # Send "analyzing" message
-            analyzing_msg = await self._send_message(
-                chat_id, 
-                f"🔍 Analyzing URL: {url}\nPlease wait..."
+            # For non-command messages, provide help
+            help_text = (
+                "👋 Hi! I can help with social media safety analysis.\n\n"
+                "*Available Commands:*\n"
+                "/analyze_account @username - Analyze account safety\n"
+                "/check_compliance \"content\" - Check content compliance\n"
+                "/analyze_followers - Analyze your verified followers\n\n"
+                "/start - Get started\n"
+                "/help - Show this help message"
             )
             
-            # Import here to avoid circular imports
-            from ...bots.gateway import bot_gateway
-            analysis_result = await bot_gateway.analyze_url_quick(url, str(user_id), "telegram")
-            
-            # Format response based on analysis
-            response_text = self._format_analysis_response(url, analysis_result)
-            
-            # Edit the analyzing message with results
-            if analyzing_msg:
-                await self._edit_message(chat_id, analyzing_msg["message_id"], response_text)
-            else:
-                await self._send_message(chat_id, response_text)
+            await self._send_message(chat_id, help_text, "Markdown")
             
             return {
                 "type": "message",
                 "message_id": message_id,
-                "url_analyzed": url,
-                "risk_level": analysis_result.get("risk_level", "unknown"),
-                "action": "analysis_sent",
+                "action": "help_sent",
                 "user": username
             }
             
@@ -169,9 +409,9 @@ class TelegramBotHandler:
             logger.error(f"Error handling message: {e}")
             return {"type": "message", "error": str(e)}
     
-    async def _handle_command(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    async def _handle_standardized_command(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Handle bot commands.
+        Handle bot commands using standardized interface.
         
         Args:
             message: Message data containing command
@@ -185,131 +425,103 @@ class TelegramBotHandler:
             username = message.get("from", {}).get("username", "")
             text = message.get("text", "")
             
-            # Parse command and arguments
-            parts = text.split()
-            command = parts[0].lower()
-            args = parts[1:] if len(parts) > 1 else []
+            # Handle basic commands first
+            if text.lower() in ["/start", "/help"]:
+                return await self._handle_help_command(chat_id, username)
             
-            if command in ["/start", "/help"]:
-                help_text = (
-                    "🛡️ *LinkShield Security Bot*\n\n"
-                    "I help analyze URLs for security threats and malware.\n\n"
-                    "*How to use:*\n"
-                    "• Send me any URL to analyze\n"
-                    "• Use /analyze <url> for specific analysis\n"
-                    "• I'll check for malware, phishing, and other threats\n\n"
-                    "*Commands:*\n"
-                    "/start - Show this welcome message\n"
-                    "/help - Show help information\n"
-                    "/analyze <url> - Analyze a specific URL\n"
-                    "/stats - Show your analysis statistics\n\n"
-                    "Stay safe online! 🔒"
-                )
-                
-                await self._send_message(chat_id, help_text, parse_mode="Markdown")
-                
-                return {
-                    "type": "command",
-                    "command": command,
-                    "action": "help_sent",
-                    "user": username
-                }
+            # Parse command using standardized interface
+            bot_command = await self.parse_command(message)
             
-            elif command == "/analyze":
-                if not args:
-                    await self._send_message(
-                        chat_id, 
-                        "Please provide a URL to analyze.\nExample: /analyze https://example.com"
-                    )
-                    return {
-                        "type": "command",
-                        "command": command,
-                        "action": "missing_url",
-                        "user": username
-                    }
-                
-                url = args[0]
-                
-                # Validate URL format
-                if not self._is_valid_url(url):
-                    await self._send_message(
-                        chat_id,
-                        "❌ Invalid URL format. Please provide a valid URL starting with http:// or https://"
-                    )
-                    return {
-                        "type": "command",
-                        "command": command,
-                        "action": "invalid_url",
-                        "user": username
-                    }
-                
-                # Send analyzing message
-                analyzing_msg = await self._send_message(
-                    chat_id,
-                    f"🔍 Analyzing URL: {url}\nPlease wait..."
-                )
-                
-                # Import here to avoid circular imports
-                from ...bots.gateway import bot_gateway
-                analysis_result = await bot_gateway.analyze_url_quick(url, str(user_id), "telegram")
-                
-                # Format response
-                response_text = self._format_analysis_response(url, analysis_result)
-                
-                # Edit analyzing message with results
-                if analyzing_msg:
-                    await self._edit_message(chat_id, analyzing_msg["message_id"], response_text)
-                else:
-                    await self._send_message(chat_id, response_text)
-                
-                return {
-                    "type": "command",
-                    "command": command,
-                    "url_analyzed": url,
-                    "risk_level": analysis_result.get("risk_level", "unknown"),
-                    "action": "analysis_sent",
-                    "user": username
-                }
-            
-            elif command == "/stats":
-                # Import here to avoid circular imports
-                from ...bots.gateway import bot_gateway
-                stats = await bot_gateway.get_user_stats(str(user_id), "telegram")
-                
-                stats_text = (
-                    f"📊 *Your Analysis Statistics*\n\n"
-                    f"Total URLs analyzed: {stats.get('total_analyzed', 0)}\n"
-                    f"Safe URLs: {stats.get('safe_count', 0)}\n"
-                    f"Risky URLs detected: {stats.get('risky_count', 0)}\n"
-                    f"Last analysis: {stats.get('last_analysis', 'Never')}\n\n"
-                    f"Keep staying safe online! 🛡️"
-                )
-                
-                await self._send_message(chat_id, stats_text, parse_mode="Markdown")
-                
-                return {
-                    "type": "command",
-                    "command": command,
-                    "action": "stats_sent",
-                    "user": username
-                }
-            
-            else:
+            if not bot_command:
+                # Unknown command
                 await self._send_message(
                     chat_id,
-                    f"Unknown command: {command}\nUse /help to see available commands."
+                    "❌ Unknown command. Use /help to see available commands.",
+                    "Markdown"
                 )
-                
                 return {
                     "type": "command",
-                    "command": command,
                     "action": "unknown_command",
                     "user": username
                 }
-                
+            
+            # Send processing message
+            processing_msg = await self._send_message(
+                chat_id,
+                f"🔄 Processing {bot_command.command_type.value.replace('_', ' ')}...\nPlease wait.",
+                "Markdown"
+            )
+            
+            # Route command to gateway for processing
+            from ..gateway import bot_gateway
+            bot_response = await bot_gateway.route_command(bot_command)
+            
+            # Format response for Telegram
+            formatted_response = await self.format_response(bot_response)
+            
+            # Send formatted response
+            success = await self.send_response(formatted_response, chat_id)
+            
+            # Clean up processing message if response was sent successfully
+            if success and processing_msg:
+                try:
+                    await self._delete_message(chat_id, processing_msg["message_id"])
+                except:
+                    pass  # Ignore deletion errors
+            
+            return {
+                "type": "command",
+                "command_type": bot_command.command_type.value,
+                "success": success,
+                "response_type": bot_response.response_type.value,
+                "action": "command_processed",
+                "user": username
+            }
+            
         except Exception as e:
-            logger.error(f"Error handling command: {e}")
+            logger.error(f"Error handling standardized command: {e}")
+            # Send error message to user
+            try:
+                await self._send_message(
+                    chat_id,
+                    "❌ An error occurred while processing your command. Please try again.",
+                    "Markdown"
+                )
+            except:
+                pass
+            
             return {"type": "command", "error": str(e)}
+    
+    async def _handle_help_command(self, chat_id: int, username: str) -> Dict[str, Any]:
+        """Handle help and start commands."""
+        help_text = (
+            "🛡️ *LinkShield Social Protection Bot*\n\n"
+            "I help analyze social media accounts, content compliance, and follower insights.\n\n"
+            "*Available Commands:*\n\n"
+            "🔍 `/analyze_account @username`\n"
+            "   Analyze account safety and risk factors\n\n"
+            "📋 `/check_compliance \"your content here\"`\n"
+            "   Check content for policy compliance\n\n"
+            "👥 `/analyze_followers`\n"
+            "   Analyze your verified followers and networking opportunities\n\n"
+            "ℹ️ `/help` - Show this help message\n\n"
+            "*Examples:*\n"
+            "• `/analyze_account @elonmusk`\n"
+            "• `/check_compliance \"Check this post for violations\"`\n"
+            "• `/analyze_followers`\n\n"
+            "Stay safe on social media! 🔒"
+        )
+        
+        await self._send_message(chat_id, help_text, "Markdown")
+        
+        return {
+            "type": "command",
+            "command": "help",
+            "action": "help_sent",
+            "user": username
+        }
+    
+
     
     async def _handle_edited_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Handle edited message (usually ignored)."""
@@ -349,88 +561,48 @@ class TelegramBotHandler:
             logger.error(f"Error handling callback query: {e}")
             return {"type": "callback_query", "error": str(e)}
     
-    def _extract_urls(self, text: str) -> List[str]:
-        """
-        Extract URLs from text.
-        
-        Args:
-            text: Text to extract URLs from
-            
-        Returns:
-            List of URLs found
-        """
-        # URL regex pattern
-        url_pattern = r'https?://(?:[-\w.])+(?:[:\d]+)?(?:/(?:[\w/_.])*(?:\?(?:[\w&=%.])*)?(?:#(?:[\w.])*)?)?'
-        urls = re.findall(url_pattern, text)
-        return urls
+
     
-    def _is_valid_url(self, url: str) -> bool:
-        """Check if URL has valid format."""
-        return bool(re.match(r'^https?://.+', url))
-    
-    def _format_analysis_response(self, url: str, analysis_result: Dict[str, Any]) -> str:
-        """
-        Format analysis result into Telegram response.
-        
-        Args:
-            url: Analyzed URL
-            analysis_result: Analysis result
-            
-        Returns:
-            Formatted response text
-        """
+    async def _send_message_with_keyboard(self, chat_id: int, response_data: Dict[str, Any]) -> bool:
+        """Send message with inline keyboard."""
         try:
-            risk_level = analysis_result.get("risk_level", "unknown")
-            message = analysis_result.get("message", "Analysis completed")
-            risk_score = analysis_result.get("risk_score", 0)
+            url = f"{self.api_base_url}/sendMessage"
+            payload = {
+                "chat_id": chat_id,
+                "text": response_data.get("text", ""),
+                "parse_mode": response_data.get("parse_mode", "Markdown")
+            }
             
-            # Truncate URL for display
-            display_url = url if len(url) <= 50 else url[:47] + "..."
+            if "reply_markup" in response_data:
+                payload["reply_markup"] = response_data["reply_markup"]
             
-            # Build response with emojis and formatting
-            if risk_level == "high":
-                response = f"🚨 *HIGH RISK DETECTED*\n\n"
-                response += f"URL: `{display_url}`\n"
-                response += f"⚠️ *This URL may be dangerous - avoid clicking!*\n"
-                response += f"Risk Score: {risk_score}/100\n\n"
-                response += f"Detected threats may include malware, phishing, or other security risks."
-            
-            elif risk_level == "medium":
-                response = f"⚠️ *MEDIUM RISK DETECTED*\n\n"
-                response += f"URL: `{display_url}`\n"
-                response += f"🔍 *Proceed with caution*\n"
-                response += f"Risk Score: {risk_score}/100\n\n"
-                response += f"Some suspicious indicators found. Be careful when visiting this URL."
-            
-            elif risk_level == "low":
-                response = f"⚠️ *LOW RISK DETECTED*\n\n"
-                response += f"URL: `{display_url}`\n"
-                response += f"✅ *Generally safe, but be cautious*\n"
-                response += f"Risk Score: {risk_score}/100\n\n"
-                response += f"Minor concerns detected. The URL appears mostly safe."
-            
-            elif risk_level == "safe":
-                response = f"✅ *URL IS SAFE*\n\n"
-                response += f"URL: `{display_url}`\n"
-                response += f"👍 *This URL appears to be safe*\n"
-                response += f"Risk Score: {risk_score}/100\n\n"
-                response += f"No security threats detected. Safe to visit."
-            
-            else:
-                response = f"❓ *ANALYSIS INCONCLUSIVE*\n\n"
-                response += f"URL: `{display_url}`\n"
-                response += f"🔍 *Could not determine safety - be cautious*\n\n"
-                response += f"Unable to complete analysis. Exercise caution when visiting this URL."
-            
-            # Add timestamp
-            response += f"\n🕒 Analyzed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            
-            return response
-            
+            async with self.http_session.post(url, json=payload) as response:
+                success = response.status == 200
+                if not success:
+                    error_text = await response.text()
+                    logger.error(f"Failed to send keyboard message: {response.status} - {error_text}")
+                return success
+                
         except Exception as e:
-            logger.error(f"Error formatting analysis response: {e}")
-            return f"❌ Error analyzing URL: {url}"
+            logger.error(f"Error sending keyboard message: {e}")
+            return False
     
+    async def _delete_message(self, chat_id: int, message_id: int) -> bool:
+        """Delete a message."""
+        try:
+            url = f"{self.api_base_url}/deleteMessage"
+            payload = {
+                "chat_id": chat_id,
+                "message_id": message_id
+            }
+            
+            async with self.http_session.post(url, json=payload) as response:
+                return response.status == 200
+                
+        except Exception as e:
+            logger.error(f"Error deleting message: {e}")
+            return False
+
     async def _send_message(self, chat_id: int, text: str, parse_mode: str = None) -> Optional[Dict[str, Any]]:
         """
         Send a message to a chat.

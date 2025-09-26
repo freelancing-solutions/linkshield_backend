@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
+from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class MetaProtectionAdapter(SocialPlatformAdapter):
             config: Platform-specific configuration including API credentials,
                    risk thresholds, and feature flags for both Facebook and Instagram
         """
-        super().__init__(PlatformType.META)
+        super().__init__(PlatformType.META_FACEBOOK)
         self.config = config or {}
         self.risk_thresholds = self._load_risk_thresholds()
         
@@ -521,3 +522,28 @@ class MetaProtectionAdapter(SocialPlatformAdapter):
     def _generate_crisis_recommendations(self, assessment: Dict[str, Any]) -> List[str]:
         """Generate crisis management recommendations."""
         return ["Monitor community feedback", "Prepare content moderation strategy"]
+
+
+# Register this adapter with the platform registry
+registry.register_adapter(
+    platform_type=PlatformType.META_FACEBOOK,
+    adapter_class=MetaProtectionAdapter,
+    config={
+        'enabled': True,
+        'rate_limits': {
+            'profile_scans_per_hour': 80,
+            'content_analyses_per_hour': 400,
+            'algorithm_checks_per_hour': 40,
+            'crisis_checks_per_hour': 150,
+        },
+        'risk_thresholds': {
+            'link_reach_reduction': 0.6,
+            'content_review_flag': 0.8,
+            'engagement_bait': 0.7,
+            'ad_policy_violation': 0.9,
+            'spam_detection': 0.5,
+            'fake_engagement': 0.4,
+            'community_standards': 0.8
+        }
+    }
+)

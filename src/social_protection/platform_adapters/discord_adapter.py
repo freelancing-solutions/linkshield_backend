@@ -21,6 +21,7 @@ from ..data_models import (
     ContentAnalysisRequest,
     ContentAnalysisResult
 )
+from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +311,7 @@ class DiscordProtectionAdapter(SocialPlatformAdapter):
                 'platform': self.platform_type.value,
                 'profile_id': profile_id,
                 'crisis_level': crisis_level.value,
-                'crisis_indicators': crisis_indicators,
+                'crisis_indicators': Crisis_indicators,
                 'alerts': self._generate_crisis_alerts(crisis_indicators),
                 'recommendations': self._generate_crisis_recommendations(crisis_level),
                 'detection_timestamp': datetime.utcnow().isoformat()
@@ -535,10 +536,10 @@ class DiscordProtectionAdapter(SocialPlatformAdapter):
         
         return min(1.0, total_score)
     
-    def _determine_crisis_level(self, crisis_indicators: Dict[str, Any]) -> RiskLevel:
+    def _determine_crisis_level(self, Crisis_indicators: Dict[str, Any]) -> RiskLevel:
         """Determine crisis level from indicators."""
         max_severity = 0.0
-        for indicator_data in crisis_indicators.values():
+        for indicator_data in Crisis_indicators.values():
             severity = indicator_data.get('severity_score', 0.0)
             max_severity = max(max_severity, severity)
         
@@ -603,3 +604,30 @@ class DiscordProtectionAdapter(SocialPlatformAdapter):
             ]
         
         return ["Continue monitoring for escalation"]
+
+
+# Register the Discord adapter with the platform registry
+registry.register_adapter(
+    PlatformType.DISCORD,
+    DiscordProtectionAdapter,
+    config={
+        'enabled': True,
+        'rate_limits': {
+            'profile_scans_per_hour': 100,
+            'content_analysis_per_hour': 500,
+            'crisis_detection_per_hour': 50,
+            'community_health_per_hour': 20
+        },
+        'risk_thresholds': {
+            'raid_detection': 0.8,
+            'fake_account_ratio': 0.3,
+            'malicious_bot_score': 0.75,
+            'spam_content_score': 0.6,
+            'harassment_score': 0.7,
+            'phishing_score': 0.85,
+            'server_security': 0.5,
+            'nsfw_violation': 0.9,
+            'doxxing_threat': 0.95
+        }
+    }
+)

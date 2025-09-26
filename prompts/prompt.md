@@ -1,193 +1,252 @@
-I have created the following plan after thorough exploration and analysis of the codebase. Follow the below plan verbatim. Trust the files and references. Do not re-verify what's written in the plan. Explore only when absolutely necessary. First implement all the proposed file changes and then I'll review all the changes together at the end.
-
 ### Observations
 
-I've thoroughly analyzed the LinkShield backend codebase and understand the comprehensive social protection infrastructure already in place. The system has mature FastAPI architecture with social media scanning, platform adapters, authentication, and database models. The user wants to add bot functionality for Twitter, Telegram, and Discord that provides quick-access (≤3 second) responses using existing analysis capabilities. The current `SocialScanService` performs comprehensive multi-minute scans, so we need a lightweight "quick analysis" path that reuses existing logic with timeouts and caching.
+After analyzing the codebase, I found that the social protection service has a solid foundation but is missing key components:
+
+**Current State:**
+- Main controller `SocialProtectionController` is fully implemented and wired to routes
+- Two core services `ExtensionDataProcessor` and `SocialScanService` are complete
+- Four of six service modules are implemented: `reputation_monitor`, `profile_scanner`, `crisis_detector`, and `platform_adapters`
+- All platform adapters exist but need registration
+- Database models and data models are in place
+
+**Missing Components:**
+- Two entire service modules: `content_analyzer` and `algorithm_health` (only `__init__.py` files exist)
+- Three specialized controllers: `UserController`, `BotController`, `ExtensionController`
+- Platform adapter registration in the registry
+- Service integration and dependency injection setup
+
+**Test Requirements:**
+- Tests expect all six service modules to be functional
+- Tests reference the three missing controllers
+- Integration tests verify end-to-end functionality
 
 ### Approach
 
-The implementation will add a new bot layer on top of the existing social protection infrastructure. We'll create platform-specific bot handlers (Twitter, Telegram, Discord) that connect to a unified `QuickAccessBotGateway`. This gateway will use a new `QuickAnalysisService` that wraps existing platform adapters with 3-second timeouts and caching. Bot webhooks will be handled through new FastAPI routes with bot-specific authentication. The design reuses existing models, services, and database infrastructure while adding the minimal components needed for real-time bot interactions.
+The implementation will follow a modular approach to complete the missing components while maintaining the existing architecture:
+
+1. **Create Missing Service Modules**: Implement the two missing service packages (`content_analyzer` and `algorithm_health`) with their respective classes
+2. **Add Specialized Controllers**: Create the three missing controllers as thin façades over the main controller
+3. **Complete Platform Integration**: Ensure all platform adapters are registered and functional
+4. **Wire Dependencies**: Update dependency injection to support all new components
+5. **Validate Integration**: Ensure all services work together and tests pass
+
+This approach maintains modularity, avoids breaking existing functionality, and provides a complete, testable system.
 
 ### Reasoning
 
-I explored the codebase structure starting with the main application entry point and social protection module. I examined the existing platform adapters, services, controllers, routes, and authentication system to understand integration patterns. I reviewed the data models to understand request/response structures and checked the requirements.txt for available dependencies. This gave me a complete picture of the current architecture and how bot functionality should integrate.
+I analyzed the social protection codebase by examining the directory structure, reading key implementation files, and understanding the test requirements. I discovered that while the core architecture is solid with a main controller and two primary services, several components are missing. I checked the existing service modules, found that four are implemented but two are completely missing, and identified that three specialized controllers referenced in tests don't exist. I also verified the platform adapter structure and dependency injection setup to understand integration points.
 
 ## Mermaid Diagram
 
 sequenceDiagram
-    participant User as Platform User
-    participant Bot as Bot Handler
-    participant Gateway as QuickAccessBotGateway
-    participant QuickService as QuickAnalysisService
-    participant Adapter as Platform Adapter
+    participant User as User/Bot/Extension
+    participant Controller as Specialized Controller
+    participant MainController as SocialProtectionController
+    participant Services as Core Services
+    participant Analyzers as New Analyzer Services
+    participant Adapters as Platform Adapters
+    participant Registry as PlatformRegistry
     participant DB as Database
 
-    User->>Bot: Send command (DM/mention)
-    Bot->>Bot: Parse command & validate
-    Bot->>Gateway: handle_quick_request(command, user_context)
-    Gateway->>Gateway: classify_request(command)
-    
-    alt Profile Analysis
-        Gateway->>QuickService: quick_profile_analysis(username)
-        QuickService->>Adapter: scan_profile(minimal_data, timeout=3s)
-        Adapter-->>QuickService: risk_assessment
-        QuickService->>DB: Cache result
-    else Content Analysis
-        Gateway->>QuickService: quick_content_analysis(content)
-        QuickService->>Adapter: analyze_content(content, timeout=3s)
-        Adapter-->>QuickService: content_risk
-        QuickService->>DB: Cache result
-    end
-    
-    QuickService-->>Gateway: analysis_result
-    Gateway->>Gateway: format_platform_response(result, platform)
-    Gateway-->>Bot: formatted_response
-    Bot->>User: Send response (DM/reply)
-    
-    opt Background Deep Analysis
-        Bot->>QuickService: schedule_deep_analysis(scan_id)
-        QuickService->>DB: Create full scan record
-        Note over QuickService: Async full analysis using existing SocialScanService
-    end
+    User->>Controller: Request (scan/analyze/assess)
+    Controller->>MainController: Delegate to main controller
+    MainController->>Services: Use ExtensionDataProcessor/SocialScanService
+    Services->>Analyzers: Call ContentRiskAnalyzer/VisibilityScorer
+    Analyzers->>Registry: Get platform adapter
+    Registry->>Adapters: Return registered adapter
+    Adapters->>Analyzers: Platform-specific analysis
+    Analyzers->>Services: Return analysis results
+    Services->>DB: Persist results
+    Services->>MainController: Return processed data
+    MainController->>Controller: Return results
+    Controller->>User: Return response
 
 ## Proposed File Changes
 
-### src\config\settings.py(MODIFY)
-
-Add new environment variables for bot configuration including `TWITTER_BOT_BEARER_TOKEN`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `QUICK_ANALYSIS_TIMEOUT_SECONDS`, `BOT_RATE_LIMIT_PER_MINUTE`, and `BOT_SERVICE_ACCOUNT_ID`. Update the `Settings` class to include these new configuration options with appropriate defaults and validation.
-
-### src\bots(NEW)
-
-Create new directory for bot-related modules and services.
-
-### src\bots\__init__.py(NEW)
-
-Initialize the bots package with exports for the main bot components including `QuickAccessBotGateway`, `TwitterBotHandler`, `TelegramBotHandler`, and `DiscordBotHandler`.
-
-### src\bots\gateway.py(NEW)
+### src\social_protection\content_analyzer\content_risk_analyzer.py(NEW)
 
 References: 
 
-- src\social_protection\services\social_scan_service.py
+- src\social_protection\reputation_monitor\sentiment_analyzer.py
+- src\social_protection\crisis_detector\crisis_analyzer.py
+
+Create the main content risk analyzer class that provides comprehensive content analysis capabilities. This class should implement methods for analyzing social media content for various risk factors including spam patterns, policy violations, and engagement bait. The implementation should include risk scoring algorithms, pattern detection, and integration with AI services for advanced analysis. The class should follow the same architectural patterns as other analyzer classes in the codebase, accepting content data and returning structured risk assessments with confidence scores and detailed findings.
+
+### src\social_protection\content_analyzer\link_penalty_detector.py(NEW)
+
+References: 
+
+- src\social_protection\platform_adapters\base_adapter.py
+- src\social_protection\services\extension_data_processor.py
+
+Implement a specialized detector for identifying external link penalties and algorithmic restrictions. This class should analyze links within social media content to detect patterns that might trigger platform penalties, including suspicious domains, redirect chains, and blacklisted URLs. The implementation should include platform-specific penalty detection logic, URL reputation checking, and risk assessment for different types of external links. The detector should integrate with the platform adapters to provide platform-specific penalty detection rules.
+
+### src\social_protection\content_analyzer\spam_pattern_detector.py(NEW)
+
+References: 
+
+- src\social_protection\services\extension_data_processor.py
+- src\social_protection\reputation_monitor\mention_detector.py
+
+Create a spam pattern detection system that identifies various spam indicators in social media content. The implementation should include pattern matching for common spam techniques, repetitive content detection, suspicious engagement patterns, and coordinated inauthentic behavior indicators. The detector should use machine learning patterns and rule-based detection to identify spam with high accuracy. It should provide detailed analysis of why content is flagged as spam and confidence scores for each detection.
+
+### src\social_protection\content_analyzer\community_notes_analyzer.py(NEW)
+
+References: 
+
+- src\social_protection\reputation_monitor\sentiment_analyzer.py
+- src\services\ai_service.py
+
+Implement an analyzer for detecting content that might trigger community notes or fact-checking mechanisms on social platforms. This class should identify potentially misleading information, controversial claims, and content patterns that typically receive community oversight. The implementation should include fact-checking integration, misinformation pattern detection, and assessment of content credibility. The analyzer should provide recommendations for avoiding community notes and improving content trustworthiness.
+
+### src\social_protection\algorithm_health\visibility_scorer.py(NEW)
+
+References: 
+
+- src\social_protection\platform_adapters\base_adapter.py
+- src\social_protection\reputation_monitor\reputation_tracker.py
+
+Create a comprehensive visibility scoring system that evaluates how well content performs on social media platforms. The implementation should analyze engagement metrics, reach patterns, and algorithmic performance indicators to generate visibility scores. The scorer should track visibility trends over time, identify potential algorithmic penalties, and provide recommendations for improving content visibility. It should integrate with platform adapters to get platform-specific metrics and scoring algorithms.
+
+### src\social_protection\algorithm_health\engagement_analyzer.py(NEW)
+
+References: 
+
+- src\social_protection\profile_scanner\follower_authenticator.py
+- src\social_protection\reputation_monitor\reputation_tracker.py
+
+Implement an engagement pattern analyzer that evaluates the health and authenticity of social media engagement. This class should analyze likes, shares, comments, and other engagement metrics to detect unusual patterns that might indicate algorithmic issues or inauthentic engagement. The implementation should include engagement velocity analysis, audience quality assessment, and engagement pattern anomaly detection. The analyzer should provide insights into engagement health and recommendations for improvement.
+
+### src\social_protection\algorithm_health\penalty_detector.py(NEW)
+
+References: 
+
+- src\social_protection\algorithm_health\visibility_scorer.py(NEW)
 - src\social_protection\platform_adapters\base_adapter.py
 
-Implement the `QuickAccessBotGateway` class that serves as the central coordinator for all bot platforms. This class will handle command parsing, route requests to the appropriate quick analysis service, and format responses for each platform. Include methods for `handle_quick_request()`, `classify_request()`, and `format_platform_response()`. The gateway will integrate with the existing `SocialScanService` and platform adapters but with strict 3-second timeouts.
+Create a system for detecting algorithmic penalties and restrictions on social media accounts. The implementation should monitor for signs of shadow banning, reach reduction, engagement throttling, and other algorithmic penalties. The detector should analyze engagement patterns, reach metrics, and visibility indicators to identify when an account might be penalized. It should provide detailed analysis of penalty types, severity assessment, and recovery recommendations.
 
-### src\bots\handlers(NEW)
-
-Create directory for platform-specific bot handlers.
-
-### src\bots\handlers\__init__.py(NEW)
-
-Initialize handlers package with exports for all bot handler classes.
-
-### src\bots\handlers\twitter_bot_handler.py(NEW)
+### src\social_protection\algorithm_health\shadow_ban_detector.py(NEW)
 
 References: 
 
-- src\bots\gateway.py(NEW)
+- src\social_protection\algorithm_health\penalty_detector.py(NEW)
+- src\social_protection\algorithm_health\engagement_analyzer.py(NEW)
 
-Implement `TwitterBotHandler` class that handles Twitter webhook events, parses DMs and mentions, extracts commands, and sends responses via Twitter API. Include methods for `process_webhook()`, `parse_dm_command()`, `parse_mention_command()`, `send_dm_response()`, and `send_mention_reply()`. The handler will validate Twitter webhook signatures and handle rate limiting according to Twitter's API limits.
+Implement a specialized detector for identifying shadow bans and stealth restrictions on social media platforms. This class should analyze visibility patterns, engagement drops, and reach limitations to detect when content or accounts are being suppressed without explicit notification. The implementation should include platform-specific shadow ban detection algorithms, historical comparison analysis, and confidence scoring for shadow ban detection. The detector should provide actionable insights for addressing potential shadow bans.
 
-### src\bots\handlers\telegram_bot_handler.py(NEW)
-
-References: 
-
-- src\bots\gateway.py(NEW)
-
-Implement `TelegramBotHandler` class that processes Telegram webhook updates, handles both direct messages and inline queries, parses bot commands, and sends responses. Include methods for `process_webhook()`, `handle_message()`, `handle_inline_query()`, `send_message()`, and `answer_inline_query()`. Support Telegram's custom keyboards for quick actions and handle file uploads for content analysis.
-
-### src\bots\handlers\discord_bot_handler.py(NEW)
+### src\social_protection\controllers\user_controller.py(NEW)
 
 References: 
 
-- src\bots\gateway.py(NEW)
-
-Implement `DiscordBotHandler` class that processes Discord webhook interactions, handles slash commands and direct messages, and sends responses with Discord's embed formatting. Include methods for `process_webhook()`, `handle_slash_command()`, `handle_dm()`, `send_response()`, and `create_embed_response()`. Support Discord's interaction responses and follow-up messages for longer analyses.
-
-### src\services\quick_analysis_service.py(NEW)
-
-References: 
-
-- src\social_protection\services\social_scan_service.py
-- src\social_protection\platform_adapters\twitter_adapter.py
-- src\social_protection\platform_adapters\base_adapter.py
-
-Create `QuickAnalysisService` class that provides fast, lightweight analysis by wrapping existing social protection services with strict timeouts and caching. Implement methods for `quick_profile_analysis()`, `quick_content_analysis()`, and `quick_risk_assessment()` that reuse logic from `SocialScanService` and platform adapters but with 3-second limits. Include caching mechanisms to store recent analysis results and fallback responses for timeout scenarios.
-
-### src\models\bot.py(NEW)
-
-References: 
-
-- src\models\user.py
-
-Create database models for bot operations including `BotCommand` for logging bot interactions, `BotUser` for mapping external platform users to LinkShield users, and `BotSession` for tracking conversation state. Include fields for platform, external_user_id, command_type, response_time, and success status. These models will help with analytics, debugging, and user mapping.
-
-### src\routes\bot_webhooks.py(NEW)
-
-References: 
-
-- src\routes\social_protection.py
-- src\bots\handlers\twitter_bot_handler.py(NEW)
-- src\bots\handlers\telegram_bot_handler.py(NEW)
-- src\bots\handlers\discord_bot_handler.py(NEW)
-
-Create FastAPI router for bot webhook endpoints including `/api/v1/bots/twitter/webhook`, `/api/v1/bots/telegram/webhook`, and `/api/v1/bots/discord/webhook`. Each endpoint will validate platform-specific webhook signatures, parse incoming requests, and delegate to the appropriate bot handler. Include proper error handling, rate limiting, and logging for all webhook interactions.
-
-### src\controllers\bot_controller.py(NEW)
-
-References: 
-
+- src\social_protection\controllers\social_protection_controller.py
 - src\controllers\base_controller.py
+
+Create a specialized controller for user-facing social protection services. This controller should inherit from or delegate to `SocialProtectionController` while providing user-specific functionality and simplified interfaces. The implementation should include methods for user profile scanning, personal content assessment, and user-specific monitoring features. The controller should handle user authentication, rate limiting, and provide user-friendly error messages and responses. It should expose the same core functionality as the main controller but with user-centric optimizations.
+
+### src\social_protection\controllers\bot_controller.py(NEW)
+
+References: 
+
+- src\social_protection\controllers\social_protection_controller.py
+- src\controllers\bot_controller.py
+
+Implement a controller specifically designed for bot integration and automated social protection services. This controller should provide APIs optimized for bot consumption, including batch processing capabilities, webhook support, and automated monitoring features. The implementation should include bot authentication, high-volume processing support, and integration with the existing bot infrastructure. The controller should expose social protection functionality in a format suitable for automated systems and third-party integrations.
+
+### src\social_protection\controllers\extension_controller.py(NEW)
+
+References: 
+
+- src\social_protection\controllers\social_protection_controller.py
+- src\social_protection\services\extension_data_processor.py
+
+Create a controller optimized for browser extension integration and real-time social protection features. This controller should provide lightweight, fast-response APIs for browser extensions, including real-time content analysis, quick safety checks, and extension-specific data processing. The implementation should focus on low-latency responses, efficient data processing, and extension-friendly error handling. The controller should integrate closely with the `ExtensionDataProcessor` service and provide extension-specific rate limiting and caching.
+
+### src\social_protection\controllers\__init__.py(MODIFY)
+
+References: 
+
 - src\social_protection\controllers\social_protection_controller.py
 
-Implement `BotController` class that handles business logic for bot operations including user mapping, command validation, rate limiting, and analytics. Include methods for `map_external_user()`, `validate_bot_command()`, `log_bot_interaction()`, and `get_bot_analytics()`. The controller will integrate with existing authentication and rate limiting systems while providing bot-specific functionality.
+Update the controllers package initialization to export all four controllers: `SocialProtectionController`, `UserController`, `BotController`, and `ExtensionController`. Add proper imports for the three new controllers and include them in the `__all__` list. This ensures that tests and other parts of the system can import these controllers from the controllers package.
+
+### src\social_protection\platform_adapters\twitter_adapter.py(MODIFY)
+
+References: 
+
+- src\social_protection\registry.py
+- src\social_protection\platform_adapters\base_adapter.py
+
+Add platform registration logic to the Twitter adapter to ensure it registers itself with the `PlatformRegistry` when the module is imported. Add registration call at the module level that registers the `TwitterProtectionAdapter` with the appropriate platform type and configuration. Ensure the adapter implements all required methods from the base adapter and provides Twitter-specific functionality for profile scanning, content analysis, algorithm health monitoring, and crisis detection.
+
+### src\social_protection\platform_adapters\meta_adapter.py(MODIFY)
+
+References: 
+
+- src\social_protection\registry.py
+- src\social_protection\platform_adapters\base_adapter.py
+
+Add platform registration logic to the Meta adapter and ensure it implements all required methods from the base adapter. The adapter should handle both Facebook and Instagram functionality and register itself with the appropriate platform types. Implement Meta-specific algorithms for profile scanning, content analysis, and algorithm health monitoring. Add proper error handling and rate limiting for Meta's API requirements.
+
+### src\social_protection\platform_adapters\tiktok_adapter.py(MODIFY)
+
+References: 
+
+- src\social_protection\registry.py
+- src\social_protection\platform_adapters\base_adapter.py
+
+Add platform registration logic to the TikTok adapter and implement all required base adapter methods. The adapter should provide TikTok-specific functionality for content analysis, algorithm health monitoring, and crisis detection. Implement TikTok's unique algorithmic patterns and content policies in the analysis methods. Add proper registration with the platform registry and ensure compatibility with TikTok's API limitations.
+
+### src\social_protection\platform_adapters\linkedin_adapter.py(MODIFY)
+
+References: 
+
+- src\social_protection\registry.py
+- src\social_protection\platform_adapters\base_adapter.py
+
+Add platform registration logic to the LinkedIn adapter and implement professional network-specific analysis methods. The adapter should handle LinkedIn's professional context in content analysis and provide business-focused algorithm health monitoring. Implement LinkedIn-specific risk factors and professional content guidelines. Add proper registration with the platform registry and handle LinkedIn's API requirements and rate limits.
+
+### src\social_protection\platform_adapters\telegram_adapter.py(MODIFY)
+
+References: 
+
+- src\social_protection\registry.py
+- src\social_protection\platform_adapters\base_adapter.py
+
+Add platform registration logic to the Telegram adapter and implement messaging platform-specific analysis methods. The adapter should handle Telegram's unique features like channels, groups, and bots in the analysis. Implement Telegram-specific security concerns and content policies. Add proper registration with the platform registry and handle Telegram's API characteristics and limitations.
+
+### src\social_protection\platform_adapters\discord_adapter.py(MODIFY)
+
+References: 
+
+- src\social_protection\registry.py
+- src\social_protection\platform_adapters\base_adapter.py
+
+Add platform registration logic to the Discord adapter and implement gaming/community platform-specific analysis methods. The adapter should handle Discord's server-based structure and community features in the analysis. Implement Discord-specific moderation patterns and community guidelines. Add proper registration with the platform registry and handle Discord's API requirements and rate limits.
+
+### src\social_protection\platform_adapters\__init__.py(MODIFY)
+
+References: 
+
+- src\social_protection\platform_adapters\base_adapter.py
+
+Update the platform adapters package initialization to ensure all adapters are imported and registered when the package is loaded. Add import statements that trigger the registration of all platform adapters with the registry. This ensures that when the social protection system starts, all platform adapters are available for use. The imports should be added after the existing imports to trigger the registration side effects.
 
 ### src\controllers\depends.py(MODIFY)
 
 References: 
 
-- src\controllers\bot_controller.py(NEW)
+- src\social_protection\controllers\user_controller.py(NEW)
+- src\social_protection\controllers\bot_controller.py(NEW)
+- src\social_protection\controllers\extension_controller.py(NEW)
 
-Add dependency injection function `get_bot_controller()` that creates and returns a `BotController` instance with all required services. Follow the same pattern as `get_social_protection_controller()` to ensure consistent dependency management across the application.
+Add dependency injection functions for the three new social protection controllers: `get_user_controller`, `get_bot_controller`, and `get_extension_controller`. These functions should follow the same pattern as the existing `get_social_protection_controller` function, injecting the required dependencies and returning the appropriate controller instances. The functions should handle the dependency injection for security service, auth service, email service, and any controller-specific services. Update imports to include the new controller classes from the social protection controllers package.
 
-### src\authentication\dependencies.py(MODIFY)
-
-References: 
-
-- src\models\user.py
-
-Add new authentication dependency `get_bot_service_user()` that returns a service account user for bot operations. This allows bots to perform analysis without requiring individual user authentication while still maintaining audit trails. Include validation for bot-specific tokens and rate limiting.
-
-### app.py(MODIFY)
+### src\services\depends.py(MODIFY)
 
 References: 
 
-- src\routes\bot_webhooks.py(NEW)
+- src\social_protection\content_analyzer\content_risk_analyzer.py(NEW)
+- src\social_protection\algorithm_health\visibility_scorer.py(NEW)
 
-Import and include the new bot webhooks router in the FastAPI application. Add `from src.routes.bot_webhooks import router as bot_webhooks_router` and `app.include_router(bot_webhooks_router)` to register the bot endpoints with the main application.
-
-### requirements.txt(MODIFY)
-
-Add new dependencies for bot functionality including `python-telegram-bot` for Telegram bot API, `tweepy` for Twitter API v2 integration, `discord.py` for Discord bot functionality, and `cachetools` for response caching (if not already present). These libraries will handle platform-specific API interactions and webhook processing.
-
-### .env.example(MODIFY)
-
-Add example environment variables for bot configuration including `TWITTER_BOT_BEARER_TOKEN=your_twitter_bearer_token`, `TELEGRAM_BOT_TOKEN=your_telegram_bot_token`, `DISCORD_BOT_TOKEN=your_discord_bot_token`, `QUICK_ANALYSIS_TIMEOUT_SECONDS=3`, `BOT_RATE_LIMIT_PER_MINUTE=60`, and `BOT_SERVICE_ACCOUNT_ID=bot_service_account_uuid`. Include comments explaining how to obtain these tokens from each platform.
-
-### src\alembic\versions\008_add_bot_models.py(NEW)
-
-References: 
-
-- src\models\bot.py(NEW)
-- src\alembic\versions\007_add_social_protection_models.py
-
-Create Alembic migration to add bot-related database tables including `bot_commands`, `bot_users`, and `bot_sessions`. The migration will create tables with appropriate indexes, foreign key constraints, and follow the same patterns as existing social protection models. Include proper rollback functionality for the migration.
-
-### docs\social_media_shield\bots.md(NEW)
-
-References: 
-
-- docs\social_media_shield\twitter.md
-
-Create comprehensive documentation for the bot functionality including setup instructions for each platform, webhook configuration, command reference, rate limiting details, and troubleshooting guide. Include examples of bot interactions and integration with existing LinkShield features. Document the architecture and how bots integrate with the social protection system.
+Add dependency injection functions for the new service classes from the content_analyzer and algorithm_health modules. Create functions like `get_content_risk_analyzer`, `get_visibility_scorer`, etc., following the existing patterns in the file. These functions should handle the instantiation and dependency injection for the new service classes, ensuring they receive any required dependencies like AI services, database sessions, or configuration. Update the imports to include all the new service classes.

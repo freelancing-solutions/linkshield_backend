@@ -13,14 +13,10 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from enum import Enum
 
-from .base_adapter import SocialPlatformAdapter
-from ..types import PlatformType, RiskLevel
-from ..data_models import (
-    ProfileScanRequest,
-    ProfileScanResult,
-    ContentAnalysisRequest,
-    ContentAnalysisResult
-)
+from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
+from ..data_models.social_profile_models import ProfileScanRequest, ProfileScanResult
+from ..data_models.content_risk_models import ContentAnalysisRequest, ContentAnalysisResult
+from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +294,7 @@ class TelegramProtectionAdapter(SocialPlatformAdapter):
                 'platform': self.platform_type.value,
                 'profile_id': profile_id,
                 'crisis_level': crisis_level.value,
-                'crisis_indicators': crisis_indicators,
+                'crisis_indicators': Crisis_indicators,
                 'alerts': self._generate_crisis_alerts(crisis_indicators),
                 'recommendations': self._generate_crisis_recommendations(crisis_level),
                 'detection_timestamp': datetime.utcnow().isoformat()
@@ -487,10 +483,10 @@ class TelegramProtectionAdapter(SocialPlatformAdapter):
         
         return min(1.0, total_score)
     
-    def _determine_crisis_level(self, crisis_indicators: Dict[str, Any]) -> RiskLevel:
+    def _determine_crisis_level(self, Crisis_indicators: Dict[str, Any]) -> RiskLevel:
         """Determine crisis level from indicators."""
         max_severity = 0.0
-        for indicator_data in crisis_indicators.values():
+        for indicator_data in Crisis_indicators.values():
             severity = indicator_data.get('severity_score', 0.0)
             max_severity = max(max_severity, severity)
         
@@ -532,17 +528,17 @@ class TelegramProtectionAdapter(SocialPlatformAdapter):
         
         return recommendations
     
-    def _generate_crisis_alerts(self, crisis_indicators: Dict[str, Any]) -> List[str]:
+    def _generate_crisis_alerts(self, Crisis_indicators: Dict[str, Any]) -> List[str]:
         """Generate crisis-specific alerts."""
         alerts = []
         
-        for indicator, data in crisis_indicators.items():
+        for indicator, data in Crisis_indicators.items():
             if data.get('detected', False):
                 alerts.append(f"Crisis detected: {indicator}")
         
         return alerts
     
-    def _generate_crisis_recommendations(self, crisis_level: RiskLevel) -> List[str]:
+    def _generate_crisis_recommendations(self, Crisis_level: RiskLevel) -> List[str]:
         """Generate crisis response recommendations."""
         if crisis_level in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
             return [
@@ -553,3 +549,28 @@ class TelegramProtectionAdapter(SocialPlatformAdapter):
             ]
         
         return ["Continue monitoring for escalation"]
+
+
+# Register the Telegram adapter with the platform registry
+registry.register_adapter(
+    PlatformType.TELEGRAM,
+    TelegramProtectionAdapter,
+    config={
+        'enabled': True,
+        'rate_limits': {
+            'profile_scan': {'requests_per_minute': 30, 'burst_limit': 10},
+            'content_analysis': {'requests_per_minute': 100, 'burst_limit': 20},
+            'algorithm_health': {'requests_per_minute': 10, 'burst_limit': 5},
+            'crisis_detection': {'requests_per_minute': 20, 'burst_limit': 8}
+        },
+        'risk_thresholds': {
+            'bot_detection': 0.7,
+            'fake_subscriber_ratio': 0.4,
+            'scam_pattern_score': 0.75,
+            'malicious_link_score': 0.8,
+            'spam_content_score': 0.6,
+            'forward_manipulation': 0.65,
+            'channel_authenticity': 0.5
+        }
+    }
+)

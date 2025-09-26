@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
+from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +314,7 @@ class TikTokProtectionAdapter(SocialPlatformAdapter):
             reporting_risk = await self._detect_mass_reporting(monitoring_data)
             crisis_assessment['crisis_indicators']['mass_reporting'] = reporting_risk
             
-            # Determine overall crisis level
+            # Determine overall Crisis level
             crisis_assessment['crisis_level'] = self._determine_crisis_level(crisis_assessment['crisis_indicators'])
             
             # Generate alert triggers
@@ -518,7 +519,7 @@ class TikTokProtectionAdapter(SocialPlatformAdapter):
         return {'mass_reporting_detected': False, 'report_velocity': 'normal'}
     
     def _determine_crisis_level(self, crisis_indicators: Dict[str, Any]) -> RiskLevel:
-        """Determine overall crisis level."""
+        """Determine overall Crisis level."""
         return RiskLevel.LOW  # Placeholder
     
     def _generate_crisis_alerts(self, assessment: Dict[str, Any]) -> List[str]:
@@ -528,3 +529,29 @@ class TikTokProtectionAdapter(SocialPlatformAdapter):
     def _generate_crisis_recommendations(self, assessment: Dict[str, Any]) -> List[str]:
         """Generate crisis management recommendations."""
         return ["Monitor community response", "Prepare content strategy"]
+
+
+# Register the TikTok adapter with the platform registry
+registry.register_adapter(
+    PlatformType.TIKTOK,
+    TikTokProtectionAdapter,
+    config={
+        'enabled': True,
+        'rate_limits': {
+            'profile_scan': {'requests': 100, 'window': 3600},  # 100 requests per hour
+            'content_analysis': {'requests': 200, 'window': 3600},  # 200 requests per hour
+            'algorithm_health': {'requests': 50, 'window': 3600},  # 50 requests per hour
+            'crisis_detection': {'requests': 30, 'window': 3600}  # 30 requests per hour
+        },
+        'risk_thresholds': {
+            'fake_engagement_ratio': 0.3,
+            'community_guideline_risk': 0.8,
+            'bio_link_violation': 0.9,
+            'creator_fund_risk': 0.7,
+            'shadowban_probability': 0.5,
+            'hashtag_violation_score': 0.6,
+            'copyright_risk_score': 0.75,
+            'content_moderation_risk': 0.65
+        }
+    }
+)

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from ..config.settings import settings
 from ..services.quick_analysis_service import QuickAnalysisService
 from ..models.bot import BotInteraction, BotUser
-from ..database.connection import get_db_session
+from ..config.database import get_db_session
 
 logger = logging.getLogger(__name__)
 

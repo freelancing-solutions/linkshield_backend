@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 from fastapi import status
 
-from src.app import app
+from app import app
 from src.models.user import User
 from src.models.social_protection import (
     SocialProfileScan,

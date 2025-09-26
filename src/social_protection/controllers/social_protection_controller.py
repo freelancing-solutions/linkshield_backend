@@ -37,7 +37,9 @@ from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 from src.utils import utc_datetime
 
-
+# DEPRECATED - THIS CONTROLLER SHOULD NOT BE USED EITHER USE BOT_CONTROLLER OR 
+# EXTENSION_CONTROLLER OR USER_CONTROLLER DEPENDING ON WHAT YOU ARE DOING 
+#  BOT_CONTROLLER IS FACING BOTS - EXTENSIONS IS BROWSER EXTENSIONS AND USER IS FACING THE USER DASHBOARD
 class SocialProtectionController(BaseController):
     """Controller for social media protection operations.
     

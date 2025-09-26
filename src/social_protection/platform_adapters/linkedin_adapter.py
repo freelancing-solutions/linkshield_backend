@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
+from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -546,8 +547,8 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
         """Detect employment-related controversies."""
         return {'employment_controversy_risk': 0.03, 'controversy_indicators': []}
     
-    def _determine_crisis_level(self, crisis_indicators: Dict[str, Any]) -> RiskLevel:
-        """Determine overall crisis level."""
+    def _determine_crisis_level(self, Crisis_indicators: Dict[str, Any]) -> RiskLevel:
+        """Determine overall Crisis level."""
         return RiskLevel.LOW  # Placeholder
     
     def _generate_crisis_alerts(self, assessment: Dict[str, Any]) -> List[str]:
@@ -557,3 +558,29 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
     def _generate_crisis_recommendations(self, assessment: Dict[str, Any]) -> List[str]:
         """Generate crisis management recommendations."""
         return ["Monitor professional reputation", "Maintain business compliance"]
+
+
+# Register the LinkedIn adapter with the platform registry
+registry.register_adapter(
+    PlatformType.LINKEDIN,
+    LinkedInProtectionAdapter,
+    {
+        'enabled': True,
+        'rate_limits': {
+            'profile_scan': {'requests_per_minute': 30, 'requests_per_hour': 500},
+            'content_analysis': {'requests_per_minute': 60, 'requests_per_hour': 1000},
+            'algorithm_health': {'requests_per_minute': 20, 'requests_per_hour': 300},
+            'crisis_detection': {'requests_per_minute': 15, 'requests_per_hour': 200}
+        },
+        'risk_thresholds': {
+            'fake_connection_ratio': 0.25,
+            'professional_compliance_score': 0.8,
+            'business_reputation_risk': 0.7,
+            'content_professionalism_score': 0.75,
+            'spam_messaging_threshold': 0.6,
+            'fake_endorsement_ratio': 0.3,
+            'company_impersonation_risk': 0.9,
+            'recruitment_scam_score': 0.8
+        }
+    }
+)

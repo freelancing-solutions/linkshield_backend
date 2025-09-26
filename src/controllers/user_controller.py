@@ -25,6 +25,10 @@ from src.models.email import EmailRequest, EmailType
 from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
+from src.services.content_analyzer import ContentAnalyzerService
+from src.services.algorithm_health import AlgorithmHealthService
+from src.social_protection.types import PlatformType, RiskLevel
+from src.social_protection.controllers.social_protection_controller import SocialProtectionController
 from src.utils import utc_datetime
 
 
@@ -150,6 +154,9 @@ class UserController(BaseController):
         security_service: SecurityService,
         auth_service: AuthService,
         email_service: EmailService,
+        content_analyzer_service: Optional[ContentAnalyzerService] = None,
+        algorithm_health_service: Optional[AlgorithmHealthService] = None,
+        social_protection_controller: Optional[SocialProtectionController] = None,
     ) -> None:
         super().__init__(security_service, auth_service, email_service)
 
@@ -157,6 +164,11 @@ class UserController(BaseController):
         self.login_rate_limit = 10
         self.password_reset_rate_limit = 3
         self.api_key_rate_limit = 10
+        
+        # Social protection services
+        self.content_analyzer_service = content_analyzer_service
+        self.algorithm_health_service = algorithm_health_service
+        self.social_protection_controller = social_protection_controller
 
     # --------------------------------------------------------------
     # Public route-friendly methods (keyword-only, return Pydantic)
@@ -207,7 +219,7 @@ class UserController(BaseController):
                     first_name=first_name,
                     last_name=last_name,
                     avatar_url=avatar_url,
-                    marketing_emails=marketing_consent,
+                    marketing_consent=marketing_consent,
                     is_active=True,
                 )
                 user.set_password(password)
@@ -978,3 +990,375 @@ class UserController(BaseController):
         except Exception as e:
             self.logger.error(f"Failed to record failed login for user {getattr(user, 'id', None)}: {e}")
             return
+
+    # --------------------------------------------------------------
+    # Social Protection Operations
+    # --------------------------------------------------------------
+    
+    async def get_user_protection_settings(self, *, user: User) -> Dict[str, Any]:
+        """Get user's social protection settings and configurations."""
+        try:
+            async with self.get_db_session() as session:
+                # Get user's platform configurations
+                from src.models.social_protection import SocialProfileScan
+                stmt = select(SocialProfileScan).where(
+                    SocialProfileScan.user_id == user.id
+                ).order_by(SocialProfileScan.created_at.desc()).limit(10)
+                result = await session.execute(stmt)
+                recent_scans = result.scalars().all()
+                
+                # Build protection settings response
+                settings = {
+                    "user_id": user.id,
+                    "protection_enabled": True,  # Default enabled
+                    "monitoring_frequency": "daily",
+                    "risk_threshold": "medium",
+                    "platforms": {
+                        "twitter": {"enabled": True, "monitoring": True},
+                        "facebook": {"enabled": True, "monitoring": True},
+                        "instagram": {"enabled": True, "monitoring": True},
+                        "linkedin": {"enabled": True, "monitoring": False},
+                        "tiktok": {"enabled": False, "monitoring": False},
+                    },
+                    "notifications": {
+                        "email_alerts": user.email_notifications,
+                        "high_risk_only": False,
+                        "daily_summary": True,
+                    },
+                    "recent_scans": [
+                        {
+                            "id": str(scan.id),
+                            "platform": scan.platform.value,
+                            "status": scan.status.value,
+                            "risk_level": scan.risk_level.value if scan.risk_level else None,
+                            "created_at": scan.created_at.isoformat(),
+                        }
+                        for scan in recent_scans
+                    ],
+                }
+                
+                return settings
+                
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve protection settings: {str(e)}"
+            )
+    
+    async def update_user_protection_settings(
+        self, *, request_model: AnyType, user: User
+    ) -> Dict[str, Any]:
+        """Update user's social protection settings."""
+        data = request_model
+        
+        # Extract settings from request
+        protection_enabled = getattr(data, "protection_enabled", None)
+        monitoring_frequency = getattr(data, "monitoring_frequency", None)
+        risk_threshold = getattr(data, "risk_threshold", None)
+        platforms = getattr(data, "platforms", None)
+        notifications = getattr(data, "notifications", None)
+        
+        try:
+            async with self.get_db_session() as session:
+                # Update user preferences (extend User model as needed)
+                # For now, we'll store in user metadata or create separate settings table
+                
+                # Validate platform settings
+                if platforms:
+                    valid_platforms = {p.value for p in PlatformType}
+                    for platform_name in platforms.keys():
+                        if platform_name not in valid_platforms:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Invalid platform: {platform_name}"
+                            )
+                
+                # Validate risk threshold
+                if risk_threshold:
+                    valid_thresholds = {r.value for r in RiskLevel}
+                    if risk_threshold not in valid_thresholds:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Invalid risk threshold: {risk_threshold}"
+                        )
+                
+                # Update notification preferences
+                if notifications and "email_alerts" in notifications:
+                    user.email_notifications = notifications["email_alerts"]
+                    session.add(user)
+                
+                await session.commit()
+                
+                # Return updated settings
+                return await self.get_user_protection_settings(user=user)
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update protection settings: {str(e)}"
+            )
+    
+    async def get_user_protection_analytics(self, *, user: User) -> Dict[str, Any]:
+        """Get user's social protection analytics and insights."""
+        try:
+            async with self.get_db_session() as session:
+                from src.models.social_protection import SocialProfileScan, ContentAssessment
+                
+                # Get scan statistics
+                scan_stmt = select(SocialProfileScan).where(SocialProfileScan.user_id == user.id)
+                scan_result = await session.execute(scan_stmt)
+                scans = scan_result.scalars().all()
+                
+                # Get assessment statistics
+                assessment_stmt = select(ContentAssessment).where(ContentAssessment.user_id == user.id)
+                assessment_result = await session.execute(assessment_stmt)
+                assessments = assessment_result.scalars().all()
+                
+                # Calculate analytics
+                total_scans = len(scans)
+                completed_scans = len([s for s in scans if s.status.value == "completed"])
+                high_risk_scans = len([s for s in scans if s.risk_level and s.risk_level.value in ["high", "critical"]])
+                
+                # Platform breakdown
+                platform_stats = {}
+                for scan in scans:
+                    platform = scan.platform.value
+                    if platform not in platform_stats:
+                        platform_stats[platform] = {"total": 0, "high_risk": 0}
+                    platform_stats[platform]["total"] += 1
+                    if scan.risk_level and scan.risk_level.value in ["high", "critical"]:
+                        platform_stats[platform]["high_risk"] += 1
+                
+                # Recent activity (last 30 days)
+                from datetime import timedelta
+                thirty_days_ago = utc_datetime() - timedelta(days=30)
+                recent_scans = [s for s in scans if s.created_at >= thirty_days_ago]
+                recent_assessments = [a for a in assessments if a.created_at >= thirty_days_ago]
+                
+                analytics = {
+                    "overview": {
+                        "total_scans": total_scans,
+                        "completed_scans": completed_scans,
+                        "success_rate": (completed_scans / total_scans * 100) if total_scans > 0 else 0,
+                        "high_risk_alerts": high_risk_scans,
+                        "total_assessments": len(assessments),
+                    },
+                    "platform_breakdown": platform_stats,
+                    "recent_activity": {
+                        "scans_last_30_days": len(recent_scans),
+                        "assessments_last_30_days": len(recent_assessments),
+                        "avg_risk_score": sum(
+                            self._risk_level_to_score(s.risk_level) for s in recent_scans if s.risk_level
+                        ) / len(recent_scans) if recent_scans else 0,
+                    },
+                    "protection_health_score": self._calculate_protection_health_score(scans, assessments),
+                }
+                
+                return analytics
+                
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve protection analytics: {str(e)}"
+            )
+    
+    async def initiate_user_platform_scan(
+        self, *, request_model: AnyType, user: User
+    ) -> Dict[str, Any]:
+        """Initiate a social protection scan for user's platform."""
+        if not self.social_protection_controller:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Social protection service not available"
+            )
+        
+        data = request_model
+        platform = getattr(data, "platform", None)
+        profile_url = getattr(data, "profile_url", None)
+        scan_depth = getattr(data, "scan_depth", "basic")
+        
+        if not platform or not profile_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Platform and profile_url are required"
+            )
+        
+        try:
+            # Delegate to social protection controller
+            scan_request = {
+                "platform": platform,
+                "profile_url": profile_url,
+                "scan_depth": scan_depth,
+            }
+            
+            # Create a mock request object for the social protection controller
+            class MockRequest:
+                def __init__(self, data):
+                    for key, value in data.items():
+                        setattr(self, key, value)
+            
+            mock_request = MockRequest(scan_request)
+            
+            result = await self.social_protection_controller.initiate_social_scan(
+                request_model=mock_request,
+                user=user
+            )
+            
+            return {
+                "scan_id": result.id,
+                "platform": result.platform.value,
+                "status": result.status.value,
+                "profile_url": result.profile_url,
+                "scan_depth": result.scan_depth,
+                "created_at": result.created_at.isoformat(),
+                "message": "Scan initiated successfully"
+            }
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to initiate platform scan: {str(e)}"
+            )
+    
+    async def analyze_user_content(
+        self, *, request_model: AnyType, user: User
+    ) -> Dict[str, Any]:
+        """Analyze content for social protection risks using content analyzer service."""
+        if not self.content_analyzer_service:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Content analyzer service not available"
+            )
+        
+        data = request_model
+        content = getattr(data, "content", None)
+        platform = getattr(data, "platform", "twitter")
+        content_type = getattr(data, "content_type", "post")
+        
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Content is required for analysis"
+            )
+        
+        try:
+            # Analyze content using the content analyzer service
+            analysis_result = await self.content_analyzer_service.analyze_content(
+                content=content,
+                platform=platform,
+                content_type=content_type,
+                user_id=str(user.id)
+            )
+            
+            return {
+                "analysis_id": str(uuid.uuid4()),
+                "content_preview": content[:100] + "..." if len(content) > 100 else content,
+                "platform": platform,
+                "content_type": content_type,
+                "risk_analysis": analysis_result.dict(),
+                "analyzed_at": utc_datetime().isoformat(),
+                "user_id": str(user.id),
+            }
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to analyze content: {str(e)}"
+            )
+    
+    async def get_user_algorithm_health(
+        self, *, user: User, platform: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get algorithm health analysis for user's social media presence."""
+        if not self.algorithm_health_service:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Algorithm health service not available"
+            )
+        
+        try:
+            # Get user's recent social media activity data
+            # This would typically come from connected accounts or recent scans
+            mock_engagement_data = {
+                "recent_posts": 10,
+                "avg_likes": 25,
+                "avg_comments": 5,
+                "avg_shares": 3,
+                "follower_growth": 0.02,  # 2% growth
+                "engagement_rate": 0.08,  # 8% engagement rate
+            }
+            
+            # Analyze algorithm health
+            health_result = await self.algorithm_health_service.analyze_algorithm_health(
+                platform=platform or "twitter",
+                user_id=str(user.id),
+                engagement_data=mock_engagement_data
+            )
+            
+            return {
+                "user_id": str(user.id),
+                "platform": platform or "twitter",
+                "health_score": health_result.overall_health_score,
+                "visibility_score": health_result.visibility_score,
+                "engagement_analysis": health_result.engagement_analysis.dict(),
+                "penalty_detection": health_result.penalty_detection.dict(),
+                "shadow_ban_analysis": health_result.shadow_ban_analysis.dict(),
+                "recommendations": health_result.recommendations,
+                "analyzed_at": utc_datetime().isoformat(),
+            }
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to analyze algorithm health: {str(e)}"
+            )
+    
+    # --------------------------------------------------------------
+    # Helper Methods for Social Protection
+    # --------------------------------------------------------------
+    
+    def _risk_level_to_score(self, risk_level: Optional[RiskLevel]) -> float:
+        """Convert risk level enum to numeric score for calculations."""
+        if not risk_level:
+            return 0.0
+        
+        risk_scores = {
+            RiskLevel.LOW: 1.0,
+            RiskLevel.MEDIUM: 2.0,
+            RiskLevel.HIGH: 3.0,
+            RiskLevel.CRITICAL: 4.0,
+        }
+        return risk_scores.get(risk_level, 0.0)
+    
+    def _calculate_protection_health_score(
+        self, scans: List[Any], assessments: List[Any]
+    ) -> float:
+        """Calculate overall protection health score (0-100)."""
+        if not scans and not assessments:
+            return 100.0  # No data means no detected risks
+        
+        # Calculate based on recent scan results
+        recent_scans = scans[-10:] if scans else []  # Last 10 scans
+        
+        if not recent_scans:
+            return 100.0
+        
+        # Calculate average risk score
+        risk_scores = [
+            self._risk_level_to_score(scan.risk_level) 
+            for scan in recent_scans 
+            if scan.risk_level
+        ]
+        
+        if not risk_scores:
+            return 100.0
+        
+        avg_risk = sum(risk_scores) / len(risk_scores)
+        
+        # Convert to health score (inverse of risk, scaled 0-100)
+        # Risk scale: 0-4, Health scale: 100-0
+        health_score = max(0, 100 - (avg_risk * 25))
+        
+        return round(health_score, 1)

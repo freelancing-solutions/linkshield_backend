@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     Index,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -454,6 +455,8 @@ class ContentRiskAssessment(Base):
 
 
 class ProfileAuditORM(Base):
+    __tablename__ = "profile_audits"
+    
     id = Column(Integer, primary_key=True, index=True)
     platform = Column(String(64), nullable=False, index=True)
     handle = Column(String(256), nullable=False, index=True)
@@ -498,16 +501,16 @@ class ProfileAuditORM(Base):
 
 
 class FollowerORM(Base):
-    __tablename__ = "sp_followers"
+    __tablename__ = "followers"
     __table_args__ = (UniqueConstraint("profile_id", "platform_id", name="uq_profile_platformid"),)
 
 
     id = Column(Integer, primary_key=True, index=True)
-    profile_id = Column(Integer, ForeignKey("sp_profile_audits.id"), nullable=False, index=True)
+    profile_id = Column(Integer, ForeignKey("profile_audits.id"), nullable=False, index=True)
     username = Column(String(256), nullable=False, index=True)
     platform_id = Column(String(256), nullable=False, index=True)
     is_suspicious = Column(Boolean, default=False)
-    metadata = Column(JSON, default=dict)
+    metadata_info = Column(JSON, default=dict)
 
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -524,6 +527,6 @@ class FollowerORM(Base):
             "username": self.username,
             "platform_id": self.platform_id,
             "is_suspicious": self.is_suspicious,
-            "metadata": self.metadata,
+            "metadata_info": self.metadata_info,
             }
 

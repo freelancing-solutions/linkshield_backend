@@ -1,5 +1,4 @@
-"""
-Twitter/X Platform Protection Adapter
+"""Twitter/X Platform Protection Adapter
 
 This module implements Twitter-specific social media protection functionality,
 including external link penalty detection, Community Notes trigger analysis,
@@ -14,6 +13,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
+from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -459,3 +459,27 @@ class TwitterProtectionAdapter(SocialPlatformAdapter):
     def _generate_crisis_recommendations(self, assessment: Dict[str, Any]) -> List[str]:
         """Generate crisis management recommendations."""
         return ["Monitor mentions closely", "Prepare response strategy"]
+
+
+# Register this adapter with the platform registry
+registry.register_adapter(
+    platform_type=PlatformType.TWITTER,
+    adapter_class=TwitterProtectionAdapter,
+    config={
+        'enabled': True,
+        'rate_limits': {
+            'profile_scans_per_hour': 100,
+            'content_analyses_per_hour': 500,
+            'algorithm_checks_per_hour': 50,
+            'crisis_checks_per_hour': 200,
+        },
+        'risk_thresholds': {
+            'external_link_penalty': 0.7,
+            'community_notes_trigger': 0.8,
+            'fake_follower_ratio': 0.3,
+            'engagement_manipulation': 0.6,
+            'spam_pattern_score': 0.5,
+            'shadowban_probability': 0.4
+        }
+    }
+)
