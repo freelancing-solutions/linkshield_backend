@@ -78,8 +78,7 @@ class TwitterBotHandler:
     
     async def handle_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Handle incoming Twitter webhook events.
-        
+        Handle incoming Twitter webhook events.        
         Args:
             payload: Twitter webhook payload
             

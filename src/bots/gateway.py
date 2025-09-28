@@ -8,7 +8,7 @@ Twitter, Telegram, and Discord platforms with fast response times.
 import asyncio
 import logging
 from typing import Dict, Optional, Any, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from ..config.settings import settings
 from ..services.quick_analysis_service import QuickAnalysisService
@@ -206,7 +206,7 @@ class QuickAccessBotGateway:
         # Extract user identifier from payload (platform-specific)
         user_key = f"{platform}:user"  # This would be more specific based on payload
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         minute_ago = now - timedelta(minutes=1)
         
         # Initialize rate limiter for user if not exists
