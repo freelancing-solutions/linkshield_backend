@@ -121,10 +121,8 @@ class SubscriptionPlan(Base):
     is_public = Column(Boolean, default=True, nullable=False)
     trial_days = Column(Integer, nullable=True, default=0)
     
-    # External IDs for payment processors
-    stripe_price_id_monthly = Column(String(100), nullable=True)
-    stripe_price_id_yearly = Column(String(100), nullable=True)
-    stripe_product_id = Column(String(100), nullable=True)
+    # Paddle Billing integration
+    # Paddle plan IDs are handled in the service layer, not stored in the model
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -147,15 +145,7 @@ class SubscriptionPlan(Base):
         else:
             return Decimal(0)
     
-    def get_stripe_price_id(self, billing_interval: BillingInterval) -> Optional[str]:
-        """
-        Get Stripe price ID for specific billing interval.
-        """
-        if billing_interval == BillingInterval.MONTHLY:
-            return self.stripe_price_id_monthly
-        elif billing_interval == BillingInterval.YEARLY:
-            return self.stripe_price_id_yearly
-        return None
+
     
     def has_feature(self, feature: str) -> bool:
         """
@@ -338,9 +328,7 @@ class UserSubscription(Base):
     cancel_at_period_end = Column(Boolean, default=False, nullable=False)
     cancellation_reason = Column(Text, nullable=True)
     
-    # External IDs for payment processors
-    stripe_subscription_id = Column(String(100), nullable=True, unique=True)
-    stripe_customer_id = Column(String(100), nullable=True)
+    
     
     # Paddle Billing integration
     paddle_subscription_id = Column(String(100), nullable=True, unique=True)
@@ -489,8 +477,6 @@ class UserSubscription(Base):
         
         if include_sensitive:
             data.update({
-                "stripe_subscription_id": self.stripe_subscription_id,
-                "stripe_customer_id": self.stripe_customer_id,
                 "paddle_subscription_id": self.paddle_subscription_id,
                 "paddle_customer_id": self.paddle_customer_id,
                 "paddle_plan_id": self.paddle_plan_id,
@@ -526,9 +512,7 @@ class Payment(Base):
     payment_method = Column(String(50), nullable=True)  # card, paypal, etc.
     payment_method_details = Column(JSON, nullable=True)  # Last 4 digits, brand, etc.
     
-    # External payment processor information
-    stripe_payment_intent_id = Column(String(100), nullable=True, unique=True)
-    stripe_charge_id = Column(String(100), nullable=True)
+
     
     # Paddle Billing integration
     paddle_transaction_id = Column(String(100), nullable=True, unique=True)
@@ -608,8 +592,6 @@ class Payment(Base):
         
         if include_sensitive:
             data.update({
-                "stripe_payment_intent_id": self.stripe_payment_intent_id,
-                "stripe_charge_id": self.stripe_charge_id,
                 "paddle_transaction_id": self.paddle_transaction_id,
                 "paddle_invoice_id": self.paddle_invoice_id,
                 "processor_fee": float(self.processor_fee) if self.processor_fee else None,

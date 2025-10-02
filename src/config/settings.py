@@ -247,11 +247,6 @@ class Settings(BaseSettings):
     EMAIL_PROVIDER: str = Field(default="resend")
     RESEND_FROM_DOMAIN: Optional[str] = Field(default="https://www.linkshield.site")
     
-    # Stripe Settings (for billing)
-    STRIPE_PUBLISHABLE_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_PUBLISHABLE_KEY")
-    STRIPE_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_SECRET_KEY")
-    STRIPE_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_WEBHOOK_SECRET")
-    
     # Paddle Settings (for billing)
     PADDLE_API_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_API_KEY")
     PADDLE_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_SECRET_KEY")

@@ -281,7 +281,6 @@ class HealthController(BaseController):
             "virustotal": self.settings.VIRUSTOTAL_API_KEY is not None,
             "google_safe_browsing": self.settings.GOOGLE_SAFE_BROWSING_API_KEY is not None,
             "urlvoid": self.settings.URLVOID_API_KEY is not None,
-            "stripe": self.settings.STRIPE_SECRET_KEY is not None,
         }
         return {
             "status": "healthy",
