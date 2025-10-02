@@ -1,252 +1,124 @@
+I have created the following plan after thorough exploration and analysis of the codebase. Follow the below plan verbatim. Trust the files and references. Do not re-verify what's written in the plan. Explore only when absolutely necessary. First implement all the proposed file changes and then I'll review all the changes together at the end.
+
 ### Observations
 
-After analyzing the codebase, I found that the social protection service has a solid foundation but is missing key components:
+I've analyzed the codebase and identified all Stripe-related code that needs to be removed. The good news is that Stripe was never fully integrated—there are no actual Stripe imports or service implementations. The references are limited to:
 
-**Current State:**
-- Main controller `SocialProtectionController` is fully implemented and wired to routes
-- Two core services `ExtensionDataProcessor` and `SocialScanService` are complete
-- Four of six service modules are implemented: `reputation_monitor`, `profile_scanner`, `crisis_detector`, and `platform_adapters`
-- All platform adapters exist but need registration
-- Database models and data models are in place
+1. **Database model fields** in `src/models/subscription.py` for `SubscriptionPlan`, `UserSubscription`, and `Payment` models
+2. **Configuration settings** in `src/config/settings.py` 
+3. **Environment variables** in `.env.example`
+4. **Health check** reference in `src/controllers/health_controller.py`
+5. **Documentation** references in various markdown files
 
-**Missing Components:**
-- Two entire service modules: `content_analyzer` and `algorithm_health` (only `__init__.py` files exist)
-- Three specialized controllers: `UserController`, `BotController`, `ExtensionController`
-- Platform adapter registration in the registry
-- Service integration and dependency injection setup
+The system is already using Paddle for payment processing, so this is primarily a cleanup task to remove legacy Stripe references that were never implemented.
 
-**Test Requirements:**
-- Tests expect all six service modules to be functional
-- Tests reference the three missing controllers
-- Integration tests verify end-to-end functionality
 
 ### Approach
 
-The implementation will follow a modular approach to complete the missing components while maintaining the existing architecture:
+This plan focuses on systematically removing all Stripe-related code and configuration from the LinkShield backend. Since Stripe was never fully integrated (no imports or service implementations exist), this is a straightforward cleanup operation.
 
-1. **Create Missing Service Modules**: Implement the two missing service packages (`content_analyzer` and `algorithm_health`) with their respective classes
-2. **Add Specialized Controllers**: Create the three missing controllers as thin façades over the main controller
-3. **Complete Platform Integration**: Ensure all platform adapters are registered and functional
-4. **Wire Dependencies**: Update dependency injection to support all new components
-5. **Validate Integration**: Ensure all services work together and tests pass
+The approach involves:
+1. **Removing database model fields** from subscription-related models
+2. **Removing configuration settings** from the Settings class
+3. **Updating environment examples** to remove Stripe variables
+4. **Removing health check references** to Stripe
+5. **Updating documentation** to reflect Paddle-only billing
 
-This approach maintains modularity, avoids breaking existing functionality, and provides a complete, testable system.
+Each change will be carefully documented to ensure no breaking changes occur, as the system already relies on Paddle for payment processing.
+
 
 ### Reasoning
 
-I analyzed the social protection codebase by examining the directory structure, reading key implementation files, and understanding the test requirements. I discovered that while the core architecture is solid with a main controller and two primary services, several components are missing. I checked the existing service modules, found that four are implemented but two are completely missing, and identified that three specialized controllers referenced in tests don't exist. I also verified the platform adapter structure and dependency injection setup to understand integration points.
+I started by examining the files mentioned in the user's task. I read `src/models/subscription.py` to identify all Stripe-related fields across the `SubscriptionPlan`, `UserSubscription`, and `Payment` models. I then read portions of `src/config/settings.py` to locate Stripe configuration settings, and reviewed `.env.example` to find Stripe environment variables.
 
-## Mermaid Diagram
+I performed grep searches across the codebase to find all occurrences of "stripe" (case-insensitive) in Python files and markdown documentation. This revealed additional references in `src/controllers/health_controller.py` and various documentation files. I also searched for Stripe imports to confirm that Stripe was never actually integrated into the codebase—no imports were found.
 
-sequenceDiagram
-    participant User as User/Bot/Extension
-    participant Controller as Specialized Controller
-    participant MainController as SocialProtectionController
-    participant Services as Core Services
-    participant Analyzers as New Analyzer Services
-    participant Adapters as Platform Adapters
-    participant Registry as PlatformRegistry
-    participant DB as Database
+Finally, I read the `src/services/subscription_service.py` file to verify that it uses Paddle exclusively for payment processing, confirming that removing Stripe references won't break any existing functionality.
 
-    User->>Controller: Request (scan/analyze/assess)
-    Controller->>MainController: Delegate to main controller
-    MainController->>Services: Use ExtensionDataProcessor/SocialScanService
-    Services->>Analyzers: Call ContentRiskAnalyzer/VisibilityScorer
-    Analyzers->>Registry: Get platform adapter
-    Registry->>Adapters: Return registered adapter
-    Adapters->>Analyzers: Platform-specific analysis
-    Analyzers->>Services: Return analysis results
-    Services->>DB: Persist results
-    Services->>MainController: Return processed data
-    MainController->>Controller: Return results
-    Controller->>User: Return response
 
 ## Proposed File Changes
 
-### src\social_protection\content_analyzer\content_risk_analyzer.py(NEW)
+### src\models\subscription.py(MODIFY)
+
+Remove all Stripe-related fields and methods from the subscription models:
+
+**In `SubscriptionPlan` class (lines 78-307):**
+- Remove the comment `# External IDs for payment processors` at line 124 and replace with `# Paddle Billing integration` to be consistent with `UserSubscription` model
+- Remove field `stripe_price_id_monthly` at line 125
+- Remove field `stripe_price_id_yearly` at line 126
+- Remove field `stripe_product_id` at line 127
+- Remove the entire method `get_stripe_price_id()` at lines 150-158, including its docstring
+
+**In `UserSubscription` class (lines 309-505):**
+- Remove the comment `# External IDs for payment processors` at line 341
+- Remove field `stripe_subscription_id` at line 342
+- Remove field `stripe_customer_id` at line 343
+- In the `to_dict()` method (lines 467-504), remove the Stripe-related fields from the `include_sensitive` block:
+  - Remove line 492: `"stripe_subscription_id": self.stripe_subscription_id,`
+  - Remove line 493: `"stripe_customer_id": self.stripe_customer_id,`
+
+**In `Payment` class (lines 507-623):**
+- Remove the comment `# External payment processor information` at line 529
+- Remove field `stripe_payment_intent_id` at line 530
+- Remove field `stripe_charge_id` at line 531
+- In the `to_dict()` method (lines 587-622), remove the Stripe-related fields from the `include_sensitive` block:
+  - Remove line 611: `"stripe_payment_intent_id": self.stripe_payment_intent_id,`
+  - Remove line 612: `"stripe_charge_id": self.stripe_charge_id,`
+
+After these removals, ensure proper spacing and formatting is maintained. The models should only contain Paddle-related payment processor fields.
+
+### src\config\settings.py(MODIFY)
+
+Remove all Stripe-related configuration settings from the `Settings` class:
+
+**Remove the Stripe Settings section (lines 250-253):**
+- Remove the comment line 250: `# Stripe Settings (for billing)`
+- Remove field at line 251: `STRIPE_PUBLISHABLE_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_PUBLISHABLE_KEY")`
+- Remove field at line 252: `STRIPE_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_SECRET_KEY")`
+- Remove field at line 253: `STRIPE_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_WEBHOOK_SECRET")`
+- Remove the blank line at line 254
+
+The Paddle Settings section (starting at line 255) should remain unchanged and move up to replace the removed Stripe section. This ensures that the billing configuration only references Paddle, which is the active payment processor.
+
+### .env.example(MODIFY)
+
+Remove all Stripe-related environment variable examples:
+
+**Remove the Stripe Configuration section (lines 188-191):**
+- Remove the comment line 188: `# Stripe Configuration (for subscriptions)`
+- Remove line 189: `STRIPE_PUBLISHABLE_KEY=pk_test_your-stripe-publishable-key`
+- Remove line 190: `STRIPE_SECRET_KEY=sk_test_your-stripe-secret-key`
+- Remove line 191: `STRIPE_WEBHOOK_SECRET=whsec_your-stripe-webhook-secret`
+- Remove the blank line at line 192
+
+The Webhook Configuration section (starting at line 193) should remain and move up to replace the removed Stripe section. This ensures that the environment variable examples only show Paddle configuration, which is the active payment processor being used in the application.
+
+### src\controllers\health_controller.py(MODIFY)
 
 References: 
 
-- src\social_protection\reputation_monitor\sentiment_analyzer.py
-- src\social_protection\crisis_detector\crisis_analyzer.py
+- src\config\settings.py(MODIFY)
 
-Create the main content risk analyzer class that provides comprehensive content analysis capabilities. This class should implement methods for analyzing social media content for various risk factors including spam patterns, policy violations, and engagement bait. The implementation should include risk scoring algorithms, pattern detection, and integration with AI services for advanced analysis. The class should follow the same architectural patterns as other analyzer classes in the codebase, accepting content data and returning structured risk assessments with confidence scores and detailed findings.
+Remove the Stripe reference from the external services health check:
 
-### src\social_protection\content_analyzer\link_penalty_detector.py(NEW)
+**In the `_check_external_services()` method (lines 278-294):**
+- In the `external_services` dictionary (lines 279-285), remove line 284: `"stripe": self.settings.STRIPE_SECRET_KEY is not None,`
 
-References: 
+This method checks which external API services are configured. Since Stripe is being removed and Paddle is the active payment processor, the Stripe check should be removed. The method will continue to check for OpenAI, VirusTotal, Google Safe Browsing, and URLVoid API configurations.
 
-- src\social_protection\platform_adapters\base_adapter.py
-- src\social_protection\services\extension_data_processor.py
+Note: If desired, a Paddle check could be added in the future (e.g., `"paddle": self.settings.PADDLE_API_KEY is not None`), but that's outside the scope of this Stripe removal task.
 
-Implement a specialized detector for identifying external link penalties and algorithmic restrictions. This class should analyze links within social media content to detect patterns that might trigger platform penalties, including suspicious domains, redirect chains, and blacklisted URLs. The implementation should include platform-specific penalty detection logic, URL reputation checking, and risk assessment for different types of external links. The detector should integrate with the platform adapters to provide platform-specific penalty detection rules.
-
-### src\social_protection\content_analyzer\spam_pattern_detector.py(NEW)
+### src\services\subscription_service.py(MODIFY)
 
 References: 
 
-- src\social_protection\services\extension_data_processor.py
-- src\social_protection\reputation_monitor\mention_detector.py
+- src\services\paddle_client.py
 
-Create a spam pattern detection system that identifies various spam indicators in social media content. The implementation should include pattern matching for common spam techniques, repetitive content detection, suspicious engagement patterns, and coordinated inauthentic behavior indicators. The detector should use machine learning patterns and rule-based detection to identify spam with high accuracy. It should provide detailed analysis of why content is flagged as spam and confidence scores for each detection.
+Verify that no Stripe-related code exists in the subscription service (this is a verification step, no changes needed):
 
-### src\social_protection\content_analyzer\community_notes_analyzer.py(NEW)
+**Verification checklist:**
+- Confirm that the service only imports and uses `PaddleClientService` from `src/services/paddle_client.py` (line 31)
+- Confirm that all subscription creation, upgrade, and cancellation methods use Paddle exclusively
+- Confirm that there are no Stripe imports or references in the file
 
-References: 
-
-- src\social_protection\reputation_monitor\sentiment_analyzer.py
-- src\services\ai_service.py
-
-Implement an analyzer for detecting content that might trigger community notes or fact-checking mechanisms on social platforms. This class should identify potentially misleading information, controversial claims, and content patterns that typically receive community oversight. The implementation should include fact-checking integration, misinformation pattern detection, and assessment of content credibility. The analyzer should provide recommendations for avoiding community notes and improving content trustworthiness.
-
-### src\social_protection\algorithm_health\visibility_scorer.py(NEW)
-
-References: 
-
-- src\social_protection\platform_adapters\base_adapter.py
-- src\social_protection\reputation_monitor\reputation_tracker.py
-
-Create a comprehensive visibility scoring system that evaluates how well content performs on social media platforms. The implementation should analyze engagement metrics, reach patterns, and algorithmic performance indicators to generate visibility scores. The scorer should track visibility trends over time, identify potential algorithmic penalties, and provide recommendations for improving content visibility. It should integrate with platform adapters to get platform-specific metrics and scoring algorithms.
-
-### src\social_protection\algorithm_health\engagement_analyzer.py(NEW)
-
-References: 
-
-- src\social_protection\profile_scanner\follower_authenticator.py
-- src\social_protection\reputation_monitor\reputation_tracker.py
-
-Implement an engagement pattern analyzer that evaluates the health and authenticity of social media engagement. This class should analyze likes, shares, comments, and other engagement metrics to detect unusual patterns that might indicate algorithmic issues or inauthentic engagement. The implementation should include engagement velocity analysis, audience quality assessment, and engagement pattern anomaly detection. The analyzer should provide insights into engagement health and recommendations for improvement.
-
-### src\social_protection\algorithm_health\penalty_detector.py(NEW)
-
-References: 
-
-- src\social_protection\algorithm_health\visibility_scorer.py(NEW)
-- src\social_protection\platform_adapters\base_adapter.py
-
-Create a system for detecting algorithmic penalties and restrictions on social media accounts. The implementation should monitor for signs of shadow banning, reach reduction, engagement throttling, and other algorithmic penalties. The detector should analyze engagement patterns, reach metrics, and visibility indicators to identify when an account might be penalized. It should provide detailed analysis of penalty types, severity assessment, and recovery recommendations.
-
-### src\social_protection\algorithm_health\shadow_ban_detector.py(NEW)
-
-References: 
-
-- src\social_protection\algorithm_health\penalty_detector.py(NEW)
-- src\social_protection\algorithm_health\engagement_analyzer.py(NEW)
-
-Implement a specialized detector for identifying shadow bans and stealth restrictions on social media platforms. This class should analyze visibility patterns, engagement drops, and reach limitations to detect when content or accounts are being suppressed without explicit notification. The implementation should include platform-specific shadow ban detection algorithms, historical comparison analysis, and confidence scoring for shadow ban detection. The detector should provide actionable insights for addressing potential shadow bans.
-
-### src\social_protection\controllers\user_controller.py(NEW)
-
-References: 
-
-- src\social_protection\controllers\social_protection_controller.py
-- src\controllers\base_controller.py
-
-Create a specialized controller for user-facing social protection services. This controller should inherit from or delegate to `SocialProtectionController` while providing user-specific functionality and simplified interfaces. The implementation should include methods for user profile scanning, personal content assessment, and user-specific monitoring features. The controller should handle user authentication, rate limiting, and provide user-friendly error messages and responses. It should expose the same core functionality as the main controller but with user-centric optimizations.
-
-### src\social_protection\controllers\bot_controller.py(NEW)
-
-References: 
-
-- src\social_protection\controllers\social_protection_controller.py
-- src\controllers\bot_controller.py
-
-Implement a controller specifically designed for bot integration and automated social protection services. This controller should provide APIs optimized for bot consumption, including batch processing capabilities, webhook support, and automated monitoring features. The implementation should include bot authentication, high-volume processing support, and integration with the existing bot infrastructure. The controller should expose social protection functionality in a format suitable for automated systems and third-party integrations.
-
-### src\social_protection\controllers\extension_controller.py(NEW)
-
-References: 
-
-- src\social_protection\controllers\social_protection_controller.py
-- src\social_protection\services\extension_data_processor.py
-
-Create a controller optimized for browser extension integration and real-time social protection features. This controller should provide lightweight, fast-response APIs for browser extensions, including real-time content analysis, quick safety checks, and extension-specific data processing. The implementation should focus on low-latency responses, efficient data processing, and extension-friendly error handling. The controller should integrate closely with the `ExtensionDataProcessor` service and provide extension-specific rate limiting and caching.
-
-### src\social_protection\controllers\__init__.py(MODIFY)
-
-References: 
-
-- src\social_protection\controllers\social_protection_controller.py
-
-Update the controllers package initialization to export all four controllers: `SocialProtectionController`, `UserController`, `BotController`, and `ExtensionController`. Add proper imports for the three new controllers and include them in the `__all__` list. This ensures that tests and other parts of the system can import these controllers from the controllers package.
-
-### src\social_protection\platform_adapters\twitter_adapter.py(MODIFY)
-
-References: 
-
-- src\social_protection\registry.py
-- src\social_protection\platform_adapters\base_adapter.py
-
-Add platform registration logic to the Twitter adapter to ensure it registers itself with the `PlatformRegistry` when the module is imported. Add registration call at the module level that registers the `TwitterProtectionAdapter` with the appropriate platform type and configuration. Ensure the adapter implements all required methods from the base adapter and provides Twitter-specific functionality for profile scanning, content analysis, algorithm health monitoring, and crisis detection.
-
-### src\social_protection\platform_adapters\meta_adapter.py(MODIFY)
-
-References: 
-
-- src\social_protection\registry.py
-- src\social_protection\platform_adapters\base_adapter.py
-
-Add platform registration logic to the Meta adapter and ensure it implements all required methods from the base adapter. The adapter should handle both Facebook and Instagram functionality and register itself with the appropriate platform types. Implement Meta-specific algorithms for profile scanning, content analysis, and algorithm health monitoring. Add proper error handling and rate limiting for Meta's API requirements.
-
-### src\social_protection\platform_adapters\tiktok_adapter.py(MODIFY)
-
-References: 
-
-- src\social_protection\registry.py
-- src\social_protection\platform_adapters\base_adapter.py
-
-Add platform registration logic to the TikTok adapter and implement all required base adapter methods. The adapter should provide TikTok-specific functionality for content analysis, algorithm health monitoring, and crisis detection. Implement TikTok's unique algorithmic patterns and content policies in the analysis methods. Add proper registration with the platform registry and ensure compatibility with TikTok's API limitations.
-
-### src\social_protection\platform_adapters\linkedin_adapter.py(MODIFY)
-
-References: 
-
-- src\social_protection\registry.py
-- src\social_protection\platform_adapters\base_adapter.py
-
-Add platform registration logic to the LinkedIn adapter and implement professional network-specific analysis methods. The adapter should handle LinkedIn's professional context in content analysis and provide business-focused algorithm health monitoring. Implement LinkedIn-specific risk factors and professional content guidelines. Add proper registration with the platform registry and handle LinkedIn's API requirements and rate limits.
-
-### src\social_protection\platform_adapters\telegram_adapter.py(MODIFY)
-
-References: 
-
-- src\social_protection\registry.py
-- src\social_protection\platform_adapters\base_adapter.py
-
-Add platform registration logic to the Telegram adapter and implement messaging platform-specific analysis methods. The adapter should handle Telegram's unique features like channels, groups, and bots in the analysis. Implement Telegram-specific security concerns and content policies. Add proper registration with the platform registry and handle Telegram's API characteristics and limitations.
-
-### src\social_protection\platform_adapters\discord_adapter.py(MODIFY)
-
-References: 
-
-- src\social_protection\registry.py
-- src\social_protection\platform_adapters\base_adapter.py
-
-Add platform registration logic to the Discord adapter and implement gaming/community platform-specific analysis methods. The adapter should handle Discord's server-based structure and community features in the analysis. Implement Discord-specific moderation patterns and community guidelines. Add proper registration with the platform registry and handle Discord's API requirements and rate limits.
-
-### src\social_protection\platform_adapters\__init__.py(MODIFY)
-
-References: 
-
-- src\social_protection\platform_adapters\base_adapter.py
-
-Update the platform adapters package initialization to ensure all adapters are imported and registered when the package is loaded. Add import statements that trigger the registration of all platform adapters with the registry. This ensures that when the social protection system starts, all platform adapters are available for use. The imports should be added after the existing imports to trigger the registration side effects.
-
-### src\controllers\depends.py(MODIFY)
-
-References: 
-
-- src\social_protection\controllers\user_controller.py(NEW)
-- src\social_protection\controllers\bot_controller.py(NEW)
-- src\social_protection\controllers\extension_controller.py(NEW)
-
-Add dependency injection functions for the three new social protection controllers: `get_user_controller`, `get_bot_controller`, and `get_extension_controller`. These functions should follow the same pattern as the existing `get_social_protection_controller` function, injecting the required dependencies and returning the appropriate controller instances. The functions should handle the dependency injection for security service, auth service, email service, and any controller-specific services. Update imports to include the new controller classes from the social protection controllers package.
-
-### src\services\depends.py(MODIFY)
-
-References: 
-
-- src\social_protection\content_analyzer\content_risk_analyzer.py(NEW)
-- src\social_protection\algorithm_health\visibility_scorer.py(NEW)
-
-Add dependency injection functions for the new service classes from the content_analyzer and algorithm_health modules. Create functions like `get_content_risk_analyzer`, `get_visibility_scorer`, etc., following the existing patterns in the file. These functions should handle the instantiation and dependency injection for the new service classes, ensuring they receive any required dependencies like AI services, database sessions, or configuration. Update the imports to include all the new service classes.
+Based on my analysis, this file is already Paddle-only and requires no modifications. This verification step ensures that the subscription service will continue to function correctly after Stripe references are removed from the models and configuration.

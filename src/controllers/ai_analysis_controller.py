@@ -22,7 +22,7 @@ from src.services.email_service import EmailService
 from src.models.ai_analysis import ProcessingStatus, AnalysisType, AIAnalysis
 from src.models.task import TaskType, TaskPriority
 from src.models.user import User
-
+from src.utils import utc_datetime
 
 class AIAnalysisController(BaseController):
     """AI analysis controller with background task and webhook support."""
@@ -467,10 +467,10 @@ class AIAnalysisController(BaseController):
             ai_results: Dict[str, Any]
     ) -> None:
         """Update analysis with AI results."""
-        start_time = datetime.now(timezone.utc)
+        start_time = utc_datetime()
 
         try:
-            processing_time = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+            processing_time = int((utc_datetime() - start_time).total_seconds() * 1000)
 
             # Update analysis fields
             analysis.content_summary = ai_results.get('content_summary')
@@ -491,11 +491,11 @@ class AIAnalysisController(BaseController):
             analysis.processing_time_ms = processing_time
             analysis.model_versions = ai_results.get('model_versions', {})
             analysis.processing_status = ProcessingStatus.COMPLETED
-            analysis.processed_at = datetime.now(timezone.utc)
+            analysis.processed_at = utc_datetime()
 
         except Exception as e:
             analysis.processing_status = ProcessingStatus.FAILED
-            analysis.processed_at = datetime.now(timezone.utc)
+            analysis.processed_at = utc_datetime()
             self.logger.error(f"Failed to update analysis: {e}")
             raise
 

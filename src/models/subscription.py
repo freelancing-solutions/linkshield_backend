@@ -342,6 +342,16 @@ class UserSubscription(Base):
     stripe_subscription_id = Column(String(100), nullable=True, unique=True)
     stripe_customer_id = Column(String(100), nullable=True)
     
+    # Paddle Billing integration
+    paddle_subscription_id = Column(String(100), nullable=True, unique=True)
+    paddle_customer_id = Column(String(100), nullable=True)
+    paddle_plan_id = Column(String(100), nullable=True)
+    paddle_status = Column(String(50), nullable=True)  # Raw status from Paddle
+    
+    # Webhook update tracking
+    update_reason = Column(Text, nullable=True)
+    activation_reason = Column(Text, nullable=True)
+    
     # Usage tracking
     daily_checks_used = Column(Integer, default=0, nullable=False)
     monthly_checks_used = Column(Integer, default=0, nullable=False)
@@ -481,8 +491,14 @@ class UserSubscription(Base):
             data.update({
                 "stripe_subscription_id": self.stripe_subscription_id,
                 "stripe_customer_id": self.stripe_customer_id,
+                "paddle_subscription_id": self.paddle_subscription_id,
+                "paddle_customer_id": self.paddle_customer_id,
+                "paddle_plan_id": self.paddle_plan_id,
+                "paddle_status": self.paddle_status,
                 "cancelled_at": self.cancelled_at.isoformat() if self.cancelled_at else None,
                 "cancellation_reason": self.cancellation_reason,
+                "update_reason": self.update_reason,
+                "activation_reason": self.activation_reason,
             })
         
         return data
@@ -513,6 +529,11 @@ class Payment(Base):
     # External payment processor information
     stripe_payment_intent_id = Column(String(100), nullable=True, unique=True)
     stripe_charge_id = Column(String(100), nullable=True)
+    
+    # Paddle Billing integration
+    paddle_transaction_id = Column(String(100), nullable=True, unique=True)
+    paddle_invoice_id = Column(String(100), nullable=True)
+    
     processor_fee = Column(Numeric(10, 2), nullable=True)
     
     # Transaction details
@@ -589,6 +610,8 @@ class Payment(Base):
             data.update({
                 "stripe_payment_intent_id": self.stripe_payment_intent_id,
                 "stripe_charge_id": self.stripe_charge_id,
+                "paddle_transaction_id": self.paddle_transaction_id,
+                "paddle_invoice_id": self.paddle_invoice_id,
                 "processor_fee": float(self.processor_fee) if self.processor_fee else None,
                 "payment_method_details": self.payment_method_details,
                 "failure_code": self.failure_code,

@@ -8,7 +8,7 @@ for various email types including verification, password reset, and notification
 
 import logging
 from typing import Dict, Optional, Any
-from jinja2 import Environment, BaseLoader, Template, TemplateError
+from jinja2 import Environment, BaseLoader, TemplateError
 
 from src.models.email import EmailTemplate, EmailType
 from src.config.settings import settings

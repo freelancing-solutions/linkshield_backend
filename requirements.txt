@@ -95,3 +95,6 @@ transformers
 #  asyncpdg for database
 asyncpg
 psutil
+
+# Payment Processing
+paddle-billing

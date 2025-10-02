@@ -252,6 +252,15 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_SECRET_KEY")
     STRIPE_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_WEBHOOK_SECRET")
     
+    # Paddle Settings (for billing)
+    PADDLE_API_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_API_KEY")
+    PADDLE_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_SECRET_KEY")
+    PADDLE_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_WEBHOOK_SECRET")
+    PADDLE_ENVIRONMENT: str = Field(default="sandbox", env="LINKSHIELD_PADDLE_ENVIRONMENT")
+    PADDLE_VENDOR_ID: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_VENDOR_ID")
+    PADDLE_VENDOR_AUTH_CODE: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_VENDOR_AUTH_CODE")
+    PADDLE_WEBHOOK_URL: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_WEBHOOK_URL")
+    
     # Webhook Settings
     WEBHOOK_SECRET: str = Field(default="your-webhook-secret-key", env="LINKSHIELD_WEBHOOK_SECRET")
     WEBHOOK_TIMEOUT: int = Field(default=30, env="LINKSHIELD_WEBHOOK_TIMEOUT")
