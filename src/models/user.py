@@ -120,6 +120,8 @@ class User(Base):
     activity_logs = relationship("ActivityLog", back_populates="user", cascade="all, delete-orphan")
     social_profile_scans = relationship("SocialProfileScan", back_populates="user", cascade="all, delete-orphan")
     content_risk_assessments = relationship("ContentRiskAssessment", back_populates="user", cascade="all, delete-orphan")
+    extension_sessions = relationship("ExtensionSessionORM", back_populates="user", cascade="all, delete-orphan")
+    algorithm_health_metrics = relationship("AlgorithmHealthMetricsORM", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"

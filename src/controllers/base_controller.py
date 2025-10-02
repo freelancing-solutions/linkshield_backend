@@ -1,11 +1,12 @@
 """Base controller class providing common functionality for all controllers."""
 
-from typing import Dict, Any, Optional, List, Union, AsyncGenerator
+from typing import Dict, Any, Optional, List, Union, AsyncGenerator, Callable
 from datetime import datetime, timezone
 import logging
 import uuid
 import time
 from contextlib import asynccontextmanager
+from functools import wraps
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession

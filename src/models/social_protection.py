@@ -454,6 +454,212 @@ class ContentRiskAssessment(Base):
         return base_dict
 
 
+class CrisisAlertORM(Base):
+    """
+    Crisis alert model for storing brand crisis detection alerts.
+    """
+    __tablename__ = "sp_crisis_alerts"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    
+    # Brand and platform information
+    brand = Column(String(256), nullable=False, index=True)
+    platform = Column(String(64), nullable=True)
+    
+    # Crisis scoring and severity
+    score = Column(Float, nullable=False)  # 0.0 to 1.0
+    severity = Column(String(16), nullable=False)  # OK, Warning, High, Critical
+    reason = Column(String(128), nullable=True)
+    
+    # Time window for crisis detection
+    window_from = Column(DateTime(timezone=True), nullable=False)
+    window_to = Column(DateTime(timezone=True), nullable=False)
+    
+    # Additional crisis data
+    payload = Column(JSON, default=dict, nullable=False)
+    
+    # Alert status
+    resolved = Column(Boolean, default=False, nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_crisis_brand_severity', 'brand', 'severity'),
+        Index('idx_crisis_created_at', 'created_at'),
+        Index('idx_crisis_resolved', 'resolved'),
+    )
+    
+    def __repr__(self) -> str:
+        return f"<CrisisAlertORM(id={self.id}, brand={self.brand}, severity={self.severity}, resolved={self.resolved})>"
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary representation."""
+        return {
+            "id": str(self.id),
+            "brand": self.brand,
+            "platform": self.platform,
+            "score": self.score,
+            "severity": self.severity,
+            "reason": self.reason,
+            "window_from": self.window_from.isoformat() if self.window_from else None,
+            "window_to": self.window_to.isoformat() if self.window_to else None,
+            "payload": self.payload,
+            "resolved": self.resolved,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+        }
+
+
+class CrisisStateORM(Base):
+    """
+    Crisis state model for tracking crisis detection state and hysteresis.
+    """
+    __tablename__ = "sp_crisis_state"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    
+    # Brand identifier (unique)
+    brand = Column(String(256), unique=True, nullable=False, index=True)
+    
+    # Hysteresis tracking
+    consecutive_high_windows = Column(Integer, default=0, nullable=False)
+    last_alert_at = Column(DateTime(timezone=True), nullable=True)
+    last_severity = Column(String(16), nullable=True)
+    
+    # Timestamps
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    def __repr__(self) -> str:
+        return f"<CrisisStateORM(brand={self.brand}, consecutive_high_windows={self.consecutive_high_windows})>"
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary representation."""
+        return {
+            "id": str(self.id),
+            "brand": self.brand,
+            "consecutive_high_windows": self.consecutive_high_windows,
+            "last_alert_at": self.last_alert_at.isoformat() if self.last_alert_at else None,
+            "last_severity": self.last_severity,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class ExtensionSessionORM(Base):
+    """
+    Extension session model for tracking browser extension sessions and state.
+    """
+    __tablename__ = "sp_extension_sessions"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    
+    # Foreign key to user
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Session information
+    session_id = Column(String(128), unique=True, nullable=False, index=True)
+    extension_version = Column(String(32), nullable=True)
+    
+    # Browser and environment information
+    browser_info = Column(JSON, default=dict, nullable=False)
+    active_tabs = Column(JSON, default=list, nullable=False)
+    
+    # Settings and state
+    settings_hash = Column(String(64), nullable=True)
+    
+    # Activity tracking
+    last_activity = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("User", back_populates="extension_sessions")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_extension_user_activity', 'user_id', 'last_activity'),
+    )
+    
+    def __repr__(self) -> str:
+        return f"<ExtensionSessionORM(id={self.id}, user_id={self.user_id}, session_id={self.session_id})>"
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary representation."""
+        return {
+            "id": str(self.id),
+            "user_id": str(self.user_id),
+            "session_id": self.session_id,
+            "extension_version": self.extension_version,
+            "browser_info": self.browser_info,
+            "active_tabs": self.active_tabs,
+            "settings_hash": self.settings_hash,
+            "last_activity": self.last_activity.isoformat() if self.last_activity else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AlgorithmHealthMetricsORM(Base):
+    """
+    Algorithm health metrics model for tracking platform algorithm health indicators.
+    """
+    __tablename__ = "sp_algorithm_health_metrics"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    
+    # Foreign key to user
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Platform information
+    platform = Column(String(64), nullable=False, index=True)
+    
+    # Health scores (0.0 to 100.0)
+    visibility_score = Column(Float, nullable=False)
+    engagement_score = Column(Float, nullable=False)
+    penalty_score = Column(Float, nullable=False)
+    shadow_ban_score = Column(Float, nullable=False)
+    overall_health_score = Column(Float, nullable=False)
+    
+    # Detailed metrics data
+    metrics_data = Column(JSON, default=dict, nullable=False)
+    
+    # Measurement timestamp
+    measured_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("User", back_populates="algorithm_health_metrics")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_health_user_platform', 'user_id', 'platform'),
+        Index('idx_health_measured_at', 'measured_at'),
+    )
+    
+    def __repr__(self) -> str:
+        return f"<AlgorithmHealthMetricsORM(id={self.id}, user_id={self.user_id}, platform={self.platform}, overall_health_score={self.overall_health_score})>"
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary representation."""
+        return {
+            "id": str(self.id),
+            "user_id": str(self.user_id),
+            "platform": self.platform,
+            "visibility_score": self.visibility_score,
+            "engagement_score": self.engagement_score,
+            "penalty_score": self.penalty_score,
+            "shadow_ban_score": self.shadow_ban_score,
+            "overall_health_score": self.overall_health_score,
+            "metrics_data": self.metrics_data,
+            "measured_at": self.measured_at.isoformat() if self.measured_at else None,
+        }
+
+
 class ProfileAuditORM(Base):
     __tablename__ = "profile_audits"
     

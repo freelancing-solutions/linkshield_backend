@@ -2,123 +2,155 @@ I have created the following plan after thorough exploration and analysis of the
 
 ### Observations
 
-I've analyzed the codebase and identified all Stripe-related code that needs to be removed. The good news is that Stripe was never fully integrated—there are no actual Stripe imports or service implementations. The references are limited to:
+I've analyzed the Paddle configuration across the codebase and identified several issues:
 
-1. **Database model fields** in `src/models/subscription.py` for `SubscriptionPlan`, `UserSubscription`, and `Payment` models
-2. **Configuration settings** in `src/config/settings.py` 
-3. **Environment variables** in `.env.example`
-4. **Health check** reference in `src/controllers/health_controller.py`
-5. **Documentation** references in various markdown files
+1. **Missing Property**: `src/services/paddle_client.py` (line 47) tries to access `self.settings.paddle_api_secret_key`, but this property doesn't exist in the Settings class
+2. **Inconsistent Naming**: The Settings class has `PADDLE_API_KEY` and `PADDLE_SECRET_KEY`, but Paddle's modern Billing API uses `PADDLE_API_SECRET_KEY` as the authentication key
+3. **Missing Documentation**: `.env.example` has NO Paddle configuration section at all
+4. **Active Usage**: Paddle is actively used in `paddle_client.py`, `subscription_service.py`, `paddle_webhooks.py`, and subscription models
 
-The system is already using Paddle for payment processing, so this is primarily a cleanup task to remove legacy Stripe references that were never implemented.
-
+The Paddle Billing SDK expects `PADDLE_API_SECRET_KEY` for authentication, which is the industry-standard naming for Paddle's current API.
 
 ### Approach
 
-This plan focuses on systematically removing all Stripe-related code and configuration from the LinkShield backend. Since Stripe was never fully integrated (no imports or service implementations exist), this is a straightforward cleanup operation.
+This plan adds the missing `paddle_api_secret_key` property to the Settings class and creates comprehensive Paddle configuration documentation in `.env.example`.
 
-The approach involves:
-1. **Removing database model fields** from subscription-related models
-2. **Removing configuration settings** from the Settings class
-3. **Updating environment examples** to remove Stripe variables
-4. **Removing health check references** to Stripe
-5. **Updating documentation** to reflect Paddle-only billing
+**Approach:**
+1. **Add the missing property** to `src/config/settings.py` in the Paddle Settings section
+2. **Create a complete Paddle configuration section** in `.env.example` with all necessary environment variables
+3. **Verify compatibility** with `src/services/paddle_client.py` to ensure it can properly access the new setting
+4. **Document all Paddle settings** including the webhook secret and environment configuration
 
-Each change will be carefully documented to ensure no breaking changes occur, as the system already relies on Paddle for payment processing.
-
+The implementation maintains backward compatibility with existing Paddle fields while adding the critical missing `paddle_api_secret_key` property that the Paddle client service requires.
 
 ### Reasoning
 
-I started by examining the files mentioned in the user's task. I read `src/models/subscription.py` to identify all Stripe-related fields across the `SubscriptionPlan`, `UserSubscription`, and `Payment` models. I then read portions of `src/config/settings.py` to locate Stripe configuration settings, and reviewed `.env.example` to find Stripe environment variables.
+I started by reading the three files mentioned in the user's task: `src/config/settings.py`, `.env.example`, and `src/services/paddle_client.py`. 
 
-I performed grep searches across the codebase to find all occurrences of "stripe" (case-insensitive) in Python files and markdown documentation. This revealed additional references in `src/controllers/health_controller.py` and various documentation files. I also searched for Stripe imports to confirm that Stripe was never actually integrated into the codebase—no imports were found.
+I discovered that `paddle_client.py` line 47 tries to access `self.settings.paddle_api_secret_key`, but this property doesn't exist in the Settings class. I then read the Paddle Settings section of `settings.py` (lines 240-260) and found it has `PADDLE_API_KEY`, `PADDLE_SECRET_KEY`, and other fields, but not `paddle_api_secret_key`.
 
-Finally, I read the `src/services/subscription_service.py` file to verify that it uses Paddle exclusively for payment processing, confirming that removing Stripe references won't break any existing functionality.
+I performed a grep search for "PADDLE" in `.env.example` and found NO matches, meaning there's no Paddle configuration section at all. I then searched for all "paddle" references across Python files to understand how Paddle is being used throughout the codebase, confirming that it's actively integrated in subscription services, webhooks, and models.
 
+## Mermaid Diagram
+
+sequenceDiagram
+    participant PC as PaddleClientService
+    participant Settings as Settings Class
+    participant ENV as Environment Variables
+    
+    Note over PC,ENV: Initialization Flow
+    
+    PC->>ENV: Check PADDLE_API_SECRET_KEY
+    alt Environment Variable Exists
+        ENV-->>PC: Return API Secret Key
+    else Environment Variable Missing
+        PC->>Settings: Access paddle_api_secret_key property
+        alt Property Exists (After Fix)
+            Settings-->>PC: Return API Secret Key
+        else Property Missing (Current State)
+            Settings-->>PC: AttributeError
+            PC->>PC: Raise ValueError
+        end
+    end
+    
+    PC->>PC: Initialize Paddle Client
+    Note over PC: Client ready for API calls
+    
+    Note over PC,ENV: Webhook Verification Flow
+    
+    PC->>ENV: Check PADDLE_WEBHOOK_SECRET
+    alt Environment Variable Exists
+        ENV-->>PC: Return Webhook Secret
+    else Environment Variable Missing
+        PC->>Settings: Access paddle_webhook_secret
+        Settings-->>PC: Return Webhook Secret
+    end
+    
+    PC->>PC: Verify Webhook Signature
 
 ## Proposed File Changes
 
-### src\models\subscription.py(MODIFY)
-
-Remove all Stripe-related fields and methods from the subscription models:
-
-**In `SubscriptionPlan` class (lines 78-307):**
-- Remove the comment `# External IDs for payment processors` at line 124 and replace with `# Paddle Billing integration` to be consistent with `UserSubscription` model
-- Remove field `stripe_price_id_monthly` at line 125
-- Remove field `stripe_price_id_yearly` at line 126
-- Remove field `stripe_product_id` at line 127
-- Remove the entire method `get_stripe_price_id()` at lines 150-158, including its docstring
-
-**In `UserSubscription` class (lines 309-505):**
-- Remove the comment `# External IDs for payment processors` at line 341
-- Remove field `stripe_subscription_id` at line 342
-- Remove field `stripe_customer_id` at line 343
-- In the `to_dict()` method (lines 467-504), remove the Stripe-related fields from the `include_sensitive` block:
-  - Remove line 492: `"stripe_subscription_id": self.stripe_subscription_id,`
-  - Remove line 493: `"stripe_customer_id": self.stripe_customer_id,`
-
-**In `Payment` class (lines 507-623):**
-- Remove the comment `# External payment processor information` at line 529
-- Remove field `stripe_payment_intent_id` at line 530
-- Remove field `stripe_charge_id` at line 531
-- In the `to_dict()` method (lines 587-622), remove the Stripe-related fields from the `include_sensitive` block:
-  - Remove line 611: `"stripe_payment_intent_id": self.stripe_payment_intent_id,`
-  - Remove line 612: `"stripe_charge_id": self.stripe_charge_id,`
-
-After these removals, ensure proper spacing and formatting is maintained. The models should only contain Paddle-related payment processor fields.
-
 ### src\config\settings.py(MODIFY)
 
-Remove all Stripe-related configuration settings from the `Settings` class:
+References: 
 
-**Remove the Stripe Settings section (lines 250-253):**
-- Remove the comment line 250: `# Stripe Settings (for billing)`
-- Remove field at line 251: `STRIPE_PUBLISHABLE_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_PUBLISHABLE_KEY")`
-- Remove field at line 252: `STRIPE_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_SECRET_KEY")`
-- Remove field at line 253: `STRIPE_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_STRIPE_WEBHOOK_SECRET")`
-- Remove the blank line at line 254
+- src\services\paddle_client.py(MODIFY)
 
-The Paddle Settings section (starting at line 255) should remain unchanged and move up to replace the removed Stripe section. This ensures that the billing configuration only references Paddle, which is the active payment processor.
+Add the missing `paddle_api_secret_key` property to the Paddle Settings section (after line 253, before line 254):
+
+**Add new field after `PADDLE_WEBHOOK_SECRET` (line 253):**
+```python
+PADDLE_API_SECRET_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_PADDLE_API_SECRET_KEY")
+```
+
+This property is required by `src/services/paddle_client.py` line 47, which attempts to access `self.settings.paddle_api_secret_key`. The Paddle Billing API uses `PADDLE_API_SECRET_KEY` as the primary authentication key for API requests.
+
+**Note:** The existing `PADDLE_API_KEY` and `PADDLE_SECRET_KEY` fields (lines 251-252) should remain for backward compatibility, but `PADDLE_API_SECRET_KEY` is the correct field name for Paddle's modern Billing API.
+
+The final Paddle Settings section should have these fields in order:
+1. PADDLE_API_KEY (line 251)
+2. PADDLE_SECRET_KEY (line 252)
+3. PADDLE_WEBHOOK_SECRET (line 253)
+4. **PADDLE_API_SECRET_KEY (NEW - add after line 253)**
+5. PADDLE_ENVIRONMENT (line 254)
+6. PADDLE_VENDOR_ID (line 255)
+7. PADDLE_VENDOR_AUTH_CODE (line 256)
+8. PADDLE_WEBHOOK_URL (line 257)
 
 ### .env.example(MODIFY)
 
-Remove all Stripe-related environment variable examples:
+References: 
 
-**Remove the Stripe Configuration section (lines 188-191):**
-- Remove the comment line 188: `# Stripe Configuration (for subscriptions)`
-- Remove line 189: `STRIPE_PUBLISHABLE_KEY=pk_test_your-stripe-publishable-key`
-- Remove line 190: `STRIPE_SECRET_KEY=sk_test_your-stripe-secret-key`
-- Remove line 191: `STRIPE_WEBHOOK_SECRET=whsec_your-stripe-webhook-secret`
-- Remove the blank line at line 192
+- src\config\settings.py(MODIFY)
+- src\services\paddle_client.py(MODIFY)
 
-The Webhook Configuration section (starting at line 193) should remain and move up to replace the removed Stripe section. This ensures that the environment variable examples only show Paddle configuration, which is the active payment processor being used in the application.
+Add a complete Paddle Configuration section after the Webhook Configuration section (after line 191, before line 192):
 
-### src\controllers\health_controller.py(MODIFY)
+**Insert new section:**
+```bash
+# Paddle Configuration (for billing and subscriptions)
+# SECURITY CRITICAL: Paddle Billing API integration for subscription management
+PADDLE_API_KEY=your-paddle-api-key
+PADDLE_SECRET_KEY=your-paddle-secret-key
+PADDLE_API_SECRET_KEY=your-paddle-api-secret-key
+PADDLE_WEBHOOK_SECRET=your-paddle-webhook-secret
+PADDLE_ENVIRONMENT=sandbox
+PADDLE_VENDOR_ID=your-paddle-vendor-id
+PADDLE_VENDOR_AUTH_CODE=your-paddle-vendor-auth-code
+PADDLE_WEBHOOK_URL=https://your-domain.com/api/v1/webhooks/paddle
+```
+
+**Important Notes:**
+- `PADDLE_API_SECRET_KEY` is the primary authentication key for Paddle Billing API (required by `src/services/paddle_client.py`)
+- `PADDLE_ENVIRONMENT` should be set to `sandbox` for development/testing and `production` for live environments
+- `PADDLE_WEBHOOK_SECRET` is used to verify webhook signatures from Paddle
+- `PADDLE_WEBHOOK_URL` should be your publicly accessible webhook endpoint
+- All values should be prefixed with `LINKSHIELD_` when used in the application (e.g., `LINKSHIELD_PADDLE_API_SECRET_KEY`), but the example shows the base names for clarity
+
+This section should be inserted between the Webhook Configuration (lines 188-191) and File Upload Configuration (lines 192-195) sections.
+
+### src\services\paddle_client.py(MODIFY)
 
 References: 
 
 - src\config\settings.py(MODIFY)
 
-Remove the Stripe reference from the external services health check:
-
-**In the `_check_external_services()` method (lines 278-294):**
-- In the `external_services` dictionary (lines 279-285), remove line 284: `"stripe": self.settings.STRIPE_SECRET_KEY is not None,`
-
-This method checks which external API services are configured. Since Stripe is being removed and Paddle is the active payment processor, the Stripe check should be removed. The method will continue to check for OpenAI, VirusTotal, Google Safe Browsing, and URLVoid API configurations.
-
-Note: If desired, a Paddle check could be added in the future (e.g., `"paddle": self.settings.PADDLE_API_KEY is not None`), but that's outside the scope of this Stripe removal task.
-
-### src\services\subscription_service.py(MODIFY)
-
-References: 
-
-- src\services\paddle_client.py
-
-Verify that no Stripe-related code exists in the subscription service (this is a verification step, no changes needed):
+Verify that the Paddle client can properly access the new `paddle_api_secret_key` setting (this is a verification step, no code changes needed):
 
 **Verification checklist:**
-- Confirm that the service only imports and uses `PaddleClientService` from `src/services/paddle_client.py` (line 31)
-- Confirm that all subscription creation, upgrade, and cancellation methods use Paddle exclusively
-- Confirm that there are no Stripe imports or references in the file
 
-Based on my analysis, this file is already Paddle-only and requires no modifications. This verification step ensures that the subscription service will continue to function correctly after Stripe references are removed from the models and configuration.
+1. **Line 47 - API Key Access**: Confirm that the code `api_key = os.getenv('PADDLE_API_SECRET_KEY') or self.settings.paddle_api_secret_key` will now work correctly with the new Settings property
+
+2. **Line 266 - Webhook Secret Access**: Confirm that `secret = webhook_secret or os.getenv('PADDLE_WEBHOOK_SECRET') or self.settings.paddle_webhook_secret` can access the existing `PADDLE_WEBHOOK_SECRET` setting
+
+3. **Line 42 - Settings Import**: Verify that `self.settings = get_settings()` properly loads the Settings instance with all Paddle configuration
+
+4. **Environment Variable Priority**: The code correctly prioritizes environment variables over settings properties (using `os.getenv()` first), which is a good practice
+
+**Expected Behavior After Changes:**
+- The `_initialize_client()` method (lines 45-55) will successfully retrieve the API key from either:
+  - Environment variable `PADDLE_API_SECRET_KEY` (first priority)
+  - Settings property `paddle_api_secret_key` (fallback)
+- If neither is set, it will raise a `ValueError` with a clear error message (line 50)
+
+**No code changes are required** in this file - the implementation is correct and will work once the Settings class has the `paddle_api_secret_key` property added.
