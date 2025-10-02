@@ -421,3 +421,343 @@ class BaseController(WebhookController):
     async def cleanup_resources(self) -> None:
         """Clean up controller resources."""
         pass  # Sessions managed by context manager
+
+    # Enhanced Error Handling Methods
+
+    def handle_error(
+        self,
+        error: Exception,
+        operation: str,
+        user_id: Optional[int] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> HTTPException:
+        """
+        Centralized error handling with appropriate HTTP responses.
+        
+        Maps various exception types to appropriate HTTP status codes and messages.
+        Logs errors with context for debugging and monitoring.
+        
+        Args:
+            error: The exception that occurred
+            operation: Description of the operation that failed
+            user_id: Optional user ID for logging
+            context: Optional additional context for logging
+            
+        Returns:
+            HTTPException with appropriate status code and detail
+        """
+        # Log the error with context
+        self.log_operation(
+            f"Error during {operation}",
+            user_id=user_id,
+            details={
+                "error_type": type(error).__name__,
+                "error_message": str(error),
+                "context": context or {},
+                "operation": operation
+            },
+            level="error"
+        )
+
+        # Handle validation errors (400)
+        if isinstance(error, ValidationError):
+            return HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": f"Validation failed for {operation}",
+                    "errors": error.errors()
+                }
+            )
+
+        # Handle database errors
+        if isinstance(error, SQLAlchemyError):
+            return self.handle_database_error(error, operation)
+
+        # Handle HTTP exceptions (pass through)
+        if isinstance(error, HTTPException):
+            return error
+
+        # Handle generic exceptions (500)
+        self.logger.critical(
+            f"Unexpected error during {operation}: {str(error)}",
+            exc_info=True,
+            extra={
+                "user_id": user_id,
+                "operation": operation,
+                "context": context or {}
+            }
+        )
+
+        return HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred during {operation}"
+        )
+
+    def handle_authentication_error(
+        self,
+        message: str = "Authentication failed",
+        details: Optional[Dict[str, Any]] = None
+    ) -> HTTPException:
+        """
+        Handle authentication errors (401).
+        
+        Args:
+            message: Error message
+            details: Optional additional details
+            
+        Returns:
+            HTTPException with 401 status
+        """
+        self.logger.warning(
+            f"Authentication error: {message}",
+            extra={"details": details or {}}
+        )
+
+        return HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"message": message, "details": details} if details else message,
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    def handle_authorization_error(
+        self,
+        message: str = "Access denied",
+        required_permission: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ) -> HTTPException:
+        """
+        Handle authorization errors (403).
+        
+        Args:
+            message: Error message
+            required_permission: Optional permission that was required
+            details: Optional additional details
+            
+        Returns:
+            HTTPException with 403 status
+        """
+        log_details = details or {}
+        if required_permission:
+            log_details["required_permission"] = required_permission
+
+        self.logger.warning(
+            f"Authorization error: {message}",
+            extra={"details": log_details}
+        )
+
+        response_detail = {"message": message}
+        if required_permission:
+            response_detail["required_permission"] = required_permission
+        if details:
+            response_detail["details"] = details
+
+        return HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=response_detail
+        )
+
+    def handle_not_found_error(
+        self,
+        resource: str,
+        identifier: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ) -> HTTPException:
+        """
+        Handle resource not found errors (404).
+        
+        Args:
+            resource: Type of resource that was not found
+            identifier: Optional identifier of the resource
+            details: Optional additional details
+            
+        Returns:
+            HTTPException with 404 status
+        """
+        message = f"{resource} not found"
+        if identifier:
+            message += f": {identifier}"
+
+        self.logger.info(
+            f"Resource not found: {message}",
+            extra={"resource": resource, "identifier": identifier, "details": details or {}}
+        )
+
+        response_detail = {"message": message, "resource": resource}
+        if identifier:
+            response_detail["identifier"] = identifier
+        if details:
+            response_detail["details"] = details
+
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=response_detail
+        )
+
+    def handle_conflict_error(
+        self,
+        message: str,
+        resource: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ) -> HTTPException:
+        """
+        Handle resource conflict errors (409).
+        
+        Args:
+            message: Error message
+            resource: Optional resource type
+            details: Optional additional details
+            
+        Returns:
+            HTTPException with 409 status
+        """
+        self.logger.warning(
+            f"Conflict error: {message}",
+            extra={"resource": resource, "details": details or {}}
+        )
+
+        response_detail = {"message": message}
+        if resource:
+            response_detail["resource"] = resource
+        if details:
+            response_detail["details"] = details
+
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=response_detail
+        )
+
+    def handle_rate_limit_error(
+        self,
+        retry_after: int,
+        limit: Optional[int] = None,
+        window: Optional[int] = None,
+        message: str = "Rate limit exceeded"
+    ) -> HTTPException:
+        """
+        Handle rate limit errors (429).
+        
+        Args:
+            retry_after: Seconds until retry is allowed
+            limit: Optional rate limit value
+            window: Optional time window in seconds
+            message: Error message
+            
+        Returns:
+            HTTPException with 429 status and Retry-After header
+        """
+        self.logger.warning(
+            f"Rate limit exceeded: {message}",
+            extra={
+                "retry_after": retry_after,
+                "limit": limit,
+                "window": window
+            }
+        )
+
+        response_detail = {
+            "message": message,
+            "retry_after": retry_after
+        }
+        if limit:
+            response_detail["limit"] = limit
+        if window:
+            response_detail["window"] = window
+
+        return HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=response_detail,
+            headers={"Retry-After": str(retry_after)}
+        )
+
+    def handle_service_unavailable_error(
+        self,
+        service: str,
+        message: Optional[str] = None,
+        retry_after: Optional[int] = None
+    ) -> HTTPException:
+        """
+        Handle service unavailable errors (503).
+        
+        Args:
+            service: Name of the unavailable service
+            message: Optional custom message
+            retry_after: Optional seconds until retry
+            
+        Returns:
+            HTTPException with 503 status
+        """
+        default_message = f"Service temporarily unavailable: {service}"
+        final_message = message or default_message
+
+        self.logger.error(
+            f"Service unavailable: {service}",
+            extra={"service": service, "message": final_message}
+        )
+
+        response_detail = {
+            "message": final_message,
+            "service": service
+        }
+
+        headers = {}
+        if retry_after:
+            response_detail["retry_after"] = retry_after
+            headers["Retry-After"] = str(retry_after)
+
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=response_detail,
+            headers=headers if headers else None
+        )
+
+    async def execute_with_error_handling(
+        self,
+        operation: Callable,
+        operation_name: str,
+        user_id: Optional[int] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Any:
+        """
+        Execute an operation with comprehensive error handling.
+        
+        Wraps an operation with try-catch and maps exceptions to appropriate
+        HTTP responses. Useful for controller methods.
+        
+        Args:
+            operation: Async callable to execute
+            operation_name: Name of the operation for logging
+            user_id: Optional user ID for logging
+            context: Optional context for logging
+            
+        Returns:
+            Result of the operation
+            
+        Raises:
+            HTTPException: Mapped from caught exceptions
+        """
+        try:
+            self.log_operation(
+                f"Starting {operation_name}",
+                user_id=user_id,
+                details=context or {},
+                level="debug"
+            )
+
+            result = await operation()
+
+            self.log_operation(
+                f"Completed {operation_name}",
+                user_id=user_id,
+                details=context or {},
+                level="debug"
+            )
+
+            return result
+
+        except HTTPException:
+            # Re-raise HTTP exceptions as-is
+            raise
+
+        except Exception as e:
+            # Handle and convert to HTTP exception
+            raise self.handle_error(e, operation_name, user_id, context)

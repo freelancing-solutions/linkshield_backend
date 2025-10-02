@@ -187,7 +187,7 @@ class URLAnalysisService:
         # We could interact over this settings until we fing one that is fast enough
         return await self.analyze_url(url=url, scan_types=[ScanType.SECURITY], scan_depth=1, max_links=50)
 
-    async def quick_content_analysis_by_url(url: url):
+    async def quick_content_analysis_by_url(self, url: str):
         """
             This will launch a quick content only analysis from the provided url
         """

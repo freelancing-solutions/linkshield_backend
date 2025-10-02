@@ -27,9 +27,9 @@ from src.social_protection.algorithm_health import (
     VisibilityScorer, EngagementAnalyzer, PenaltyDetector, ShadowBanDetector
 )
 from src.utils import utc_datetime
-import logging
+from src.social_protection.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("UserController")
 
 
 class UserController(BaseController):

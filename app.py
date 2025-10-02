@@ -41,6 +41,7 @@ from src.routes.social_protection import router as social_protection_router
 from src.routes.algorithm_health import router as algorithm_health_router
 from src.routes.bot_webhooks import router as bot_webhooks_router
 from src.routes.subscription_routes import router as subscription_router
+from src.routes.extension import router as extension_router
 # from src.routes.tasks import router as tasks_router
 
 # Bot Service
@@ -163,6 +164,7 @@ app.include_router(social_protection_router)
 app.include_router(algorithm_health_router)
 app.include_router(bot_webhooks_router)
 app.include_router(subscription_router)
+app.include_router(extension_router)
 # app.include_router(tasks_router)
 
 

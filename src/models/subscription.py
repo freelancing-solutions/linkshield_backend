@@ -40,6 +40,11 @@ class PlanType(enum.Enum):
     PRO = "pro"
     ENTERPRISE = "enterprise"
     CUSTOM = "custom"
+    # New tiers per spec
+    STARTER = "starter"
+    CREATOR = "creator"
+    PROFESSIONAL = "professional"
+    BUSINESS = "business"
 
 
 class BillingInterval(enum.Enum):
@@ -99,6 +104,11 @@ class SubscriptionPlan(Base):
     daily_check_limit = Column(Integer, nullable=False, default=0)
     monthly_check_limit = Column(Integer, nullable=False, default=0)
     api_rate_limit = Column(Integer, nullable=False, default=60)  # requests per minute
+    # Additional limits per new spec
+    deep_scans_per_month = Column(Integer, nullable=False, default=0)
+    max_urls_per_bulk_check = Column(Integer, nullable=False, default=0)
+    bulk_checks_per_month = Column(Integer, nullable=False, default=0)
+    max_monitored_profiles = Column(Integer, nullable=False, default=0)
     
     # Monitoring limits for dashboard functionality
     max_projects = Column(Integer, nullable=False, default=1)  # Maximum projects per user
@@ -115,6 +125,16 @@ class SubscriptionPlan(Base):
     api_access_enabled = Column(Boolean, default=False, nullable=False)
     priority_support = Column(Boolean, default=False, nullable=False)
     custom_branding = Column(Boolean, default=False, nullable=False)
+    # Feature flags per categories
+    bots_enabled = Column(Boolean, default=False, nullable=False)
+    social_protection_enabled = Column(Boolean, default=False, nullable=False)
+    crisis_detection_enabled = Column(Boolean, default=False, nullable=False)
+    radar_lens_enabled = Column(Boolean, default=False, nullable=False)
+    advanced_ai_enabled = Column(Boolean, default=False, nullable=False)
+    custom_models_enabled = Column(Boolean, default=False, nullable=False)
+    brand_risk_scoring_enabled = Column(Boolean, default=False, nullable=False)
+    threat_intel_enabled = Column(Boolean, default=False, nullable=False)
+    bot_platforms_limit = Column(Integer, nullable=False, default=0)
     
     # Configuration
     is_active = Column(Boolean, default=True, nullable=False)
@@ -171,6 +191,10 @@ class SubscriptionPlan(Base):
             "daily_check_limit": self.daily_check_limit,
             "monthly_check_limit": self.monthly_check_limit,
             "api_rate_limit": self.api_rate_limit,
+            "deep_scans_per_month": self.deep_scans_per_month,
+            "max_urls_per_bulk_check": self.max_urls_per_bulk_check,
+            "bulk_checks_per_month": self.bulk_checks_per_month,
+            "max_monitored_profiles": self.max_monitored_profiles,
             "max_projects": self.max_projects,
             "max_team_members_per_project": self.max_team_members_per_project,
             "max_alerts_per_project": self.max_alerts_per_project,
@@ -183,6 +207,15 @@ class SubscriptionPlan(Base):
             "api_access_enabled": self.api_access_enabled,
             "priority_support": self.priority_support,
             "custom_branding": self.custom_branding,
+            "bots_enabled": self.bots_enabled,
+            "social_protection_enabled": self.social_protection_enabled,
+            "crisis_detection_enabled": self.crisis_detection_enabled,
+            "radar_lens_enabled": self.radar_lens_enabled,
+            "advanced_ai_enabled": self.advanced_ai_enabled,
+            "custom_models_enabled": self.custom_models_enabled,
+            "brand_risk_scoring_enabled": self.brand_risk_scoring_enabled,
+            "threat_intel_enabled": self.threat_intel_enabled,
+            "bot_platforms_limit": self.bot_platforms_limit,
             "is_active": self.is_active,
             "is_public": self.is_public,
             "trial_days": self.trial_days,

@@ -612,3 +612,35 @@ class RateLimitConfig:
     requests_per_minute: int = 60
     burst_size: int = 10
 ```
+## Extension Endpoints Rate Limits
+
+The browser extension integrates with dedicated endpoints that use the AdvancedRateLimiter via the `@rate_limit` decorator. These endpoints have per-minute limits that scale with subscription tiers:
+
+- Scope `extension_url_check` (POST /api/v1/extension/url/check)
+  - Base: 12 requests per 60s window
+  - Tier multipliers: free x1.0, basic x1.5, premium x5.0, enterprise x10.0
+
+- Scope `extension_bulk_url_check` (POST /api/v1/extension/url/bulk-check)
+  - Base: 6 requests per 60s window
+  - Tier multipliers: free x1.0, basic x1.5, premium x5.0, enterprise x10.0
+
+- Scope `extension_content_analyze` (POST /api/v1/extension/content/analyze)
+  - Base: 12 requests per 60s window
+  - Tier multipliers: free x1.0, basic x1.5, premium x5.0, enterprise x10.0
+
+Authentication requirements:
+- Quick URL check: optional JWT (anonymous allowed, limited by client IP)
+- Bulk URL check: JWT required
+- Content analyze: JWT required
+
+Response headers include standard rate limit metadata:
+```
+X-RateLimit-Limit: <limit>
+X-RateLimit-Remaining: <remaining>
+X-RateLimit-Reset: <unix_timestamp_seconds>
+Retry-After: <seconds>  # only present when 429 is returned
+```
+
+Implementation references:
+- src/services/advanced_rate_limiter.py (RateLimitScope and DEFAULT_RATE_LIMITS)
+- src/routes/extension.py (@rate_limit decorator usage and auth dependencies)

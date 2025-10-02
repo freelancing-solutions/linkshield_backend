@@ -29,10 +29,10 @@ from src.social_protection.algorithm_health import (
     VisibilityScorer, EngagementAnalyzer, PenaltyDetector, ShadowBanDetector
 )
 from src.utils import utc_datetime
-import logging
+from src.social_protection.logging_utils import get_logger
 from enum import Enum
 
-logger = logging.getLogger(__name__)
+logger = get_logger("ExtensionController")
 
 
 class ExtensionEventType(Enum):

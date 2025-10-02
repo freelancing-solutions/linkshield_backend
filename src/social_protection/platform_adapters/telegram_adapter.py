@@ -8,7 +8,6 @@ scam pattern recognition, and forward chain analysis.
 Provides comprehensive protection for Telegram channels, groups, and user profiles.
 """
 
-import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from enum import Enum
@@ -17,8 +16,9 @@ from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
 from ..data_models.social_profile_models import ProfileScanRequest, ProfileScanResult
 from ..data_models.content_risk_models import ContentAnalysisRequest, ContentAnalysisResult
 from ..registry import registry
+from ..logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("TelegramProtectionAdapter")
 
 
 class TelegramRiskFactor(Enum):

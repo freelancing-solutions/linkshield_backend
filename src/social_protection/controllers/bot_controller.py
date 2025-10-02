@@ -27,11 +27,11 @@ from src.social_protection.algorithm_health import (
     VisibilityScorer, EngagementAnalyzer, PenaltyDetector, ShadowBanDetector
 )
 from src.utils import utc_datetime
-import logging
+from src.social_protection.logging_utils import get_logger
 import asyncio
 from enum import Enum
 
-logger = logging.getLogger(__name__)
+logger = get_logger("BotController")
 
 
 class BotAnalysisType(Enum):

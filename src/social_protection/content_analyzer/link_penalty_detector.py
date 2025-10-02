@@ -7,6 +7,7 @@ restrictions that can impact social media content reach and engagement.
 
 import re
 import asyncio
+import aiohttp
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -91,32 +92,102 @@ class LinkPenaltyDetector:
                 "external_link_penalty": 0.3,  # 30% reach reduction
                 "shortened_url_penalty": 0.2,   # 20% additional penalty
                 "multiple_links_penalty": 0.4,  # 40% penalty for multiple links
-                "affiliate_link_penalty": 0.6   # 60% penalty for affiliate links
+                "affiliate_link_penalty": 0.6,   # 60% penalty for affiliate links
+                "allowed_domains": ["twitter.com", "x.com", "t.co"],
+                "max_links": 1,  # Optimal number of links
+                "rules": {
+                    "avoid_url_shorteners": True,
+                    "prefer_twitter_cards": True,
+                    "limit_external_links": True
+                }
             },
             "facebook": {
                 "external_link_penalty": 0.5,   # 50% reach reduction
                 "clickbait_link_penalty": 0.7,  # 70% penalty for clickbait
                 "low_quality_domain_penalty": 0.6,  # 60% penalty for low-quality domains
-                "engagement_bait_penalty": 0.8   # 80% penalty for engagement bait
+                "engagement_bait_penalty": 0.8,   # 80% penalty for engagement bait
+                "allowed_domains": ["facebook.com", "fb.com", "instagram.com"],
+                "max_links": 1,
+                "rules": {
+                    "avoid_clickbait": True,
+                    "prefer_native_video": True,
+                    "avoid_link_farms": True,
+                    "check_domain_quality": True
+                }
             },
             "instagram": {
                 "bio_link_preference": True,     # Prefer bio links over post links
                 "story_link_penalty": 0.2,      # 20% penalty for story links
                 "post_link_penalty": 0.4,       # 40% penalty for post links
-                "swipe_up_alternative": True     # Use swipe up alternatives
+                "swipe_up_alternative": True,     # Use swipe up alternatives
+                "allowed_domains": ["instagram.com", "facebook.com"],
+                "max_links": 0,  # No links in posts (bio only)
+                "rules": {
+                    "bio_link_only": True,
+                    "no_post_links": True,
+                    "story_swipe_up_10k": True  # Need 10k followers for swipe up
+                }
             },
             "linkedin": {
                 "external_link_penalty": 0.4,   # 40% reach reduction
                 "native_content_preference": True,  # Prefer native content
                 "professional_domain_bonus": 0.2,   # 20% bonus for professional domains
-                "spam_link_penalty": 0.8         # 80% penalty for spam links
+                "spam_link_penalty": 0.8,         # 80% penalty for spam links
+                "allowed_domains": ["linkedin.com"],
+                "professional_domains": [".edu", ".gov", ".org"],
+                "max_links": 1,
+                "rules": {
+                    "prefer_professional_domains": True,
+                    "avoid_promotional_links": True,
+                    "native_content_bonus": True
+                }
             },
             "tiktok": {
                 "external_link_penalty": 0.6,   # 60% reach reduction
                 "bio_link_only": True,           # Only bio links allowed
                 "suspicious_link_penalty": 0.9, # 90% penalty for suspicious links
-                "affiliate_link_ban": True       # Affiliate links banned
+                "affiliate_link_ban": True,       # Affiliate links banned
+                "allowed_domains": ["tiktok.com"],
+                "max_links": 0,  # No links in posts
+                "rules": {
+                    "bio_link_only": True,
+                    "no_external_links": True,
+                    "ban_affiliate_links": True
+                }
+            },
+            "discord": {
+                "external_link_penalty": 0.2,   # 20% penalty (more lenient)
+                "phishing_link_penalty": 0.9,   # 90% penalty for phishing
+                "allowed_domains": ["discord.com", "discord.gg"],
+                "max_links": 5,  # More lenient
+                "rules": {
+                    "check_phishing": True,
+                    "allow_external_links": True,
+                    "warn_suspicious": True
+                }
+            },
+            "telegram": {
+                "external_link_penalty": 0.3,   # 30% penalty
+                "spam_link_penalty": 0.8,       # 80% penalty for spam
+                "allowed_domains": ["t.me", "telegram.org"],
+                "max_links": 3,
+                "rules": {
+                    "check_spam": True,
+                    "allow_external_links": True,
+                    "warn_suspicious": True
+                }
             }
+        }
+        
+        # Platform-specific link rule checkers
+        self.platform_rule_checkers = {
+            "twitter": self._check_twitter_link_rules,
+            "facebook": self._check_facebook_link_rules,
+            "instagram": self._check_instagram_link_rules,
+            "linkedin": self._check_linkedin_link_rules,
+            "tiktok": self._check_tiktok_link_rules,
+            "discord": self._check_discord_link_rules,
+            "telegram": self._check_telegram_link_rules
         }
         
         # Known problematic domains
@@ -134,10 +205,31 @@ class LinkPenaltyDetector:
                 "shareasale.com", "rakuten.com", "impact.com"
             ],
             "url_shorteners": [
+                # Popular URL shorteners
                 "bit.ly", "tinyurl.com", "goo.gl", "ow.ly", "t.co",
-                "short.link", "tiny.cc", "is.gd", "buff.ly"
+                "short.link", "tiny.cc", "is.gd", "buff.ly", "adf.ly",
+                "bl.ink", "clicky.me", "db.tt", "filoops.info", "fun.ly",
+                "fzy.co", "git.io", "goo.gl", "ht.ly", "ity.im",
+                "j.mp", "lnkd.in", "oe.cd", "ow.ly", "po.st",
+                "q.gs", "qr.ae", "qr.net", "s.id", "scrnch.me",
+                "short.io", "shorturl.at", "soo.gd", "t.co", "t2m.io",
+                "tinycc.com", "tr.im", "trib.al", "u.to", "v.gd",
+                "x.co", "y2u.be", "youtu.be", "zip.net", "zpr.io",
+                # Social media shorteners
+                "fb.me", "ig.me", "ln.is", "lnk.to", "sptfy.com",
+                # Regional shorteners
+                "bc.vc", "chilp.it", "clck.ru", "cutt.ly", "hyperurl.co",
+                "kl.am", "mcaf.ee", "moourl.com", "qlnk.io", "rb.gy",
+                "rebrand.ly", "short.cm", "shorturl.com", "snip.ly", "surl.li",
+                "t1p.de", "tinu.be", "tiny.one", "url.ie", "urlz.fr"
             ]
         }
+        
+        # URL shortener patterns (for detection beyond known domains)
+        self.shortener_patterns = [
+            r"^https?://[a-z0-9-]{1,10}\.[a-z]{2,3}/[a-zA-Z0-9]+$",  # Short domain with short path
+            r"^https?://[a-z]{2,5}\.(ly|me|co|io|gl|gd|to)/.+$",  # Common shortener TLDs
+        ]
         
         # Link quality indicators
         self.quality_indicators = {
@@ -288,6 +380,203 @@ class LinkPenaltyDetector:
         
         return links
     
+    async def _check_domain_reputation(self, link: str) -> Dict[str, Any]:
+        """
+        Check domain reputation using external services.
+        
+        Args:
+            link: URL to check
+            
+        Returns:
+            Dictionary with reputation data
+        """
+        reputation_data = {
+            "has_reputation_issues": False,
+            "reputation_score": 50,  # Neutral default
+            "penalty_score": 0,
+            "issues": []
+        }
+        
+        try:
+            # Extract domain
+            parsed_url = urlparse(link)
+            domain = parsed_url.netloc.lower()
+            
+            # Check if we have VirusTotal API key
+            if self.settings.VIRUSTOTAL_API_KEY:
+                vt_result = await self._check_virustotal_reputation(domain)
+                if vt_result.get("malicious_count", 0) > 0:
+                    reputation_data["has_reputation_issues"] = True
+                    reputation_data["penalty_score"] += 40
+                    reputation_data["issues"].append(
+                        f"VirusTotal flagged by {vt_result['malicious_count']} engines"
+                    )
+                    reputation_data["reputation_score"] = max(
+                        0, 100 - (vt_result["malicious_count"] * 10)
+                    )
+            
+            # Check Google Safe Browsing if available
+            if self.settings.GOOGLE_SAFE_BROWSING_API_KEY:
+                gsb_result = await self._check_safe_browsing(link)
+                if gsb_result.get("threat_detected", False):
+                    reputation_data["has_reputation_issues"] = True
+                    reputation_data["penalty_score"] += 50
+                    reputation_data["issues"].append(
+                        f"Google Safe Browsing: {', '.join(gsb_result.get('threat_types', []))}"
+                    )
+                    reputation_data["reputation_score"] = 0
+            
+        except Exception as e:
+            reputation_data["issues"].append(f"Reputation check error: {str(e)}")
+        
+        return reputation_data
+    
+    async def _check_virustotal_reputation(self, domain: str) -> Dict[str, Any]:
+        """Check domain reputation on VirusTotal."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"https://www.virustotal.com/vtapi/v2/domain/report"
+                params = {
+                    "apikey": self.settings.VIRUSTOTAL_API_KEY,
+                    "domain": domain
+                }
+                
+                async with session.get(url, params=params, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # Count malicious detections
+                        detected_urls = data.get("detected_urls", [])
+                        malicious_count = sum(
+                            1 for url_data in detected_urls 
+                            if url_data.get("positives", 0) > 0
+                        )
+                        
+                        return {
+                            "malicious_count": malicious_count,
+                            "total_urls": len(detected_urls),
+                            "categories": data.get("categories", [])
+                        }
+        except Exception:
+            pass
+        
+        return {"malicious_count": 0, "total_urls": 0}
+    
+    async def _check_safe_browsing(self, url: str) -> Dict[str, Any]:
+        """Check URL against Google Safe Browsing."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                api_url = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
+                
+                payload = {
+                    "client": {
+                        "clientId": "linkshield-social-protection",
+                        "clientVersion": "1.0"
+                    },
+                    "threatInfo": {
+                        "threatTypes": [
+                            "MALWARE",
+                            "SOCIAL_ENGINEERING",
+                            "UNWANTED_SOFTWARE",
+                            "POTENTIALLY_HARMFUL_APPLICATION"
+                        ],
+                        "platformTypes": ["ANY_PLATFORM"],
+                        "threatEntryTypes": ["URL"],
+                        "threatEntries": [{"url": url}]
+                    }
+                }
+                
+                params = {"key": self.settings.GOOGLE_SAFE_BROWSING_API_KEY}
+                
+                async with session.post(api_url, json=payload, params=params, timeout=5) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        matches = result.get("matches", [])
+                        
+                        if matches:
+                            threat_types = [
+                                match.get("threatType", "unknown").lower() 
+                                for match in matches
+                            ]
+                            return {
+                                "threat_detected": True,
+                                "threat_types": threat_types
+                            }
+        except Exception:
+            pass
+        
+        return {"threat_detected": False, "threat_types": []}
+    
+    def _detect_url_shortener(self, link: str) -> Dict[str, Any]:
+        """
+        Detect if a URL is a shortener and identify the service.
+        
+        Args:
+            link: URL to check
+            
+        Returns:
+            Dictionary with shortener detection results
+        """
+        result = {
+            "is_shortener": False,
+            "shortener_service": None,
+            "confidence": 0.0,
+            "penalty_score": 0
+        }
+        
+        try:
+            parsed_url = urlparse(link)
+            domain = parsed_url.netloc.lower()
+            path = parsed_url.path
+            
+            # Check against known shortener domains
+            for shortener in self.problematic_domains["url_shorteners"]:
+                if shortener in domain:
+                    result["is_shortener"] = True
+                    result["shortener_service"] = shortener
+                    result["confidence"] = 1.0
+                    result["penalty_score"] = 20
+                    return result
+            
+            # Check against shortener patterns
+            for pattern in self.shortener_patterns:
+                if re.match(pattern, link):
+                    result["is_shortener"] = True
+                    result["shortener_service"] = "unknown_shortener"
+                    result["confidence"] = 0.7
+                    result["penalty_score"] = 15
+                    return result
+            
+            # Heuristic checks for shortener-like URLs
+            # Short domain + short path often indicates a shortener
+            domain_parts = domain.split('.')
+            if len(domain_parts) >= 2:
+                domain_name = domain_parts[-2]
+                
+                # Very short domain name (2-5 chars) with short path
+                if len(domain_name) <= 5 and len(path) <= 10 and len(path) > 1:
+                    result["is_shortener"] = True
+                    result["shortener_service"] = "suspected_shortener"
+                    result["confidence"] = 0.5
+                    result["penalty_score"] = 10
+                    return result
+            
+            # Check for common shortener TLDs
+            shortener_tlds = [".ly", ".me", ".co", ".io", ".gl", ".gd", ".to"]
+            if any(domain.endswith(tld) for tld in shortener_tlds):
+                # If it's a short domain with these TLDs, likely a shortener
+                if len(domain) <= 15:
+                    result["is_shortener"] = True
+                    result["shortener_service"] = "suspected_shortener"
+                    result["confidence"] = 0.6
+                    result["penalty_score"] = 12
+                    return result
+        
+        except Exception:
+            pass
+        
+        return result
+    
     async def _analyze_single_link(self, link: str, platform: str) -> Dict[str, Any]:
         """Analyze a single link for penalty risks."""
         analysis = {
@@ -309,12 +598,25 @@ class LinkPenaltyDetector:
             extracted = tldextract.extract(link)
             domain_name = f"{extracted.domain}.{extracted.suffix}".lower()
             
-            # Check for URL shorteners
-            if any(shortener in domain for shortener in self.problematic_domains["url_shorteners"]):
-                analysis["penalty_score"] += 20
-                analysis["penalty_types"].append("url_shortener")
-                analysis["issues"].append(f"URL shortener detected: {domain}")
+            # Check domain reputation (subtask 6.1)
+            reputation_data = await self._check_domain_reputation(link)
+            if reputation_data["has_reputation_issues"]:
+                analysis["penalty_score"] += reputation_data["penalty_score"]
+                analysis["penalty_types"].append("poor_domain_reputation")
+                analysis["issues"].extend(reputation_data["issues"])
                 analysis["has_penalty_risk"] = True
+            
+            # Check for URL shorteners (subtask 6.3)
+            shortener_result = self._detect_url_shortener(link)
+            if shortener_result["is_shortener"]:
+                analysis["penalty_score"] += shortener_result["penalty_score"]
+                analysis["penalty_types"].append("url_shortener")
+                analysis["issues"].append(
+                    f"URL shortener detected: {shortener_result['shortener_service']} "
+                    f"(confidence: {shortener_result['confidence']:.0%})"
+                )
+                analysis["has_penalty_risk"] = True
+                analysis["shortener_info"] = shortener_result
             
             # Check for spam domains
             if any(spam_domain in domain for spam_domain in self.problematic_domains["spam_domains"]):
@@ -394,63 +696,64 @@ class LinkPenaltyDetector:
         penalties = {}
         additional_penalty = 0
         recommendations = []
+        platform_issues = []
         
         platform_config = self.platform_penalties.get(platform, {})
         
+        # Use platform-specific rule checker if available
+        if platform in self.platform_rule_checkers:
+            rule_result = self.platform_rule_checkers[platform](links, content)
+            additional_penalty += rule_result.get("penalty_score", 0)
+            platform_issues.extend(rule_result.get("issues", []))
+        
+        # Apply base platform penalties
+        if links:
+            external_penalty = platform_config.get("external_link_penalty", 0.3)
+            additional_penalty += int(len(links) * 15 * external_penalty)
+        
+        # Check max links rule
+        max_links = platform_config.get("max_links", 999)
+        if len(links) > max_links:
+            additional_penalty += (len(links) - max_links) * 20
+            platform_issues.append(
+                f"Exceeds recommended link count ({len(links)} > {max_links})"
+            )
+        
+        # Generate platform-specific recommendations
         if platform == "twitter":
-            # External link penalty
             if links:
-                additional_penalty += int(len(links) * 20 * platform_config.get("external_link_penalty", 0.3))
                 recommendations.append("Consider using Twitter Cards to reduce link penalty")
-            
-            # Multiple links penalty
             if len(links) > 1:
-                additional_penalty += int(30 * platform_config.get("multiple_links_penalty", 0.4))
                 recommendations.append("Limit to one external link per tweet")
         
         elif platform == "facebook":
-            # Check for clickbait patterns in content
-            clickbait_patterns = [
-                r"you\s+won't\s+believe",
-                r"this\s+will\s+shock\s+you",
-                r"number\s+\d+\s+will\s+amaze\s+you",
-                r"what\s+happened\s+next"
-            ]
-            
-            for pattern in clickbait_patterns:
-                if re.search(pattern, content.lower(), re.IGNORECASE):
-                    additional_penalty += int(40 * platform_config.get("clickbait_link_penalty", 0.7))
-                    recommendations.append("Avoid clickbait language with external links")
-                    break
+            recommendations.append("Use Facebook's native sharing features when possible")
+            if len(links) > 1:
+                recommendations.append("Single link posts perform better on Facebook")
         
         elif platform == "instagram":
-            # Post link penalty
-            if links:
-                additional_penalty += int(25 * platform_config.get("post_link_penalty", 0.4))
-                recommendations.append("Consider using link in bio instead of post links")
+            recommendations.append("Use link in bio - Instagram doesn't support clickable post links")
+            recommendations.append("Consider Instagram Stories with swipe-up (requires 10k followers)")
         
         elif platform == "linkedin":
-            # Check for professional domains
-            professional_domains = [".edu", ".gov", ".org", "linkedin.com", "microsoft.com"]
-            has_professional_link = any(domain in link.lower() for link in links 
-                                      for domain in professional_domains)
-            
-            if has_professional_link:
-                additional_penalty -= int(10 * platform_config.get("professional_domain_bonus", 0.2))
-            else:
-                additional_penalty += int(20 * platform_config.get("external_link_penalty", 0.4))
-                recommendations.append("Use professional domains when possible")
+            recommendations.append("Share professional and industry-relevant links")
+            recommendations.append("Native content without links gets better reach")
         
         elif platform == "tiktok":
-            # TikTok heavily penalizes external links
-            if links:
-                additional_penalty += int(50 * platform_config.get("external_link_penalty", 0.6))
-                recommendations.append("Remove external links - use bio link instead")
+            recommendations.append("Focus on native content - avoid external links in posts")
+            recommendations.append("Use bio link for external references")
+        
+        elif platform == "discord":
+            recommendations.append("Be cautious with external links - check for phishing")
+        
+        elif platform == "telegram":
+            recommendations.append("Limit promotional links to avoid spam flags")
         
         penalties.update({
             "additional_penalty": additional_penalty,
             "recommendations": recommendations,
-            "platform_config": platform_config
+            "platform_config": platform_config,
+            "platform_issues": platform_issues
         })
         
         return penalties
@@ -490,6 +793,143 @@ class LinkPenaltyDetector:
             recommendations.append("Focus on native content - avoid external links in posts")
         
         return recommendations
+    
+    def _check_twitter_link_rules(self, links: List[str], content: str) -> Dict[str, Any]:
+        """Check Twitter-specific link rules."""
+        issues = []
+        penalty_score = 0
+        
+        # Check link count
+        if len(links) > 1:
+            issues.append(f"Multiple links detected ({len(links)}) - Twitter penalizes multiple external links")
+            penalty_score += 20
+        
+        # Check for URL shorteners (Twitter prefers full URLs or t.co)
+        for link in links:
+            if any(shortener in link for shortener in ["bit.ly", "tinyurl.com", "goo.gl"]):
+                issues.append("URL shortener detected - use full URLs or Twitter Cards")
+                penalty_score += 15
+        
+        return {"issues": issues, "penalty_score": penalty_score}
+    
+    def _check_facebook_link_rules(self, links: List[str], content: str) -> Dict[str, Any]:
+        """Check Facebook-specific link rules."""
+        issues = []
+        penalty_score = 0
+        
+        # Check for clickbait patterns
+        clickbait_patterns = [
+            r"you\s+won't\s+believe",
+            r"this\s+will\s+shock\s+you",
+            r"number\s+\d+\s+will",
+            r"what\s+happened\s+next",
+            r"doctors\s+hate",
+            r"one\s+weird\s+trick"
+        ]
+        
+        for pattern in clickbait_patterns:
+            if re.search(pattern, content.lower()):
+                issues.append("Clickbait language detected - Facebook heavily penalizes this")
+                penalty_score += 30
+                break
+        
+        # Check link count
+        if len(links) > 1:
+            issues.append("Multiple links may reduce reach - Facebook prefers single link posts")
+            penalty_score += 15
+        
+        return {"issues": issues, "penalty_score": penalty_score}
+    
+    def _check_instagram_link_rules(self, links: List[str], content: str) -> Dict[str, Any]:
+        """Check Instagram-specific link rules."""
+        issues = []
+        penalty_score = 0
+        
+        # Instagram doesn't allow clickable links in posts
+        if links:
+            issues.append("Instagram doesn't support clickable links in posts - use link in bio")
+            penalty_score += 25
+        
+        return {"issues": issues, "penalty_score": penalty_score}
+    
+    def _check_linkedin_link_rules(self, links: List[str], content: str) -> Dict[str, Any]:
+        """Check LinkedIn-specific link rules."""
+        issues = []
+        penalty_score = 0
+        
+        # Check for professional domains
+        professional_domains = [".edu", ".gov", ".org"]
+        has_professional = any(
+            any(prof_domain in link for prof_domain in professional_domains)
+            for link in links
+        )
+        
+        if not has_professional and links:
+            issues.append("Consider using professional domains (.edu, .gov, .org) for better reach")
+            penalty_score += 10
+        
+        # Check for promotional content
+        promo_keywords = ["discount", "sale", "buy now", "limited time", "offer"]
+        if any(keyword in content.lower() for keyword in promo_keywords):
+            issues.append("Promotional content with links may be penalized on LinkedIn")
+            penalty_score += 20
+        
+        return {"issues": issues, "penalty_score": penalty_score}
+    
+    def _check_tiktok_link_rules(self, links: List[str], content: str) -> Dict[str, Any]:
+        """Check TikTok-specific link rules."""
+        issues = []
+        penalty_score = 0
+        
+        # TikTok heavily restricts external links
+        if links:
+            issues.append("TikTok heavily penalizes external links - use bio link only")
+            penalty_score += 40
+        
+        # Check for affiliate links (banned on TikTok)
+        affiliate_indicators = ["affiliate", "ref=", "aff=", "commission"]
+        for link in links:
+            if any(indicator in link.lower() for indicator in affiliate_indicators):
+                issues.append("Affiliate links are banned on TikTok")
+                penalty_score += 50
+                break
+        
+        return {"issues": issues, "penalty_score": penalty_score}
+    
+    def _check_discord_link_rules(self, links: List[str], content: str) -> Dict[str, Any]:
+        """Check Discord-specific link rules."""
+        issues = []
+        penalty_score = 0
+        
+        # Discord is more lenient but checks for phishing
+        phishing_indicators = ["discord-nitro", "free-nitro", "discordgift", "steam-gift"]
+        for link in links:
+            link_lower = link.lower()
+            if any(indicator in link_lower for indicator in phishing_indicators):
+                if "discord.com" not in link_lower and "discord.gg" not in link_lower:
+                    issues.append("Potential phishing link detected")
+                    penalty_score += 45
+                    break
+        
+        return {"issues": issues, "penalty_score": penalty_score}
+    
+    def _check_telegram_link_rules(self, links: List[str], content: str) -> Dict[str, Any]:
+        """Check Telegram-specific link rules."""
+        issues = []
+        penalty_score = 0
+        
+        # Check for spam patterns
+        if len(links) > 3:
+            issues.append("Too many links may be flagged as spam")
+            penalty_score += 25
+        
+        # Check for suspicious patterns
+        spam_keywords = ["crypto", "investment", "guaranteed", "profit", "earn money"]
+        if any(keyword in content.lower() for keyword in spam_keywords) and links:
+            issues.append("Promotional content with links may be flagged as spam")
+            penalty_score += 20
+        
+        return {"issues": issues, "penalty_score": penalty_score}
     
     def _calculate_confidence_score(self, link_count: int, penalty_type_count: int, 
                                   issue_count: int) -> float:

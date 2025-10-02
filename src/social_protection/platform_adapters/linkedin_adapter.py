@@ -8,15 +8,15 @@ business reputation monitoring, and compliance with professional standards.
 Focuses on LinkedIn's professional networking environment and business context.
 """
 
-import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from enum import Enum
 
 from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
 from ..registry import registry
+from ..logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("LinkedInProtectionAdapter")
 
 
 class LinkedInRiskFactor(Enum):

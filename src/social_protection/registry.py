@@ -7,11 +7,11 @@ with dynamic registration and singleton pattern for global access.
 """
 
 from typing import Dict, List, Optional, Type
-import logging
 from src.social_protection.types import PlatformType
 from src.social_protection.platform_adapters.base_adapter import SocialPlatformAdapter
+from src.social_protection.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("PlatformAdapterRegistry")
 
 
 class PlatformRegistry:

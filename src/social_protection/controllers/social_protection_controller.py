@@ -586,3 +586,178 @@ class SocialProtectionController(BaseController):
                 details={"analysis_id": analysis_id, "error": str(e)},
                 level="error"
             )
+
+    async def get_health_status(self) -> Dict[str, Any]:
+        """
+        Get comprehensive health status of social protection services.
+        
+        Checks the operational status of all major components:
+        - Core services (extension processor, scan service)
+        - Content analyzers
+        - Algorithm health analyzers
+        - Platform adapters
+        - Crisis detection system
+        
+        Returns:
+            Dict containing overall status and detailed component health
+            
+        Raises:
+            HTTPException: 503 if critical services are unavailable
+        """
+        import time
+        from src.social_protection.types import PlatformType
+        
+        overall_status = "healthy"
+        checks = {}
+        start_time = time.time()
+        
+        # Check core services
+        try:
+            checks["extension_data_processor"] = {
+                "status": "healthy" if self.extension_data_processor else "unavailable",
+                "message": "Extension data processor operational" if self.extension_data_processor else "Service not initialized"
+            }
+            if not self.extension_data_processor:
+                overall_status = "degraded"
+        except Exception as e:
+            checks["extension_data_processor"] = {
+                "status": "unhealthy",
+                "message": f"Error checking extension processor: {str(e)}"
+            }
+            overall_status = "degraded"
+        
+        try:
+            checks["social_scan_service"] = {
+                "status": "healthy" if self.social_scan_service else "unavailable",
+                "message": "Social scan service operational" if self.social_scan_service else "Service not initialized"
+            }
+            if not self.social_scan_service:
+                overall_status = "degraded"
+        except Exception as e:
+            checks["social_scan_service"] = {
+                "status": "unhealthy",
+                "message": f"Error checking scan service: {str(e)}"
+            }
+            overall_status = "degraded"
+        
+        # Check analyzers availability
+        analyzers_status = []
+        analyzer_components = [
+            "content_risk_analyzer",
+            "link_penalty_detector", 
+            "spam_pattern_detector",
+            "community_notes_analyzer",
+            "visibility_scorer",
+            "engagement_analyzer",
+            "penalty_detector",
+            "shadow_ban_detector"
+        ]
+        
+        for analyzer in analyzer_components:
+            try:
+                has_analyzer = hasattr(self, analyzer) and getattr(self, analyzer) is not None
+                analyzers_status.append({
+                    "name": analyzer,
+                    "status": "available" if has_analyzer else "not_configured"
+                })
+            except Exception:
+                analyzers_status.append({
+                    "name": analyzer,
+                    "status": "error"
+                })
+        
+        available_count = sum(1 for a in analyzers_status if a["status"] == "available")
+        checks["analyzers"] = {
+            "status": "healthy" if available_count > 0 else "degraded",
+            "message": f"{available_count}/{len(analyzer_components)} analyzers available",
+            "details": analyzers_status
+        }
+        
+        # Check platform adapters (if available)
+        platform_adapters_status = []
+        platforms = [
+            PlatformType.TWITTER,
+            PlatformType.FACEBOOK,
+            PlatformType.INSTAGRAM,
+            PlatformType.TIKTOK,
+            PlatformType.LINKEDIN,
+            PlatformType.TELEGRAM,
+            PlatformType.DISCORD
+        ]
+        
+        for platform in platforms:
+            try:
+                # Check if adapter registry exists and has the platform
+                adapter_available = False
+                if hasattr(self, 'adapter_registry'):
+                    adapter_available = platform in self.adapter_registry
+                
+                platform_adapters_status.append({
+                    "platform": platform.value,
+                    "status": "available" if adapter_available else "not_configured"
+                })
+            except Exception:
+                platform_adapters_status.append({
+                    "platform": platform.value,
+                    "status": "error"
+                })
+        
+        configured_count = sum(1 for p in platform_adapters_status if p["status"] == "available")
+        checks["platform_adapters"] = {
+            "status": "healthy" if configured_count > 0 else "degraded",
+            "message": f"{configured_count}/{len(platforms)} platform adapters configured",
+            "details": platform_adapters_status
+        }
+        
+        # Check crisis detection (if available)
+        try:
+            has_crisis_detector = hasattr(self, 'crisis_detector') and self.crisis_detector is not None
+            checks["crisis_detection"] = {
+                "status": "available" if has_crisis_detector else "not_configured",
+                "message": "Crisis detection system operational" if has_crisis_detector else "Crisis detection not configured"
+            }
+        except Exception as e:
+            checks["crisis_detection"] = {
+                "status": "error",
+                "message": f"Error checking crisis detector: {str(e)}"
+            }
+        
+        # Check database connectivity
+        try:
+            async with self.get_db_session() as session:
+                # Simple query to verify database connection
+                await session.execute(select(1))
+                checks["database"] = {
+                    "status": "healthy",
+                    "message": "Database connection successful"
+                }
+        except Exception as e:
+            checks["database"] = {
+                "status": "unhealthy",
+                "message": f"Database connection failed: {str(e)}"
+            }
+            overall_status = "unhealthy"
+        
+        response_time = time.time() - start_time
+        
+        response = {
+            "status": overall_status,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "response_time_seconds": round(response_time, 3),
+            "checks": checks,
+            "summary": {
+                "total_checks": len(checks),
+                "healthy": sum(1 for c in checks.values() if c.get("status") in ["healthy", "available"]),
+                "degraded": sum(1 for c in checks.values() if c.get("status") in ["degraded", "not_configured"]),
+                "unhealthy": sum(1 for c in checks.values() if c.get("status") in ["unhealthy", "error", "unavailable"])
+            }
+        }
+        
+        # Return 503 if system is unhealthy
+        if overall_status == "unhealthy":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=response
+            )
+        
+        return response

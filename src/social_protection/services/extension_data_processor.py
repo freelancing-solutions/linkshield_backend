@@ -8,7 +8,7 @@ Handles real-time social media content analysis and risk assessment.
 
 import asyncio
 import json
-import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -34,21 +34,29 @@ from src.models.social_protection import (
     ContentType,
     AssessmentType
 )
+from src.social_protection.exceptions import (
+    ExtensionProcessingError,
+    DataValidationError,
+    ServiceError,
+    TimeoutError as SPTimeoutError
+)
+from src.social_protection.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("ExtensionDataProcessor")
 
 
-class ExtensionDataProcessorError(Exception):
+# Legacy exception classes for backward compatibility
+class ExtensionDataProcessorError(ExtensionProcessingError):
     """Base exception for extension data processor errors."""
     pass
 
 
-class ValidationError(ExtensionDataProcessorError):
+class ValidationError(DataValidationError):
     """Data validation error."""
     pass
 
 
-class ProcessingError(ExtensionDataProcessorError):
+class ProcessingError(ExtensionProcessingError):
     """Data processing error."""
     pass
 
@@ -135,12 +143,26 @@ class ExtensionDataProcessor:
             ValidationError: If request data is invalid
             ProcessingError: If processing fails
         """
+        request_id = request_data.get("request_id", "unknown")
+        
         try:
+            self.logger.debug(f"Processing extension request {request_id}")
+            
             # Validate and parse request
             extension_request = self._validate_extension_request(request_data)
             
-            # Perform real-time assessment
-            assessment = await self._perform_real_time_assessment(extension_request)
+            # Perform real-time assessment with timeout
+            try:
+                assessment = await asyncio.wait_for(
+                    self._perform_real_time_assessment(extension_request),
+                    timeout=5.0  # 5 second timeout for real-time processing
+                )
+            except asyncio.TimeoutError:
+                self.logger.error(f"Assessment timeout for request {request_id}")
+                raise SPTimeoutError(
+                    "Real-time assessment timed out",
+                    details={"request_id": request_id, "timeout_seconds": 5}
+                )
             
             # Generate response
             response = ExtensionResponse(
@@ -152,14 +174,35 @@ class ExtensionDataProcessor:
                 error_message=None
             )
             
-            self.logger.info(f"Successfully processed extension request {extension_request.request_id}")
+            self.logger.info(
+                f"Successfully processed extension request {extension_request.request_id}",
+                extra={
+                    "request_id": extension_request.request_id,
+                    "platform": extension_request.platform.value,
+                    "risk_level": assessment.risk_level.value,
+                    "processing_time_ms": assessment.processing_time_ms
+                }
+            )
             return response
             
-        except ValidationError as e:
-            self.logger.error(f"Validation error: {str(e)}")
+        except (ValidationError, DataValidationError) as e:
+            self.logger.error(
+                f"Validation error for request {request_id}: {str(e)}",
+                extra={"request_id": request_id, "error_type": type(e).__name__}
+            )
             raise
+        except SPTimeoutError as e:
+            self.logger.error(
+                f"Timeout error for request {request_id}: {str(e)}",
+                extra={"request_id": request_id}
+            )
+            raise ProcessingError(f"Request processing timed out: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Processing error: {str(e)}")
+            self.logger.error(
+                f"Unexpected processing error for request {request_id}: {str(e)}",
+                exc_info=True,
+                extra={"request_id": request_id, "error_type": type(e).__name__}
+            )
             raise ProcessingError(f"Failed to process extension request: {str(e)}")
     
     async def process_batch_request(self, batch_data: Dict[str, Any]) -> BatchExtensionResponse:
@@ -172,18 +215,32 @@ class ExtensionDataProcessor:
         Returns:
             BatchExtensionResponse: Batch response with all assessments
         """
+        batch_id = batch_data.get("batch_id", "unknown")
+        
         try:
+            self.logger.info(f"Processing batch request {batch_id}")
+            
             # Validate batch request
             batch_request = self._validate_batch_request(batch_data)
             
-            # Process requests concurrently
+            # Process requests concurrently with timeout
             tasks = []
             for request in batch_request.requests:
                 task = self._process_single_request_async(request)
                 tasks.append(task)
             
-            # Wait for all tasks to complete
-            responses = await asyncio.gather(*tasks, return_exceptions=True)
+            # Wait for all tasks to complete with overall timeout
+            try:
+                responses = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=30.0  # 30 second timeout for batch processing
+                )
+            except asyncio.TimeoutError:
+                self.logger.error(f"Batch processing timeout for batch {batch_id}")
+                raise SPTimeoutError(
+                    "Batch processing timed out",
+                    details={"batch_id": batch_id, "timeout_seconds": 30}
+                )
             
             # Separate successful responses from errors
             successful_responses = []
@@ -191,9 +248,18 @@ class ExtensionDataProcessor:
             
             for i, response in enumerate(responses):
                 if isinstance(response, Exception):
+                    self.logger.warning(
+                        f"Request {batch_request.requests[i].request_id} in batch {batch_id} failed: {str(response)}",
+                        extra={
+                            "batch_id": batch_id,
+                            "request_id": batch_request.requests[i].request_id,
+                            "error_type": type(response).__name__
+                        }
+                    )
                     failed_requests.append({
                         "request_id": batch_request.requests[i].request_id,
-                        "error": str(response)
+                        "error": str(response),
+                        "error_type": type(response).__name__
                     })
                 else:
                     successful_responses.append(response)
@@ -209,11 +275,35 @@ class ExtensionDataProcessor:
                 failed_count=len(failed_requests)
             )
             
-            self.logger.info(f"Processed batch {batch_request.batch_id}: {len(successful_responses)}/{len(batch_request.requests)} successful")
+            self.logger.info(
+                f"Processed batch {batch_request.batch_id}: {len(successful_responses)}/{len(batch_request.requests)} successful",
+                extra={
+                    "batch_id": batch_request.batch_id,
+                    "total_requests": len(batch_request.requests),
+                    "successful": len(successful_responses),
+                    "failed": len(failed_requests)
+                }
+            )
             return batch_response
             
+        except (ValidationError, DataValidationError) as e:
+            self.logger.error(
+                f"Batch validation error for batch {batch_id}: {str(e)}",
+                extra={"batch_id": batch_id, "error_type": type(e).__name__}
+            )
+            raise
+        except SPTimeoutError as e:
+            self.logger.error(
+                f"Batch timeout error for batch {batch_id}: {str(e)}",
+                extra={"batch_id": batch_id}
+            )
+            raise ProcessingError(f"Batch processing timed out: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Batch processing error: {str(e)}")
+            self.logger.error(
+                f"Unexpected batch processing error for batch {batch_id}: {str(e)}",
+                exc_info=True,
+                extra={"batch_id": batch_id, "error_type": type(e).__name__}
+            )
             raise ProcessingError(f"Failed to process batch request: {str(e)}")
     
     async def check_link_safety(self, url: str, platform: PlatformType) -> LinkSafetyCheck:
@@ -227,8 +317,10 @@ class ExtensionDataProcessor:
         Returns:
             LinkSafetyCheck: Safety assessment results
         """
+        start_time = datetime.now(timezone.utc)
+        
         try:
-            start_time = datetime.now(timezone.utc)
+            self.logger.debug(f"Checking link safety for {url} on platform {platform.value}")
             
             # Parse URL
             parsed_url = urlparse(url)

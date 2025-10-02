@@ -8,15 +8,15 @@ engagement bait detection, and ad policy violation monitoring.
 Covers both Facebook and Instagram protection strategies.
 """
 
-import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from enum import Enum
 
 from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
 from ..registry import registry
+from ..logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("MetaProtectionAdapter")
 
 
 class MetaRiskFactor(Enum):

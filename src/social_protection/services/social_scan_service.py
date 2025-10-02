@@ -7,7 +7,7 @@ and risk assessment. Integrates with database models for persistent storage.
 """
 
 import asyncio
-import logging
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from uuid import UUID, uuid4
@@ -33,21 +33,30 @@ from src.social_protection.data_models import (
     AssessmentHistory
 )
 from src.services.ai_service import AIService
+from src.social_protection.exceptions import (
+    ScanServiceError,
+    RecordNotFoundError,
+    DatabaseError,
+    AIServiceError,
+    TimeoutError as SPTimeoutError
+)
+from src.social_protection.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("SocialScanService")
 
 
-class SocialScanServiceError(Exception):
+# Legacy exception classes for backward compatibility
+class SocialScanServiceError(ScanServiceError):
     """Base exception for social scan service errors."""
     pass
 
 
-class ScanNotFoundError(SocialScanServiceError):
+class ScanNotFoundError(RecordNotFoundError):
     """Scan not found error."""
     pass
 
 
-class InvalidScanStateError(SocialScanServiceError):
+class InvalidScanStateError(ScanServiceError):
     """Invalid scan state error."""
     pass
 
@@ -72,7 +81,6 @@ class SocialScanService:
             ai_service: AI service for content analysis
         """
         self.ai_service = ai_service
-        self.logger = logging.getLogger(__name__)
         
         # Risk assessment thresholds
         self.risk_thresholds = {
@@ -118,6 +126,15 @@ class SocialScanService:
             SocialScanServiceError: If scan creation fails
         """
         try:
+            start_time = time.time()
+            logger.info(
+                "Initiating profile scan",
+                user_id=user_id,
+                platform=platform.value,
+                operation="initiate_profile_scan",
+                profile_url=profile_url
+            )
+            
             # Create new scan record
             scan = SocialProfileScan(
                 id=uuid4(),
@@ -132,20 +149,55 @@ class SocialScanService:
             )
             
             db.add(scan)
-            await db.commit()
-            await db.refresh(scan)
             
-            self.logger.info(f"Initiated profile scan {scan.id} for platform {platform.value}")
+            try:
+                await db.commit()
+                await db.refresh(scan)
+            except Exception as db_error:
+                await db.rollback()
+                logger.error(
+                    "Database error creating scan",
+                    error=db_error,
+                    user_id=user_id,
+                    platform=platform.value,
+                    operation="initiate_profile_scan"
+                )
+                raise DatabaseError(
+                    "Failed to create scan record in database",
+                    details={"user_id": str(user_id), "platform": platform.value},
+                    original_error=db_error
+                )
+            
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "Successfully initiated profile scan",
+                scan_id=scan.id,
+                user_id=user_id,
+                platform=platform.value,
+                operation="initiate_profile_scan",
+                duration_ms=duration_ms
+            )
             
             # Start background scan processing
             asyncio.create_task(self._process_profile_scan(db, scan.id))
             
             return scan
             
+        except DatabaseError:
+            raise
         except Exception as e:
-            await db.rollback()
-            self.logger.error(f"Failed to initiate profile scan: {str(e)}")
-            raise SocialScanServiceError(f"Failed to initiate profile scan: {str(e)}")
+            logger.error(
+                "Unexpected error initiating profile scan",
+                error=e,
+                user_id=user_id,
+                platform=platform.value,
+                operation="initiate_profile_scan"
+            )
+            raise SocialScanServiceError(
+                f"Failed to initiate profile scan: {str(e)}",
+                details={"user_id": str(user_id), "platform": platform.value},
+                original_error=e
+            )
     
     async def get_scan_status(self, db: AsyncSession, scan_id: UUID) -> SocialProfileScan:
         """
@@ -162,6 +214,8 @@ class SocialScanService:
             ScanNotFoundError: If scan is not found
         """
         try:
+            self.logger.debug(f"Retrieving scan status for scan {scan_id}")
+            
             result = await db.execute(
                 select(SocialProfileScan)
                 .where(SocialProfileScan.id == scan_id)
@@ -170,15 +224,27 @@ class SocialScanService:
             scan = result.scalar_one_or_none()
             
             if not scan:
-                raise ScanNotFoundError(f"Scan {scan_id} not found")
+                self.logger.warning(f"Scan {scan_id} not found")
+                raise ScanNotFoundError(
+                    f"Scan not found",
+                    details={"scan_id": str(scan_id)}
+                )
             
             return scan
             
         except ScanNotFoundError:
             raise
         except Exception as e:
-            self.logger.error(f"Failed to get scan status: {str(e)}")
-            raise SocialScanServiceError(f"Failed to get scan status: {str(e)}")
+            self.logger.error(
+                f"Database error retrieving scan status: {str(e)}",
+                exc_info=True,
+                extra={"scan_id": str(scan_id)}
+            )
+            raise DatabaseError(
+                f"Failed to get scan status",
+                details={"scan_id": str(scan_id)},
+                original_error=e
+            )
     
     async def get_user_scans(
         self,
@@ -487,35 +553,71 @@ class SocialScanService:
             scan_id: ID of the scan to process
         """
         try:
+            self.logger.info(f"Starting background processing for scan {scan_id}")
+            
             # Update scan status to running
             await self._update_scan_status(db, scan_id, ScanStatus.RUNNING)
             
             # Get scan details
             scan = await self.get_scan_status(db, scan_id)
             
-            # Simulate profile data collection (in real implementation, this would
-            # involve API calls to social media platforms or web scraping)
-            profile_data = await self._collect_profile_data(scan.profile_url, scan.platform)
+            # Collect profile data with timeout
+            try:
+                profile_data = await asyncio.wait_for(
+                    self._collect_profile_data(scan.profile_url, scan.platform),
+                    timeout=60.0  # 60 second timeout for data collection
+                )
+            except asyncio.TimeoutError:
+                self.logger.error(f"Profile data collection timeout for scan {scan_id}")
+                raise SPTimeoutError(
+                    "Profile data collection timed out",
+                    details={"scan_id": str(scan_id), "timeout_seconds": 60}
+                )
             
             # Process different types of content
             content_types = [ContentType.POST, ContentType.COMMENT, ContentType.PROFILE_INFO]
             
             for content_type in content_types:
                 if content_type.value in profile_data:
-                    await self.create_content_risk_assessment(
-                        db=db,
-                        scan_id=scan_id,
-                        content_type=content_type,
-                        content_data=profile_data[content_type.value]
-                    )
+                    try:
+                        await self.create_content_risk_assessment(
+                            db=db,
+                            scan_id=scan_id,
+                            content_type=content_type,
+                            content_data=profile_data[content_type.value]
+                        )
+                    except Exception as assessment_error:
+                        self.logger.error(
+                            f"Failed to create assessment for content type {content_type.value}: {str(assessment_error)}",
+                            extra={
+                                "scan_id": str(scan_id),
+                                "content_type": content_type.value,
+                                "error_type": type(assessment_error).__name__
+                            }
+                        )
+                        # Continue processing other content types
+                        continue
             
             # Update scan status to completed
             await self._update_scan_status(db, scan_id, ScanStatus.COMPLETED)
             
-            self.logger.info(f"Successfully completed profile scan {scan_id}")
+            self.logger.info(
+                f"Successfully completed profile scan {scan_id}",
+                extra={"scan_id": str(scan_id), "platform": scan.platform.value}
+            )
             
+        except SPTimeoutError as e:
+            self.logger.error(
+                f"Timeout during profile scan {scan_id}: {str(e)}",
+                extra={"scan_id": str(scan_id)}
+            )
+            await self._update_scan_status(db, scan_id, ScanStatus.FAILED, f"Timeout: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Profile scan {scan_id} failed: {str(e)}")
+            self.logger.error(
+                f"Profile scan {scan_id} failed: {str(e)}",
+                exc_info=True,
+                extra={"scan_id": str(scan_id), "error_type": type(e).__name__}
+            )
             await self._update_scan_status(db, scan_id, ScanStatus.FAILED, str(e))
     
     async def _update_scan_status(
@@ -617,11 +719,34 @@ class SocialScanService:
             Dict[str, Any]: Analysis results
         """
         try:
+            self.logger.debug(f"Analyzing content with AI for content type {content_type.value}")
+            
             # Extract text content for analysis
             text_content = self._extract_text_content(content_data, content_type)
             
-            # Use AI service for analysis
-            ai_analysis = await self.ai_service.analyze_content_safety(text_content)
+            # Use AI service for analysis with timeout and error handling
+            try:
+                ai_analysis = await asyncio.wait_for(
+                    self.ai_service.analyze_content_safety(text_content),
+                    timeout=10.0  # 10 second timeout for AI analysis
+                )
+            except asyncio.TimeoutError:
+                self.logger.warning(f"AI analysis timeout for content type {content_type.value}")
+                raise SPTimeoutError(
+                    "AI content analysis timed out",
+                    details={"content_type": content_type.value, "timeout_seconds": 10}
+                )
+            except Exception as ai_error:
+                self.logger.error(
+                    f"AI service error: {str(ai_error)}",
+                    exc_info=True,
+                    extra={"content_type": content_type.value}
+                )
+                raise AIServiceError(
+                    "AI content analysis failed",
+                    details={"content_type": content_type.value},
+                    original_error=ai_error
+                )
             
             # Extract risk factors and scores
             risk_factors = []
@@ -637,13 +762,20 @@ class SocialScanService:
             if ai_analysis.get("spam_detected"):
                 risk_factors.append("spam_content_detected")
             
-            # Add content-specific analysis
-            if content_type == ContentType.PROFILE_INFO:
-                risk_factors.extend(self._analyze_profile_info(content_data))
-            elif content_type == ContentType.POST:
-                risk_factors.extend(self._analyze_post_content(content_data))
-            elif content_type == ContentType.COMMENT:
-                risk_factors.extend(self._analyze_comment_content(content_data))
+            # Add content-specific analysis with error handling
+            try:
+                if content_type == ContentType.PROFILE_INFO:
+                    risk_factors.extend(self._analyze_profile_info(content_data))
+                elif content_type == ContentType.POST:
+                    risk_factors.extend(self._analyze_post_content(content_data))
+                elif content_type == ContentType.COMMENT:
+                    risk_factors.extend(self._analyze_comment_content(content_data))
+            except Exception as analysis_error:
+                self.logger.warning(
+                    f"Content-specific analysis error: {str(analysis_error)}",
+                    extra={"content_type": content_type.value}
+                )
+                # Continue with AI analysis results even if content-specific analysis fails
             
             return {
                 "ai_analysis": ai_analysis,
@@ -652,10 +784,19 @@ class SocialScanService:
                 "analysis_timestamp": datetime.now(timezone.utc).isoformat()
             }
             
+        except (SPTimeoutError, AIServiceError):
+            # Re-raise specific errors
+            raise
         except Exception as e:
-            self.logger.error(f"AI content analysis failed: {str(e)}")
+            self.logger.error(
+                f"Unexpected error during AI content analysis: {str(e)}",
+                exc_info=True,
+                extra={"content_type": content_type.value}
+            )
+            # Return safe fallback result
             return {
                 "error": str(e),
+                "error_type": type(e).__name__,
                 "risk_factors": ["analysis_error"],
                 "confidence_score": 0.0,
                 "analysis_timestamp": datetime.now(timezone.utc).isoformat()

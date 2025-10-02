@@ -16,7 +16,8 @@ from typing import List, Optional, Tuple, Dict, Any, Set
 import aiohttp
 from aiohttp import ClientTimeout, ClientSession
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse, robots
+from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 from enum import Enum
 
 from pydantic import BaseModel, Field

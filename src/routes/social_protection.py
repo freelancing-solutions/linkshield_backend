@@ -332,15 +332,26 @@ async def list_user_assessments(
     "/health",
     status_code=status.HTTP_200_OK,
     summary="Social protection health check",
-    description="Check the health status of social protection services"
+    description="Check the health status of social protection services including analyzers, platform adapters, and core services"
 )
-async def health_check() -> Dict[str, Any]:
-    """Health check for social protection services."""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow(),
-        "services": {
-            "extension_data_processor": "operational",
-            "social_scan_service": "operational"
-        }
-    }
+async def health_check(
+    controller: SocialProtectionController = Depends(get_social_protection_controller)
+) -> Dict[str, Any]:
+    """
+    Comprehensive health check for social protection services.
+    
+    Checks the operational status of:
+    - Core services (extension processor, scan service)
+    - Content analyzers (risk, spam, link penalty, community notes)
+    - Algorithm health analyzers (visibility, engagement, penalty, shadow ban)
+    - Platform adapters (Twitter, Meta, TikTok, LinkedIn, Telegram, Discord)
+    - Crisis detection system
+    
+    Returns:
+        Dict with status, timestamp, and detailed service health information
+        
+    Status Codes:
+        200: All services healthy or degraded but operational
+        503: Critical services unavailable
+    """
+    return await controller.get_health_status()

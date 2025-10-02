@@ -8,7 +8,6 @@ raid detection, and community safety analysis.
 Provides comprehensive protection for Discord servers, channels, and user profiles.
 """
 
-import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from enum import Enum
@@ -22,8 +21,9 @@ from ..data_models import (
     ContentAnalysisResult
 )
 from ..registry import registry
+from ..logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("DiscordProtectionAdapter")
 
 
 class DiscordRiskFactor(Enum):

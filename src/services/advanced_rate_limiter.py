@@ -41,6 +41,10 @@ class RateLimitScope(str, Enum):
     TEAM_INVITATION = "team_invitation"
     ALERT_CREATION = "alert_creation"
     ALERT_MODIFICATION = "alert_modification"
+    # Extension-specific scopes
+    EXTENSION_URL_CHECK = "extension_url_check"
+    EXTENSION_BULK_URL_CHECK = "extension_bulk_url_check"
+    EXTENSION_CONTENT_ANALYZE = "extension_content_analyze"
 
 @dataclass
 class RateLimitConfig:
@@ -67,6 +71,10 @@ DEFAULT_RATE_LIMITS = {
     RateLimitScope.TEAM_INVITATION: RateLimitConfig(limit=20, window=3600),
     RateLimitScope.ALERT_CREATION: RateLimitConfig(limit=100, window=3600),
     RateLimitScope.ALERT_MODIFICATION: RateLimitConfig(limit=200, window=3600),
+    # Extension quotas (per 60s window). Multiplied by subscription tier via SUBSCRIPTION_MULTIPLIERS
+    RateLimitScope.EXTENSION_URL_CHECK: RateLimitConfig(limit=12, window=60, strategy=RateLimitStrategy.SLIDING_WINDOW),
+    RateLimitScope.EXTENSION_BULK_URL_CHECK: RateLimitConfig(limit=6, window=60, strategy=RateLimitStrategy.SLIDING_WINDOW),
+    RateLimitScope.EXTENSION_CONTENT_ANALYZE: RateLimitConfig(limit=12, window=60, strategy=RateLimitStrategy.SLIDING_WINDOW),
 }
 
 # Subscription tier multipliers

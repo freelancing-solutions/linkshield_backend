@@ -451,6 +451,7 @@ class URLShortenerAnalyzer:
         }
 
 
+async def analyze_shortener_enhanced(url: str) -> Dict[str, Any]:
     """
     Enhanced shortener analysis method for integration with URLAnalysisService.
     

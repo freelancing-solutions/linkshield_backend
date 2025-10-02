@@ -9,9 +9,11 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
-import logging
 import statistics
 import math
+from ..logging_utils import get_logger
+
+logger = get_logger("ShadowBanDetector")
 from ..types import PlatformType, RiskLevel
 
 logger = logging.getLogger(__name__)
