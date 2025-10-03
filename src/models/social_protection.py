@@ -736,3 +736,106 @@ class FollowerORM(Base):
             "metadata_info": self.metadata_info,
             }
 
+
+
+
+class JobStatus(enum.Enum):
+    """
+    Background job status enumeration.
+    """
+    PENDING = "pending"
+    STARTED = "started"
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    FAILURE = "failure"
+    RETRY = "retry"
+    REVOKED = "revoked"
+
+
+class BackgroundJobORM(Base):
+    """
+    Background job model for tracking long-running tasks.
+    
+    Stores job status, progress, and results for background tasks
+    including deep analysis, comprehensive scans, and crisis detection.
+    """
+    __tablename__ = "sp_background_jobs"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Job identification
+    task_id = Column(String(255), unique=True, index=True, nullable=False)
+    task_name = Column(String(255), nullable=False, index=True)
+    
+    # Job ownership
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    
+    # Job status
+    status = Column(Enum(JobStatus), default=JobStatus.PENDING, nullable=False, index=True)
+    progress = Column(Integer, default=0)  # 0-100
+    
+    # Job details
+    task_args = Column(JSON, default=dict)
+    task_kwargs = Column(JSON, default=dict)
+    
+    # Results
+    result = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    traceback = Column(Text, nullable=True)
+    
+    # Retry information
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=3)
+    
+    # Timing
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # Metadata
+    metadata = Column(JSON, default=dict)
+    
+    # Indexes
+    __table_args__ = (
+        Index('idx_job_user_status', 'user_id', 'status'),
+        Index('idx_job_task_name', 'task_name'),
+        Index('idx_job_created_at', 'created_at'),
+    )
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+    
+    def as_dict(self) -> Dict[str, Any]:
+        """Convert model to dictionary"""
+        return {
+            "id": str(self.id),
+            "task_id": self.task_id,
+            "task_name": self.task_name,
+            "user_id": str(self.user_id) if self.user_id else None,
+            "status": self.status.value if self.status else None,
+            "progress": self.progress,
+            "result": self.result,
+            "error": self.error,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "metadata": self.metadata,
+        }
+    
+    def update_status(self, status: JobStatus, progress: Optional[int] = None, error: Optional[str] = None):
+        """Update job status"""
+        self.status = status
+        if progress is not None:
+            self.progress = progress
+        if error:
+            self.error = error
+        
+        if status == JobStatus.STARTED and not self.started_at:
+            self.started_at = datetime.now(timezone.utc)
+        elif status in [JobStatus.SUCCESS, JobStatus.FAILURE, JobStatus.REVOKED]:
+            self.completed_at = datetime.now(timezone.utc)
