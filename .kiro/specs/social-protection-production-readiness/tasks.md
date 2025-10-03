@@ -328,7 +328,9 @@
   - Test crisis detection logic
   - _Requirements: 10.1_
 
-- [-] 11. Complete SocialScanService
+- [ ] 11. Complete SocialScanService
+
+
 
 
 
@@ -785,7 +787,9 @@
   - _Requirements: 2.2, 2.6_
 
 
-- [ ] 24.4 Add compliance check endpoints
+- [x] 24.4 Add compliance check endpoints
+
+
 
   - POST /api/v1/social-protection/bot/compliance
 
