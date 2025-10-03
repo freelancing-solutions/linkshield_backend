@@ -154,7 +154,9 @@ class InMemoryCache(CacheService):
                 if key in self._expiry:
                     del self._expiry[key]
                 self._deletes += 1
+                record_cache_operation("delete", "success")
                 return True
+            record_cache_operation("delete", "not_found")
             return False
     
     async def exists(self, key: str) -> bool:
@@ -220,6 +222,12 @@ class InMemoryCache(CacheService):
                 del self._expiry[key]
             
             return len(expired_keys)
+    
+    async def _update_metrics(self) -> None:
+        """Update Prometheus metrics"""
+        total_requests = self._hits + self._misses
+        hit_rate = (self._hits / total_requests) if total_requests > 0 else 0.0
+        update_cache_metrics(len(self._cache), hit_rate)
 
 
 class RedisCache(CacheService):
@@ -279,14 +287,17 @@ class RedisCache(CacheService):
             # Update stats
             if value is not None:
                 await redis.hincrby(self._stats_key, "hits", 1)
+                record_cache_operation("get", "hit")
                 # Deserialize JSON
                 return json.loads(value)
             else:
                 await redis.hincrby(self._stats_key, "misses", 1)
+                record_cache_operation("get", "miss")
                 return None
         
         except Exception as e:
             logger.error(f"Redis get error: {e}")
+            record_cache_operation("get", "error")
             return None
     
     async def set(self, key: str, value: Any, ttl: int = None) -> bool:
