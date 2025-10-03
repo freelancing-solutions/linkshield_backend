@@ -312,11 +312,13 @@ class RedisCache(CacheService):
             
             await redis.setex(namespaced_key, ttl, serialized)
             await redis.hincrby(self._stats_key, "sets", 1)
+            record_cache_operation("set", "success")
             
             return True
         
         except Exception as e:
             logger.error(f"Redis set error: {e}")
+            record_cache_operation("set", "error")
             return False
     
     async def delete(self, key: str) -> bool:
@@ -329,12 +331,15 @@ class RedisCache(CacheService):
             
             if result > 0:
                 await redis.hincrby(self._stats_key, "deletes", 1)
+                record_cache_operation("delete", "success")
                 return True
             
+            record_cache_operation("delete", "not_found")
             return False
         
         except Exception as e:
             logger.error(f"Redis delete error: {e}")
+            record_cache_operation("delete", "error")
             return False
     
     async def exists(self, key: str) -> bool:
