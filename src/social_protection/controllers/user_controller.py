@@ -95,7 +95,7 @@ class UserController(BaseController):
         Returns:
             Dict containing user protection settings
         """
-        try:
+        async def _get_settings():
             # Get user's protection preferences
             protection_settings = {
                 "user_id": str(user.id),
@@ -140,13 +140,13 @@ class UserController(BaseController):
             )
             
             return protection_settings
-            
-        except Exception as e:
-            logger.error(f"Error retrieving user protection settings: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to retrieve protection settings"
-            )
+        
+        return await self.execute_with_error_handling(
+            _get_settings,
+            "get user protection settings",
+            user_id=user.id,
+            context={"operation": "get_settings"}
+        )
     
     async def update_user_protection_settings(
         self,
@@ -258,9 +258,11 @@ class UserController(BaseController):
             if not await self.check_rate_limit(
                 user.id, "protection_analytics", rate_limit, window_seconds=3600
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for protection analytics"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=rate_limit,
+                    window=3600,
+                    message="Rate limit exceeded for protection analytics"
                 )
             
             # Get user's recent scan data
@@ -355,9 +357,11 @@ class UserController(BaseController):
             if not await self.check_rate_limit(
                 user.id, "platform_scan", rate_limit, window_seconds=3600
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for platform scans"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=rate_limit,
+                    window=3600,
+                    message="Rate limit exceeded for platform scans"
                 )
             
             # Validate platform username
@@ -465,9 +469,11 @@ class UserController(BaseController):
             if not await self.check_rate_limit(
                 user.id, "content_analysis", rate_limit, window_seconds=3600
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for content analysis"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=rate_limit,
+                    window=3600,
+                    message="Rate limit exceeded for content analysis"
                 )
             
             # Validate content data
@@ -604,18 +610,21 @@ class UserController(BaseController):
         try:
             # Check premium feature access
             if user.subscription_plan != "premium":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Algorithm health analysis requires premium subscription"
+                raise self.handle_authorization_error(
+                    message="Algorithm health analysis requires premium subscription",
+                    required_permission="premium_subscription",
+                    details={"feature": "algorithm_health_analysis", "current_plan": user.subscription_plan}
                 )
             
             # Check rate limits
             if not await self.check_rate_limit(
                 user.id, "algorithm_health", 10, window_seconds=3600  # 10 per hour for premium
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for algorithm health analysis"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=10,
+                    window=3600,
+                    message="Rate limit exceeded for algorithm health analysis"
                 )
             
             # Validate input data
@@ -728,8 +737,46 @@ class UserController(BaseController):
         db: AsyncSession
     ) -> None:
         """Update user's platform-specific settings"""
-        # In a real implementation, this would update the database
-        pass
+        try:
+            # Validate platform settings structure
+            valid_platforms = ["twitter", "instagram", "facebook", "linkedin", "tiktok", "discord", "telegram"]
+            
+            for platform, settings in platform_settings.items():
+                if platform not in valid_platforms:
+                    logger.warning(f"Invalid platform in settings: {platform}")
+                    continue
+                
+                # Validate settings structure
+                if not isinstance(settings, dict):
+                    logger.warning(f"Invalid settings format for platform {platform}")
+                    continue
+                
+                # Validate boolean fields
+                for key in ["monitoring_enabled", "auto_scan"]:
+                    if key in settings and not isinstance(settings[key], bool):
+                        logger.warning(f"Invalid {key} value for platform {platform}")
+                        settings[key] = bool(settings[key])
+            
+            # In a real implementation, this would update the database
+            # For now, we log the update
+            self.log_operation(
+                "User platform settings updated",
+                user_id=user.id,
+                details={
+                    "platforms_updated": list(platform_settings.keys()),
+                    "settings": platform_settings
+                },
+                level="debug"
+            )
+            
+            # TODO: Implement database persistence when user settings model is available
+            # Example:
+            # user.platform_settings = platform_settings
+            # await db.commit()
+            
+        except Exception as e:
+            logger.error(f"Error updating user platform settings: {str(e)}")
+            raise
     
     async def _get_user_recent_scans(
         self,
@@ -739,9 +786,57 @@ class UserController(BaseController):
         db: Optional[AsyncSession]
     ) -> List[Dict[str, Any]]:
         """Get user's recent scan data"""
-        # In a real implementation, this would query the database
-        # For now, return mock data
-        return []
+        try:
+            if not db:
+                logger.warning("No database session provided for recent scans query")
+                return []
+            
+            from datetime import timedelta
+            from sqlalchemy import select
+            from src.models.social_protection import SocialProfileScanORM
+            
+            # Calculate date range
+            start_date = utc_datetime() - timedelta(days=days)
+            
+            # Build query
+            query = select(SocialProfileScanORM).where(
+                SocialProfileScanORM.user_id == user.id,
+                SocialProfileScanORM.created_at >= start_date
+            )
+            
+            # Add platform filter if specified
+            if platform:
+                query = query.where(SocialProfileScanORM.platform == platform.value)
+            
+            # Order by most recent first
+            query = query.order_by(SocialProfileScanORM.created_at.desc())
+            
+            # Execute query
+            result = await db.execute(query)
+            scans = result.scalars().all()
+            
+            # Convert to dict format
+            scan_data = []
+            for scan in scans:
+                scan_dict = {
+                    "scan_id": str(scan.id),
+                    "platform": scan.platform,
+                    "profile_url": scan.profile_url,
+                    "status": scan.status,
+                    "risk_score": scan.overall_risk_score,
+                    "created_at": scan.created_at.isoformat() if scan.created_at else None,
+                    "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
+                    "scan_data": scan.scan_data or {}
+                }
+                scan_data.append(scan_dict)
+            
+            logger.debug(f"Retrieved {len(scan_data)} recent scans for user {user.id}")
+            return scan_data
+            
+        except Exception as e:
+            logger.error(f"Error retrieving recent scans: {str(e)}")
+            # Return empty list on error to allow graceful degradation
+            return []
     
     async def _calculate_user_analytics(
         self,
@@ -871,18 +966,21 @@ class UserController(BaseController):
         try:
             # Check premium feature access
             if user.subscription_plan != "premium":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Batch algorithm health analysis requires premium subscription"
+                raise self.handle_authorization_error(
+                    message="Batch algorithm health analysis requires premium subscription",
+                    required_permission="premium_subscription",
+                    details={"feature": "batch_algorithm_health_analysis", "current_plan": user.subscription_plan}
                 )
             
             # Check rate limits
             if not await self.check_rate_limit(
                 user.id, "batch_algorithm_health", 5, window_seconds=3600  # 5 batches per hour
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for batch algorithm health analysis"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=5,
+                    window=3600,
+                    message="Rate limit exceeded for batch algorithm health analysis"
                 )
             
             import uuid
@@ -1094,18 +1192,21 @@ class UserController(BaseController):
         try:
             # Check premium feature access
             if user.subscription_plan != "premium":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Visibility analysis requires premium subscription"
+                raise self.handle_authorization_error(
+                    message="Visibility analysis requires premium subscription",
+                    required_permission="premium_subscription",
+                    details={"feature": "visibility_analysis", "current_plan": user.subscription_plan}
                 )
             
             # Check rate limits
             if not await self.check_rate_limit(
                 user.id, "visibility_analysis", 20, window_seconds=3600
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for visibility analysis"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=20,
+                    window=3600,
+                    message="Rate limit exceeded for visibility analysis"
                 )
             
             # Perform visibility analysis
@@ -1223,18 +1324,21 @@ class UserController(BaseController):
         try:
             # Check premium feature access
             if user.subscription_plan != "premium":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Engagement analysis requires premium subscription"
+                raise self.handle_authorization_error(
+                    message="Engagement analysis requires premium subscription",
+                    required_permission="premium_subscription",
+                    details={"feature": "engagement_analysis", "current_plan": user.subscription_plan}
                 )
             
             # Check rate limits
             if not await self.check_rate_limit(
                 user.id, "engagement_analysis", 20, window_seconds=3600
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for engagement analysis"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=20,
+                    window=3600,
+                    message="Rate limit exceeded for engagement analysis"
                 )
             
             # Perform engagement analysis
@@ -1355,18 +1459,21 @@ class UserController(BaseController):
         try:
             # Check premium feature access
             if user.subscription_plan != "premium":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Penalty detection requires premium subscription"
+                raise self.handle_authorization_error(
+                    message="Penalty detection requires premium subscription",
+                    required_permission="premium_subscription",
+                    details={"feature": "penalty_detection", "current_plan": user.subscription_plan}
                 )
             
             # Check rate limits
             if not await self.check_rate_limit(
                 user.id, "penalty_detection", 15, window_seconds=3600
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for penalty detection"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=15,
+                    window=3600,
+                    message="Rate limit exceeded for penalty detection"
                 )
             
             # Perform penalty detection
@@ -1421,9 +1528,10 @@ class UserController(BaseController):
         try:
             # Check premium feature access
             if user.subscription_plan != "premium":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Penalty monitoring requires premium subscription"
+                raise self.handle_authorization_error(
+                    message="Penalty monitoring requires premium subscription",
+                    required_permission="premium_subscription",
+                    details={"feature": "penalty_monitoring", "current_plan": user.subscription_plan}
                 )
             
             # Mock monitoring data (in real implementation, would query database)
@@ -1485,18 +1593,21 @@ class UserController(BaseController):
         try:
             # Check premium feature access
             if user.subscription_plan != "premium":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Shadow ban detection requires premium subscription"
+                raise self.handle_authorization_error(
+                    message="Shadow ban detection requires premium subscription",
+                    required_permission="premium_subscription",
+                    details={"feature": "shadow_ban_detection", "current_plan": user.subscription_plan}
                 )
             
             # Check rate limits
             if not await self.check_rate_limit(
                 user.id, "shadow_ban_detection", 10, window_seconds=3600
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded for shadow ban detection"
+                raise self.handle_rate_limit_error(
+                    retry_after=3600,
+                    limit=10,
+                    window=3600,
+                    message="Rate limit exceeded for shadow ban detection"
                 )
             
             # Perform shadow ban detection
@@ -1552,9 +1663,10 @@ class UserController(BaseController):
         try:
             # Check premium feature access
             if user.subscription_plan != "premium":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Shadow ban monitoring requires premium subscription"
+                raise self.handle_authorization_error(
+                    message="Shadow ban monitoring requires premium subscription",
+                    required_permission="premium_subscription",
+                    details={"feature": "shadow_ban_monitoring", "current_plan": user.subscription_plan}
                 )
             
             # Mock monitoring data (in real implementation, would query database)
