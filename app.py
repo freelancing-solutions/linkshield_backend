@@ -49,6 +49,7 @@ from src.routes.social_protection_user import router as social_protection_user_r
 from src.routes.social_protection_bot import router as social_protection_bot_router
 from src.routes.social_protection_extension import router as social_protection_extension_router
 from src.routes.social_protection_crisis import router as social_protection_crisis_router
+from src.routes.monitoring import router as monitoring_router
 
 # Bot Service
 from src.bots.startup import initialize_bot_service, shutdown_bot_service
@@ -178,6 +179,9 @@ app.include_router(social_protection_user_router)
 app.include_router(social_protection_bot_router)
 app.include_router(social_protection_extension_router)
 app.include_router(social_protection_crisis_router)
+
+# Monitoring Routes
+app.include_router(monitoring_router)
 
 
 # Root endpoint
