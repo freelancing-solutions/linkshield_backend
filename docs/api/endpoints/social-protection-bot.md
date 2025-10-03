@@ -10,7 +10,7 @@ API routes for bot-integrated content analysis and safety checks.
 
 ## Authentication
 
-All endpoints require JWT authentication via the `Authorization` header:
+JWT authentication is required for all endpoints except the health check.
 
 ```
 Authorization: Bearer <jwt_token>
@@ -196,6 +196,8 @@ X-Bot-Signature: <signature>
 **GET** `/health`
 
 Returns health status of bot integration services.
+
+Authentication: Public (no JWT required)
 
 #### Response (example)
 ```json

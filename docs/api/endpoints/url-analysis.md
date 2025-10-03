@@ -461,6 +461,8 @@ LinkShield uses a five-tier threat classification system:
 | Get Results | 50/hour | Per IP |
 | Domain Reputation | 20/hour | Per IP |
 
+Implementation note: In the current codebase, anonymous single URL analysis does not have a hard hourly cap; only broken-link scan parameters are restricted (e.g., scan_depth=1, max_links=10). The 10/hour limit above is an operational recommendation that will apply when a global rate-limiting middleware is enabled.
+
 Rate limit headers are included in all responses:
 
 ```

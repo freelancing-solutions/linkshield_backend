@@ -301,14 +301,14 @@ For content analysis services optimized for bot integrations (analyze, account s
 Bot endpoints implement platform-specific rate limiting:
 
 ### Default Limits
-- **Per User**: 10 requests/minute, 100 requests/hour, 500 requests/day
-- **Per Platform**: 1000 requests/minute globally
+- **Per user per platform**: 50 requests/hour (sliding window) enforced via BotRateLimit
+- **Platform throttling**: Provider-side limits apply (Discord, Telegram, Twitter)
 - **Quick Analysis**: 3-second timeout for bot-optimized responses
 
 ### Rate Limit Headers
 ```http
-X-RateLimit-Limit: 10
-X-RateLimit-Remaining: 7
+X-RateLimit-Limit: 50
+X-RateLimit-Remaining: 47
 X-RateLimit-Reset: 1642248600
 X-RateLimit-Platform: discord
 ```
@@ -396,9 +396,9 @@ TELEGRAM_BOT_TOKEN=your-telegram-token
 DISCORD_BOT_TOKEN=your-discord-token
 
 # Rate Limiting
-BOT_RATE_LIMIT_PER_MINUTE=10
-BOT_RATE_LIMIT_PER_HOUR=100
-BOT_RATE_LIMIT_PER_DAY=500
+# Rate Limiting
+# Enforced per user per platform via BotRateLimit (sliding window)
+BOT_RATE_LIMIT_PER_HOUR=50
 
 # Analysis Configuration
 QUICK_ANALYSIS_TIMEOUT_SECONDS=3
