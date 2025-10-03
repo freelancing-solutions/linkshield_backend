@@ -14,6 +14,10 @@ from datetime import datetime, timedelta
 from collections import OrderedDict
 
 from src.social_protection.logging_utils import get_logger
+from src.social_protection.metrics import (
+    record_cache_operation,
+    update_cache_metrics
+)
 
 logger = get_logger("SocialProtectionCache")
 
