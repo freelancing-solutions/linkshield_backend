@@ -14,10 +14,6 @@ from datetime import datetime, timedelta
 from collections import OrderedDict
 
 from src.social_protection.logging_utils import get_logger
-from src.social_protection.metrics import (
-    record_cache_operation,
-    update_cache_metrics
-)
 
 logger = get_logger("SocialProtectionCache")
 
@@ -100,22 +96,14 @@ class InMemoryCache(CacheService):
                     del self._cache[key]
                     del self._expiry[key]
                     self._misses += 1
-                    record_cache_operation("get", "miss")
                     return None
                 
                 # Move to end (most recently used)
                 self._cache.move_to_end(key)
                 self._hits += 1
-                record_cache_operation("get", "hit")
-                
-                # Update metrics periodically
-                if (self._hits + self._misses) % 100 == 0:
-                    await self._update_metrics()
-                
                 return self._cache[key]
             
             self._misses += 1
-            record_cache_operation("get", "miss")
             return None
     
     async def set(self, key: str, value: Any, ttl: int = None) -> bool:
@@ -131,18 +119,12 @@ class InMemoryCache(CacheService):
                 if oldest_key in self._expiry:
                     del self._expiry[oldest_key]
                 self._evictions += 1
-                record_cache_operation("evict", "success")
             
             # Set value and expiry
             self._cache[key] = value
             self._cache.move_to_end(key)
             self._expiry[key] = time.time() + ttl
             self._sets += 1
-            record_cache_operation("set", "success")
-            
-            # Update metrics periodically
-            if self._sets % 100 == 0:
-                await self._update_metrics()
             
             return True
     
@@ -154,9 +136,7 @@ class InMemoryCache(CacheService):
                 if key in self._expiry:
                     del self._expiry[key]
                 self._deletes += 1
-                record_cache_operation("delete", "success")
                 return True
-            record_cache_operation("delete", "not_found")
             return False
     
     async def exists(self, key: str) -> bool:
@@ -222,12 +202,6 @@ class InMemoryCache(CacheService):
                 del self._expiry[key]
             
             return len(expired_keys)
-    
-    async def _update_metrics(self) -> None:
-        """Update Prometheus metrics"""
-        total_requests = self._hits + self._misses
-        hit_rate = (self._hits / total_requests) if total_requests > 0 else 0.0
-        update_cache_metrics(len(self._cache), hit_rate)
 
 
 class RedisCache(CacheService):
@@ -287,17 +261,14 @@ class RedisCache(CacheService):
             # Update stats
             if value is not None:
                 await redis.hincrby(self._stats_key, "hits", 1)
-                record_cache_operation("get", "hit")
                 # Deserialize JSON
                 return json.loads(value)
             else:
                 await redis.hincrby(self._stats_key, "misses", 1)
-                record_cache_operation("get", "miss")
                 return None
         
         except Exception as e:
             logger.error(f"Redis get error: {e}")
-            record_cache_operation("get", "error")
             return None
     
     async def set(self, key: str, value: Any, ttl: int = None) -> bool:
@@ -312,13 +283,11 @@ class RedisCache(CacheService):
             
             await redis.setex(namespaced_key, ttl, serialized)
             await redis.hincrby(self._stats_key, "sets", 1)
-            record_cache_operation("set", "success")
             
             return True
         
         except Exception as e:
             logger.error(f"Redis set error: {e}")
-            record_cache_operation("set", "error")
             return False
     
     async def delete(self, key: str) -> bool:
@@ -331,15 +300,12 @@ class RedisCache(CacheService):
             
             if result > 0:
                 await redis.hincrby(self._stats_key, "deletes", 1)
-                record_cache_operation("delete", "success")
                 return True
             
-            record_cache_operation("delete", "not_found")
             return False
         
         except Exception as e:
             logger.error(f"Redis delete error: {e}")
-            record_cache_operation("delete", "error")
             return False
     
     async def exists(self, key: str) -> bool:

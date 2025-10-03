@@ -362,83 +362,6 @@ if CELERY_AVAILABLE:
 
 # Task management functions
 
-async def create_job_record(
-    task_id: str,
-    task_name: str,
-    user_id: str,
-    task_args: Dict[str, Any],
-    task_kwargs: Dict[str, Any]
-) -> None:
-    """
-    Create database record for background job
-    
-    Args:
-        task_id: Celery task ID
-        task_name: Name of the task
-        user_id: User ID
-        task_args: Task arguments
-        task_kwargs: Task keyword arguments
-    """
-    try:
-        from src.config.database import get_db_session
-        from src.models.social_protection import BackgroundJobORM, JobStatus
-        from uuid import UUID
-        
-        async with get_db_session() as session:
-            job = BackgroundJobORM(
-                task_id=task_id,
-                task_name=task_name,
-                user_id=UUID(user_id) if user_id else None,
-                status=JobStatus.PENDING,
-                task_args=task_args,
-                task_kwargs=task_kwargs
-            )
-            session.add(job)
-            await session.commit()
-            logger.info(f"Created job record for task {task_id}")
-    except Exception as e:
-        logger.error(f"Failed to create job record: {e}")
-
-
-async def update_job_status(
-    task_id: str,
-    status: str,
-    progress: Optional[int] = None,
-    result: Optional[Dict[str, Any]] = None,
-    error: Optional[str] = None
-) -> None:
-    """
-    Update job status in database
-    
-    Args:
-        task_id: Celery task ID
-        status: New status
-        progress: Progress percentage (0-100)
-        result: Task result
-        error: Error message if failed
-    """
-    try:
-        from src.config.database import get_db_session
-        from src.models.social_protection import BackgroundJobORM, JobStatus
-        from sqlalchemy import select
-        
-        async with get_db_session() as session:
-            stmt = select(BackgroundJobORM).where(BackgroundJobORM.task_id == task_id)
-            result_obj = await session.execute(stmt)
-            job = result_obj.scalar_one_or_none()
-            
-            if job:
-                job.update_status(JobStatus(status), progress, error)
-                if result:
-                    job.result = result
-                await session.commit()
-                logger.info(f"Updated job {task_id} status to {status}")
-            else:
-                logger.warning(f"Job {task_id} not found in database")
-    except Exception as e:
-        logger.error(f"Failed to update job status: {e}")
-
-
 def queue_deep_analysis(scan_id: str, user_id: str) -> Optional[str]:
     """
     Queue deep analysis task
@@ -455,21 +378,6 @@ def queue_deep_analysis(scan_id: str, user_id: str) -> Optional[str]:
         return None
     
     result = process_deep_analysis.delay(scan_id, user_id)
-    
-    # Create job record in database
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(create_job_record(
-            task_id=result.id,
-            task_name="process_deep_analysis",
-            user_id=user_id,
-            task_args={"scan_id": scan_id, "user_id": user_id},
-            task_kwargs={}
-        ))
-    finally:
-        loop.close()
-    
     return result.id
 
 
@@ -498,35 +406,15 @@ def queue_comprehensive_scan(
     result = process_comprehensive_scan.delay(
         platform, profile_url, user_id, scan_options
     )
-    
-    # Create job record in database
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(create_job_record(
-            task_id=result.id,
-            task_name="process_comprehensive_scan",
-            user_id=user_id,
-            task_args={
-                "platform": platform,
-                "profile_url": profile_url,
-                "user_id": user_id
-            },
-            task_kwargs={"scan_options": scan_options}
-        ))
-    finally:
-        loop.close()
-    
     return result.id
 
 
-def queue_crisis_detection(brands: Optional[list] = None, user_id: Optional[str] = None) -> Optional[str]:
+def queue_crisis_detection(brands: Optional[list] = None) -> Optional[str]:
     """
     Queue crisis detection sweep
     
     Args:
         brands: Optional list of brands to check
-        user_id: Optional user ID for tracking
         
     Returns:
         Task ID or None if Celery not available
@@ -536,51 +424,7 @@ def queue_crisis_detection(brands: Optional[list] = None, user_id: Optional[str]
         return None
     
     result = run_crisis_detection_sweep.delay(brands)
-    
-    # Create job record in database
-    if user_id:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(create_job_record(
-                task_id=result.id,
-                task_name="run_crisis_detection_sweep",
-                user_id=user_id,
-                task_args={},
-                task_kwargs={"brands": brands}
-            ))
-        finally:
-            loop.close()
-    
     return result.id
-
-
-async def get_task_status_from_db(task_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Get task status from database
-    
-    Args:
-        task_id: Task ID
-        
-    Returns:
-        Task status from database or None if not found
-    """
-    try:
-        from src.config.database import get_db_session
-        from src.models.social_protection import BackgroundJobORM
-        from sqlalchemy import select
-        
-        async with get_db_session() as session:
-            stmt = select(BackgroundJobORM).where(BackgroundJobORM.task_id == task_id)
-            result = await session.execute(stmt)
-            job = result.scalar_one_or_none()
-            
-            if job:
-                return job.as_dict()
-            return None
-    except Exception as e:
-        logger.error(f"Failed to get task status from database: {e}")
-        return None
 
 
 def get_task_status(task_id: str) -> Dict[str, Any]:
@@ -591,59 +435,24 @@ def get_task_status(task_id: str) -> Dict[str, Any]:
         task_id: Task ID
         
     Returns:
-        Task status information combining Celery and database status
+        Task status information
     """
-    # Get status from database first
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        db_status = loop.run_until_complete(get_task_status_from_db(task_id))
-    finally:
-        loop.close()
+    if not CELERY_AVAILABLE or not AsyncResult:
+        return {
+            "status": "unavailable",
+            "message": "Celery not available"
+        }
     
-    # Get status from Celery if available
-    celery_status = None
-    if CELERY_AVAILABLE and AsyncResult:
-        try:
-            result = AsyncResult(task_id, app=celery_app)
-            celery_status = {
-                "state": result.state,
-                "ready": result.ready(),
-                "successful": result.successful() if result.ready() else None,
-                "result": result.result if result.ready() else None,
-                "info": result.info
-            }
-        except Exception as e:
-            logger.error(f"Failed to get Celery status: {e}")
+    result = AsyncResult(task_id, app=celery_app)
     
-    # Combine statuses
-    combined_status = {
+    return {
         "task_id": task_id,
-        "database_status": db_status,
-        "celery_status": celery_status
+        "status": result.state,
+        "ready": result.ready(),
+        "successful": result.successful() if result.ready() else None,
+        "result": result.result if result.ready() else None,
+        "info": result.info
     }
-    
-    # Use database status as primary if available
-    if db_status:
-        combined_status.update({
-            "status": db_status["status"],
-            "progress": db_status["progress"],
-            "created_at": db_status["created_at"],
-            "started_at": db_status["started_at"],
-            "completed_at": db_status["completed_at"],
-            "result": db_status["result"],
-            "error": db_status["error"]
-        })
-    elif celery_status:
-        combined_status.update({
-            "status": celery_status["state"],
-            "ready": celery_status["ready"],
-            "result": celery_status["result"]
-        })
-    else:
-        combined_status["status"] = "unavailable"
-    
-    return combined_status
 
 
 def cancel_task(task_id: str) -> bool:

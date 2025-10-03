@@ -729,8 +729,7 @@
   - Test all controller methods
   - _Requirements: 10.2_
 
-- [x] 23. Create API Routes for UserController
-
+- [ ] 23. Create API Routes for UserController
 - [x] 23.1 Create user routes file
 
 
@@ -750,7 +749,7 @@
 
 
 
-- [x] 23.4 Add platform scan endpoints
+- [ ] 23.4 Add platform scan endpoints
   - POST /api/v1/social-protection/user/scan
 
   - _Requirements: 2.1, 2.6_
@@ -768,8 +767,7 @@
   - Apply auth and rate limit decorators
   - _Requirements: 2.4, 2.5_
 
-- [x] 24. Create API Routes for BotController
-
+- [ ] 24. Create API Routes for BotController
 - [x] 24.1 Create bot routes file
 
 
@@ -787,7 +785,7 @@
   - _Requirements: 2.2, 2.6_
 
 
-- [x] 24.4 Add compliance check endpoints
+- [ ] 24.4 Add compliance check endpoints
 
   - POST /api/v1/social-protection/bot/compliance
 
@@ -806,8 +804,7 @@
   - Apply auth and rate limit decorators
   - _Requirements: 2.4, 2.5_
 
-- [x] 25. Create API Routes for ExtensionController
-
+- [ ] 25. Create API Routes for ExtensionController
 - [x] 25.1 Create extension routes file
 
 
@@ -815,7 +812,7 @@
   - Create src/routes/social_protection_extension.py
   - _Requirements: 2.3_
 
-- [x] 25.2 Add data processing endpoints
+- [ ] 25.2 Add data processing endpoints
   - POST /api/v1/social-protection/extension/process
 
   - _Requirements: 2.3, 2.6_
@@ -825,7 +822,7 @@
   - _Requirements: 2.3, 2.6_
 
 
-- [x] 25.4 Add settings endpoints
+- [ ] 25.4 Add settings endpoints
   - GET/PUT /api/v1/social-protection/extension/settings
 
   - _Requirements: 2.3, 2.6_
@@ -834,7 +831,7 @@
   - GET /api/v1/social-protection/extension/analytics
 
   - _Requirements: 2.3, 2.6_
-- [x] 25.6 Add state sync endpoints
+- [ ] 25.6 Add state sync endpoints
   - POST /api/v1/social-protection/extension/sync
 
 
@@ -857,7 +854,7 @@
   - _Requirements: 2.6_
 
 
-- [x] 26.3 Add alert retrieval endpoints
+- [ ] 26.3 Add alert retrieval endpoints
   - GET /api/v1/social-protection/crisis/alerts
 
   - _Requirements: 2.6_
