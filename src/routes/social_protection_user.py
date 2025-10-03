@@ -53,7 +53,30 @@ class AlgorithmHealthRequest(BaseModel):
     metrics_window_days: int = Field(default=30, ge=1, le=90)
 
 
-@router.get("/settings")
+@router.get("/settings", responses={
+    200: {
+        "description": "Protection settings retrieved successfully",
+        "content": {
+            "application/json": {
+                "example": {
+                    "success": True,
+                    "settings": {
+                        "auto_scan_enabled": True,
+                        "notification_preferences": {
+                            "email": True,
+                            "push": False
+                        },
+                        "risk_threshold": 0.7,
+                        "platform_settings": {
+                            "twitter": {"enabled": True, "auto_scan": False},
+                            "instagram": {"enabled": True, "auto_scan": False}
+                        }
+                    }
+                }
+            }
+        }
+    }
+})
 async def get_protection_settings(
     current_user: User = Depends(get_current_user),
     controller: UserController = Depends(get_user_controller)
@@ -138,7 +161,72 @@ async def initiate_platform_scan(
     )
 
 
-@router.post("/analyze")
+@router.post("/analyze", responses={
+    200: {
+        "description": "Content analysis completed successfully",
+        "content": {
+            "application/json": {
+                "example": {
+                    "success": True,
+                    "analysis": {
+                        "overall_risk_score": 0.35,
+                        "risk_level": "low",
+                        "risk_factors": [
+                            {"type": "suspicious_link", "severity": "medium", "confidence": 0.8}
+                        ],
+                        "spam_indicators": [],
+                        "link_safety": {"safe": True, "threats": []},
+                        "community_notes": None
+                    },
+                    "recommendations": [
+                        "Review the external link before clicking"
+                    ],
+                    "timestamp": "2025-10-03T12:00:00Z"
+                }
+            }
+        }
+    },
+    400: {
+        "description": "Invalid request",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "Content is required for analysis"
+                }
+            }
+        }
+    },
+    401: {
+        "description": "Authentication required",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "Not authenticated"
+                }
+            }
+        }
+    },
+    429: {
+        "description": "Rate limit exceeded",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "Content analysis rate limit exceeded"
+                }
+            }
+        }
+    },
+    500: {
+        "description": "Internal server error",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "Content analysis failed"
+                }
+            }
+        }
+    }
+})
 async def analyze_content(
     analysis_request: ContentAnalysisRequest,
     current_user: User = Depends(get_current_user),
