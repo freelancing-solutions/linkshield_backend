@@ -846,10 +846,13 @@
 
 
 - [ ] 28. Register All Routes
-- [ ] 28.1 Update main router
+- [x] 28.1 Update main router
+
   - Add all new route modules to app.py
   - _Requirements: 2.1, 2.2, 2.3_
-- [ ] 28.2 Test route registration
+
+- [x] 28.2 Test route registration
+
   - Verify all endpoints are accessible
   - _Requirements: 2.1, 2.2, 2.3_
 

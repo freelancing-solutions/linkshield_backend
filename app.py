@@ -44,6 +44,12 @@ from src.routes.subscription_routes import router as subscription_router
 from src.routes.extension import router as extension_router
 # from src.routes.tasks import router as tasks_router
 
+# New Social Protection Routes (specialized controllers)
+from src.routes.social_protection_user import router as social_protection_user_router
+from src.routes.social_protection_bot import router as social_protection_bot_router
+from src.routes.social_protection_extension import router as social_protection_extension_router
+from src.routes.social_protection_crisis import router as social_protection_crisis_router
+
 # Bot Service
 from src.bots.startup import initialize_bot_service, shutdown_bot_service
 
@@ -160,12 +166,18 @@ app.include_router(report_router)
 app.include_router(ai_analysis_router)
 app.include_router(admin_router)
 app.include_router(dashboard_router)
-app.include_router(social_protection_router)
+app.include_router(social_protection_router)  # Legacy - deprecated
 app.include_router(algorithm_health_router)
 app.include_router(bot_webhooks_router)
 app.include_router(subscription_router)
 app.include_router(extension_router)
 # app.include_router(tasks_router)
+
+# New Social Protection Routes (specialized controllers)
+app.include_router(social_protection_user_router)
+app.include_router(social_protection_bot_router)
+app.include_router(social_protection_extension_router)
+app.include_router(social_protection_crisis_router)
 
 
 # Root endpoint

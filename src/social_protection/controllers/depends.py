@@ -32,6 +32,9 @@ from src.social_protection.algorithm_health import (
 from src.social_protection.controllers.user_controller import UserController
 from src.social_protection.controllers.bot_controller import BotController
 from src.social_protection.controllers.extension_controller import ExtensionController
+from src.social_protection.controllers.crisis_controller import CrisisController
+from src.social_protection.crisis_detector.depends import get_crisis_detector
+from src.social_protection.crisis_detector import CrisisDetector
 
 
 async def get_user_controller(
@@ -181,4 +184,31 @@ async def get_extension_controller(
         engagement_analyzer=engagement_analyzer,
         penalty_detector=penalty_detector,
         shadow_ban_detector=shadow_ban_detector
+    )
+
+
+a
+sync def get_crisis_controller(
+    security_service: SecurityService = Depends(get_security_service),
+    auth_service: AuthService = Depends(get_auth_service),
+    email_service: EmailService = Depends(get_email_service),
+    crisis_detector: CrisisDetector = Depends(get_crisis_detector)
+) -> CrisisController:
+    """
+    Get crisis controller instance with all dependencies.
+    
+    Args:
+        security_service: Security service for authentication and authorization
+        auth_service: Authentication service for user management
+        email_service: Email service for notifications
+        crisis_detector: Crisis detection service
+        
+    Returns:
+        CrisisController: Configured controller instance
+    """
+    return CrisisController(
+        security_service=security_service,
+        auth_service=auth_service,
+        email_service=email_service,
+        crisis_detector=crisis_detector
     )
