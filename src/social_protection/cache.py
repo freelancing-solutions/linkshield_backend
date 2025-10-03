@@ -476,6 +476,75 @@ class CacheManager:
         key_str = ":".join(str(p) for p in parts)
         key_hash = hashlib.md5(key_str.encode()).hexdigest()[:16]
         return f"{':'.join(parts[:2])}:{key_hash}"
+    
+    async def invalidate_user_cache(self, user_id: str) -> int:
+        """
+        Invalidate all cache entries for a specific user
+        
+        Args:
+            user_id: User ID to invalidate cache for
+            
+        Returns:
+            Number of entries invalidated
+        """
+        pattern = f"user:{user_id}:*"
+        return await self.clear(pattern)
+    
+    async def invalidate_platform_cache(self, platform: str, profile_id: str) -> int:
+        """
+        Invalidate cache entries for a specific platform profile
+        
+        Args:
+            platform: Platform name
+            profile_id: Profile identifier
+            
+        Returns:
+            Number of entries invalidated
+        """
+        pattern = f"profile:{platform}:{profile_id}:*"
+        return await self.clear(pattern)
+    
+    async def invalidate_content_cache(self, content_hash: str) -> int:
+        """
+        Invalidate cache entries for specific content
+        
+        Args:
+            content_hash: Content hash
+            
+        Returns:
+            Number of entries invalidated
+        """
+        pattern = f"content:{content_hash}:*"
+        return await self.clear(pattern)
+    
+    async def invalidate_scan_cache(self, scan_id: str) -> int:
+        """
+        Invalidate cache entries for a specific scan
+        
+        Args:
+            scan_id: Scan ID
+            
+        Returns:
+            Number of entries invalidated
+        """
+        pattern = f"scan:{scan_id}:*"
+        return await self.clear(pattern)
+    
+    async def invalidate_by_tags(self, tags: List[str]) -> int:
+        """
+        Invalidate cache entries matching any of the provided tags
+        
+        Args:
+            tags: List of tags to match
+            
+        Returns:
+            Total number of entries invalidated
+        """
+        total_invalidated = 0
+        for tag in tags:
+            count = await self.clear(f"*:{tag}:*")
+            total_invalidated += count
+        return total_invalidated
 
 
 # Global cache manager instance
