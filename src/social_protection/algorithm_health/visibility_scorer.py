@@ -15,8 +15,6 @@ from ..logging_utils import get_logger
 
 logger = get_logger("VisibilityScorer")
 
-logger = logging.getLogger(__name__)
-
 
 class VisibilityTrend(Enum):
     """Visibility trend indicators"""
@@ -96,7 +94,7 @@ class VisibilityScorer:
                 "optimal_hashtags": (1, 3),
                 "link_penalty": 0.15
             },
-            PlatformType.FACEBOOK: {
+            PlatformType.META_FACEBOOK: {
                 "engagement_weight": 0.5,
                 "reach_weight": 0.25,
                 "timing_weight": 0.15,
@@ -106,7 +104,7 @@ class VisibilityScorer:
                 "optimal_hashtags": (0, 2),
                 "link_penalty": 0.2
             },
-            PlatformType.INSTAGRAM: {
+            PlatformType.META_INSTAGRAM: {
                 "engagement_weight": 0.45,
                 "reach_weight": 0.25,
                 "timing_weight": 0.2,
@@ -563,8 +561,8 @@ class VisibilityScorer:
         # Platform-specific optimal lengths
         optimal_ranges = {
             PlatformType.TWITTER: (100, 240),
-            PlatformType.FACEBOOK: (100, 300),
-            PlatformType.INSTAGRAM: (50, 200),
+            PlatformType.META_FACEBOOK: (100, 300),
+            PlatformType.META_INSTAGRAM: (50, 200),
             PlatformType.LINKEDIN: (150, 500),
             PlatformType.TIKTOK: (50, 150)
         }
@@ -657,7 +655,7 @@ class VisibilityScorer:
                 "Reply to trending topics with relevant content",
                 "Use Twitter threads for longer content"
             ])
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             recommendations.extend([
                 "Use Instagram Stories and Reels for better reach",
                 "Post high-quality images with good lighting",

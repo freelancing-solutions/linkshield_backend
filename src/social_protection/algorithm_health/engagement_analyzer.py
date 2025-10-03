@@ -12,11 +12,9 @@ from enum import Enum
 import statistics
 import math
 from ..logging_utils import get_logger
-
-logger = get_logger("EngagementAnalyzer")
 from ..types import PlatformType, RiskLevel
 
-logger = logging.getLogger(__name__)
+logger = get_logger("EngagementAnalyzer")
 
 
 class EngagementType(Enum):
@@ -113,7 +111,7 @@ class EngagementAnalyzer:
                     "engagement_velocity_threshold": 100
                 }
             },
-            PlatformType.FACEBOOK: {
+            PlatformType.META_FACEBOOK: {
                 "avg_engagement_rate": 0.063,
                 "excellent_threshold": 0.12,
                 "good_threshold": 0.08,
@@ -127,7 +125,7 @@ class EngagementAnalyzer:
                     "engagement_velocity_threshold": 200
                 }
             },
-            PlatformType.INSTAGRAM: {
+            PlatformType.META_INSTAGRAM: {
                 "avg_engagement_rate": 0.083,
                 "excellent_threshold": 0.15,
                 "good_threshold": 0.10,
@@ -421,7 +419,7 @@ class EngagementAnalyzer:
                 authenticity_score -= 10
             
             # Share-to-like ratio check
-            if platform in [PlatformType.FACEBOOK, PlatformType.LINKEDIN]:
+            if platform in [PlatformType.META_FACEBOOK, PlatformType.LINKEDIN]:
                 share_ratio = shares / likes
                 expected_share_ratio = authenticity_factors.get('share_like_ratio', 0.1)
                 
@@ -801,14 +799,14 @@ class EngagementAnalyzer:
                 "Create Twitter threads for complex topics",
                 "Respond quickly to comments and mentions"
             ])
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             recommendations.extend([
                 "Use Instagram Stories features like polls and questions",
                 "Post high-quality visual content consistently",
                 "Use relevant hashtags and location tags",
                 "Collaborate with other creators in your niche"
             ])
-        elif platform == PlatformType.FACEBOOK:
+        elif platform == PlatformType.META_FACEBOOK:
             recommendations.extend([
                 "Create content that encourages sharing and discussion",
                 "Use Facebook Groups to build community",

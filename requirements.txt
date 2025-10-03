@@ -44,6 +44,7 @@ python-dateutil
 
 # Logging & Monitoring
 loguru
+prometheus-client
 
 # Testing (Development)
 pytest

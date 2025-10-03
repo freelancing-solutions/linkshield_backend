@@ -12,11 +12,9 @@ from enum import Enum
 import statistics
 import math
 from ..logging_utils import get_logger
-
-logger = get_logger("PenaltyDetector")
 from ..types import PlatformType, RiskLevel
 
-logger = logging.getLogger(__name__)
+logger = get_logger("PenaltyDetector")
 
 
 class PenaltyType(Enum):
@@ -112,7 +110,7 @@ class PenaltyDetector:
                     "spam_score_threshold": 0.7
                 }
             },
-            PlatformType.FACEBOOK: {
+            PlatformType.META_FACEBOOK: {
                 "shadow_ban_indicators": {
                     "reach_drop_threshold": 0.8,
                     "engagement_drop_threshold": 0.7,
@@ -130,7 +128,7 @@ class PenaltyDetector:
                     "spam_score_threshold": 0.6
                 }
             },
-            PlatformType.INSTAGRAM: {
+            PlatformType.META_INSTAGRAM: {
                 "shadow_ban_indicators": {
                     "reach_drop_threshold": 0.6,
                     "engagement_drop_threshold": 0.5,
@@ -432,7 +430,7 @@ class PenaltyDetector:
                 evidence.append("Replies showing reduced visibility in conversations")
                 confidence_factors.append(0.2)
         
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             # Check hashtag reach
             hashtag_reach = [item.get('hashtag_reach', 0) for item in content_data[-5:]]
             if hashtag_reach and statistics.mean(hashtag_reach) < avg_recent_reach * 0.2:
@@ -514,7 +512,7 @@ class PenaltyDetector:
         
         # Platform-specific checks
         config = self.platform_configs.get(platform, {})
-        if platform == PlatformType.FACEBOOK:
+        if platform == PlatformType.META_FACEBOOK:
             story_reach = [item.get('story_reach', 0) for item in content_data[-5:]]
             if story_reach and statistics.mean(story_reach) < avg_reach * 0.4:
                 evidence.append("Story reach significantly lower than post reach")
@@ -842,7 +840,7 @@ class PenaltyDetector:
                 confidence_factors.append(0.5)
         
         # Platform-specific hashtag analysis
-        if platform == PlatformType.INSTAGRAM:
+        if platform == PlatformType.META_INSTAGRAM:
             # Check for hashtag reach vs total reach ratio
             posts_with_hashtags = [item for item in content_data[-15:] if item.get('hashtags')]
             if posts_with_hashtags:
@@ -956,13 +954,13 @@ class PenaltyDetector:
         
         # Platform-specific link analysis
         config = self.platform_configs.get(platform, {})
-        if platform == PlatformType.FACEBOOK:
+        if platform == PlatformType.META_FACEBOOK:
             # Facebook heavily penalizes external links
             if reach_penalty_ratio < 0.5:  # 50% penalty is severe for Facebook
                 evidence.append("Severe link penalty detected (typical for Facebook)")
                 confidence_factors.append(0.2)
         
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             # Instagram penalizes links in captions but not in bio/stories
             caption_links = [item for item in link_posts if item.get('link_in_caption', True)]
             if caption_links:
@@ -1242,13 +1240,13 @@ class PenaltyDetector:
                 "Use Twitter's native features like polls and Spaces",
                 "Engage with trending topics naturally, not just for visibility"
             ])
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             recommendations.extend([
                 "Use Instagram Stories and Reels to maintain visibility",
                 "Avoid using the same hashtags repeatedly",
                 "Focus on building genuine community engagement"
             ])
-        elif platform == PlatformType.FACEBOOK:
+        elif platform == PlatformType.META_FACEBOOK:
             recommendations.extend([
                 "Share content that encourages meaningful conversations",
                 "Use Facebook Groups to build community",
@@ -1353,13 +1351,13 @@ class PenaltyDetector:
                 "search_visibility": "Test if content appears in search results",
                 "timeline_presence": "Monitor if content appears in followers' timelines"
             }
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             insights["platform_specific_factors"] = {
                 "hashtag_reach": "Monitor reach from hashtags vs total reach",
                 "explore_visibility": "Check if content appears in Explore feed",
                 "story_visibility": "Monitor story view rates"
             }
-        elif platform == PlatformType.FACEBOOK:
+        elif platform == PlatformType.META_FACEBOOK:
             insights["platform_specific_factors"] = {
                 "organic_reach": "Facebook heavily limits organic reach",
                 "link_penalties": "External links are significantly penalized",

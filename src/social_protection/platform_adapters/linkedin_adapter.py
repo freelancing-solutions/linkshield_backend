@@ -11,10 +11,13 @@ Focuses on LinkedIn's professional networking environment and business context.
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from enum import Enum
+import requests
+from requests.exceptions import RequestException
 
 from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
 from ..registry import registry
 from ..logging_utils import get_logger
+from ..exceptions import PlatformAdapterError
 
 logger = get_logger("LinkedInProtectionAdapter")
 
@@ -63,9 +66,10 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
             config: Platform-specific configuration including API credentials,
                    professional standards, and LinkedIn-specific feature flags
         """
-        super().__init__(PlatformType.LINKEDIN)
-        self.config = config or {}
+        super().__init__(PlatformType.LINKEDIN, config or {})
         self.risk_thresholds = self._load_risk_thresholds()
+        self.api_client: Optional[requests.Session] = None
+        self._initialize_api_client()
         
     def _load_risk_thresholds(self) -> Dict[str, float]:
         """Load LinkedIn-specific risk thresholds from configuration."""
@@ -80,6 +84,267 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
             'recruitment_scam_score': 0.8
         })
     
+    def _initialize_api_client(self) -> None:
+        """
+        Initialize LinkedIn API client with authentication.
+        
+        Supports OAuth 2.0 authentication for LinkedIn API v2.
+        The LinkedIn API requires:
+        - Client ID and Client Secret for OAuth 2.0
+        - Access Token for authenticated requests
+        
+        API Documentation: https://docs.microsoft.com/en-us/linkedin/
+        """
+        try:
+            # Get API credentials from config
+            access_token = self.config.get('access_token')
+            client_id = self.config.get('client_id')
+            client_secret = self.config.get('client_secret')
+            
+            # Initialize session for API requests
+            if access_token:
+                self.api_client = requests.Session()
+                self.api_client.headers.update({
+                    'Authorization': f'Bearer {access_token}',
+                    'Content-Type': 'application/json',
+                    'X-Restli-Protocol-Version': '2.0.0'  # LinkedIn API version
+                })
+                logger.info("LinkedIn API client initialized with access token")
+            elif client_id and client_secret:
+                # Store credentials for OAuth flow
+                self.api_client = requests.Session()
+                self.api_client.headers.update({
+                    'Content-Type': 'application/json',
+                    'X-Restli-Protocol-Version': '2.0.0'
+                })
+                logger.info("LinkedIn API client initialized with OAuth credentials")
+            else:
+                logger.warning("LinkedIn API credentials not configured. Adapter will operate in limited mode.")
+                self.is_enabled = False
+            
+            # Initialize rate limit tracking
+            self._rate_limit_status = {
+                'last_reset': datetime.utcnow(),
+                'requests_made': 0,
+                'limit_reached': False,
+                'daily_limit': self.config.get('daily_request_limit', 500),
+                'hourly_limit': self.config.get('hourly_request_limit', 100)
+            }
+            
+            # LinkedIn API base URL
+            self.api_base_url = self.config.get('api_base_url', 'https://api.linkedin.com/v2')
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize LinkedIn API client: {str(e)}")
+            self.is_enabled = False
+            self.api_client = None
+    
+    async def validate_credentials(self) -> bool:
+        """
+        Validate LinkedIn API credentials and permissions.
+        
+        Returns:
+            True if credentials are valid and have required permissions
+        """
+        if not self.api_client:
+            logger.warning("LinkedIn API client not initialized")
+            return False
+            
+        try:
+            # Test API access by fetching authenticated user info
+            response = self.api_client.get(f"{self.api_base_url}/me")
+            
+            if response.status_code == 200:
+                user_data = response.json()
+                logger.info(f"LinkedIn API credentials validated for user: {user_data.get('localizedFirstName', 'unknown')}")
+                return True
+            elif response.status_code == 401:
+                logger.error("LinkedIn API credentials invalid or expired")
+                return False
+            else:
+                logger.warning(f"LinkedIn API credential validation returned status: {response.status_code}")
+                return False
+                
+        except RequestException as e:
+            logger.error(f"LinkedIn API credential validation failed: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error during credential validation: {str(e)}")
+            return False
+    
+    def get_rate_limit_status(self) -> Dict[str, Any]:
+        """
+        Get current rate limit status for LinkedIn API.
+        
+        LinkedIn API has daily and hourly rate limits that vary by endpoint.
+        
+        Returns:
+            Dict containing rate limit information including remaining requests,
+            reset time, and current usage statistics
+        """
+        if not self.api_client:
+            return {
+                'enabled': False,
+                'error': 'API client not initialized'
+            }
+        
+        return {
+            'enabled': True,
+            'last_reset': self._rate_limit_status.get('last_reset', datetime.utcnow()).isoformat(),
+            'requests_made': self._rate_limit_status.get('requests_made', 0),
+            'limit_reached': self._rate_limit_status.get('limit_reached', False),
+            'daily_limit': self._rate_limit_status.get('daily_limit', 500),
+            'hourly_limit': self._rate_limit_status.get('hourly_limit', 100),
+            'rate_limits': self.get_rate_limits()
+        }
+    
+    def _track_api_request(self) -> None:
+        """Track API request for rate limit monitoring."""
+        self._rate_limit_status['requests_made'] += 1
+        
+        # Reset counter if it's been more than 1 hour (LinkedIn's rate limit window)
+        last_reset = self._rate_limit_status.get('last_reset', datetime.utcnow())
+        if (datetime.utcnow() - last_reset).total_seconds() > 3600:  # 1 hour
+            self._rate_limit_status['requests_made'] = 1
+            self._rate_limit_status['last_reset'] = datetime.utcnow()
+            self._rate_limit_status['limit_reached'] = False
+    
+    def _handle_rate_limit_error(self, response: requests.Response) -> None:
+        """
+        Handle rate limit errors from LinkedIn API.
+        
+        Args:
+            response: Response object containing rate limit information
+        """
+        logger.warning(f"LinkedIn API rate limit encountered: {response.status_code}")
+        self._rate_limit_status['limit_reached'] = True
+        
+        # Extract reset time from headers if available
+        retry_after = response.headers.get('Retry-After')
+        if retry_after:
+            logger.info(f"Rate limit will reset in {retry_after} seconds")
+    
+    async def fetch_profile_data(self, profile_identifier: str) -> Dict[str, Any]:
+        """
+        Fetch comprehensive profile data from LinkedIn API.
+        
+        Args:
+            profile_identifier: LinkedIn profile ID or vanity name
+            
+        Returns:
+            Dict containing profile data including professional info, connections, and activity
+            
+        Raises:
+            PlatformAdapterError: If profile fetch fails
+        """
+        if not self.api_client:
+            raise PlatformAdapterError("LinkedIn API client not initialized")
+            
+        try:
+            # Track API request for rate limit monitoring
+            self._track_api_request()
+            
+            # Fetch profile data
+            # Note: LinkedIn API requires specific permissions for different data
+            response = self.api_client.get(
+                f"{self.api_base_url}/people/(id:{profile_identifier})",
+                params={
+                    'projection': '(id,firstName,lastName,headline,profilePicture,vanityName,location,industry,summary)'
+                }
+            )
+            
+            if response.status_code == 429:
+                self._handle_rate_limit_error(response)
+                raise PlatformAdapterError("LinkedIn API rate limit exceeded")
+            
+            if response.status_code != 200:
+                raise PlatformAdapterError(f"Failed to fetch LinkedIn profile: HTTP {response.status_code}")
+            
+            profile_data = response.json()
+            
+            # Compile profile data
+            compiled_data = {
+                'profile_id': profile_data.get('id'),
+                'first_name': profile_data.get('firstName', {}).get('localized', {}).get('en_US', ''),
+                'last_name': profile_data.get('lastName', {}).get('localized', {}).get('en_US', ''),
+                'headline': profile_data.get('headline', {}).get('localized', {}).get('en_US', ''),
+                'vanity_name': profile_data.get('vanityName', ''),
+                'industry': profile_data.get('industry', ''),
+                'location': profile_data.get('location', {}).get('name', ''),
+                'summary': profile_data.get('summary', {}).get('localized', {}).get('en_US', ''),
+                'profile_picture_url': profile_data.get('profilePicture', {}).get('displayImage', ''),
+                'fetched_at': datetime.utcnow().isoformat()
+            }
+            
+            logger.info(f"Successfully fetched LinkedIn profile data for {profile_identifier}")
+            return compiled_data
+            
+        except RequestException as e:
+            logger.error(f"LinkedIn API error fetching profile {profile_identifier}: {str(e)}")
+            raise PlatformAdapterError(f"Failed to fetch LinkedIn profile: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error fetching profile {profile_identifier}: {str(e)}")
+            raise PlatformAdapterError(f"Unexpected error: {str(e)}")
+    
+    async def fetch_post_data(self, post_id: str) -> Dict[str, Any]:
+        """
+        Fetch detailed post data from LinkedIn API.
+        
+        Args:
+            post_id: LinkedIn post/share URN
+            
+        Returns:
+            Dict containing post data including content, engagement metrics, and metadata
+            
+        Raises:
+            PlatformAdapterError: If post fetch fails
+        """
+        if not self.api_client:
+            raise PlatformAdapterError("LinkedIn API client not initialized")
+            
+        try:
+            # Track API request for rate limit monitoring
+            self._track_api_request()
+            
+            # Fetch post data
+            response = self.api_client.get(
+                f"{self.api_base_url}/shares/{post_id}",
+                params={
+                    'projection': '(id,text,content,created,lastModified,author,distribution)'
+                }
+            )
+            
+            if response.status_code == 429:
+                self._handle_rate_limit_error(response)
+                raise PlatformAdapterError("LinkedIn API rate limit exceeded")
+            
+            if response.status_code != 200:
+                raise PlatformAdapterError(f"Failed to fetch LinkedIn post: HTTP {response.status_code}")
+            
+            post_data = response.json()
+            
+            # Compile post data
+            compiled_data = {
+                'post_id': post_data.get('id'),
+                'text': post_data.get('text', {}).get('text', ''),
+                'author_id': post_data.get('author', ''),
+                'created_at': post_data.get('created', {}).get('time', 0),
+                'last_modified': post_data.get('lastModified', {}).get('time', 0),
+                'distribution': post_data.get('distribution', {}),
+                'content': post_data.get('content', {}),
+                'fetched_at': datetime.utcnow().isoformat()
+            }
+            
+            logger.info(f"Successfully fetched LinkedIn post data for {post_id}")
+            return compiled_data
+            
+        except RequestException as e:
+            logger.error(f"LinkedIn API error fetching post {post_id}: {str(e)}")
+            raise PlatformAdapterError(f"Failed to fetch LinkedIn post: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error fetching post {post_id}: {str(e)}")
+            raise PlatformAdapterError(f"Unexpected error: {str(e)}")
+    
     async def scan_profile(self, profile_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Perform comprehensive LinkedIn profile security and authenticity audit.
@@ -89,19 +354,27 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
         
         Args:
             profile_data: LinkedIn profile information including connections,
-                         experience, endorsements, and professional details
+                         experience, endorsements, and professional details.
+                         Can also accept just a profile_identifier string to fetch data.
                          
         Returns:
             Dict containing professional profile risk assessment with scores and recommendations
         """
         try:
-            logger.info(f"Starting LinkedIn profile scan for user: {profile_data.get('username', 'unknown')}")
+            # If profile_data is just a profile identifier, fetch the full profile
+            if isinstance(profile_data, str):
+                profile_data = await self.fetch_profile_data(profile_data)
+            elif 'profile_id' in profile_data and not profile_data.get('first_name'):
+                # Fetch full profile if only profile_id provided
+                profile_data = await self.fetch_profile_data(profile_data['profile_id'])
+            
+            logger.info(f"Starting LinkedIn profile scan for user: {profile_data.get('vanity_name', 'unknown')}")
             
             # Initialize risk assessment
             risk_assessment = {
                 'platform': self.platform_type.value,
-                'profile_id': profile_data.get('user_id'),
-                'username': profile_data.get('username'),
+                'profile_id': profile_data.get('profile_id'),
+                'vanity_name': profile_data.get('vanity_name'),
                 'scan_timestamp': datetime.utcnow().isoformat(),
                 'risk_factors': {},
                 'overall_risk_level': RiskLevel.LOW,
@@ -160,19 +433,27 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
         
         Args:
             content_data: LinkedIn content including posts, articles, job postings,
-                         and professional updates with engagement metrics
+                         and professional updates with engagement metrics.
+                         Can also accept just a post_id string to fetch data.
                          
         Returns:
             Dict containing content risk assessment with professional compliance scores
         """
         try:
+            # If content_data is just a post_id, fetch the full post
+            if isinstance(content_data, str):
+                content_data = await self.fetch_post_data(content_data)
+            elif 'post_id' in content_data and not content_data.get('text'):
+                # Fetch full post if only post_id provided
+                content_data = await self.fetch_post_data(content_data['post_id'])
+            
             content_type = content_data.get('content_type', 'post')
-            logger.info(f"Starting LinkedIn content analysis for {content_type}: {content_data.get('content_id', 'unknown')}")
+            logger.info(f"Starting LinkedIn content analysis for {content_type}: {content_data.get('post_id', 'unknown')}")
             
             # Initialize content risk assessment
             risk_assessment = {
                 'platform': self.platform_type.value,
-                'content_id': content_data.get('content_id'),
+                'content_id': content_data.get('post_id'),
                 'content_type': content_type,
                 'scan_timestamp': datetime.utcnow().isoformat(),
                 'risk_factors': {},
@@ -343,14 +624,60 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
     # Private helper methods for LinkedIn-specific analysis
     
     async def _analyze_connection_authenticity(self, profile_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze connection authenticity and detect fake professional connections."""
+        """
+        Analyze connection authenticity and detect fake professional connections.
+        
+        Evaluates:
+        - Connection count patterns
+        - Connection growth rate
+        - Profile completeness of connections
+        - Industry relevance
+        """
         connections = profile_data.get('connections', [])
+        connection_count = len(connections) if connections else profile_data.get('connection_count', 0)
+        
+        # Analyze connection count patterns
+        # Suspicious if too many connections too quickly or unrealistic numbers
+        suspicious_patterns = []
+        
+        if connection_count > 30000:
+            suspicious_patterns.append("Unusually high connection count (>30k)")
+        
+        # Check if connection count is suspiciously round (often fake)
+        if connection_count > 500 and connection_count % 100 == 0:
+            suspicious_patterns.append("Suspiciously round connection count")
+        
+        # Estimate fake connection ratio based on patterns
+        fake_ratio = 0.0
+        if connection_count > 30000:
+            fake_ratio += 0.3
+        if connection_count > 10000:
+            fake_ratio += 0.1
+        if len(suspicious_patterns) > 0:
+            fake_ratio += 0.05 * len(suspicious_patterns)
+        
+        fake_ratio = min(1.0, fake_ratio)
+        authenticity_score = 1.0 - fake_ratio
+        
+        # Connection quality based on profile completeness
+        headline = profile_data.get('headline', '')
+        summary = profile_data.get('summary', '')
+        industry = profile_data.get('industry', '')
+        
+        quality_score = 0.5  # Base score
+        if headline:
+            quality_score += 0.2
+        if summary:
+            quality_score += 0.2
+        if industry:
+            quality_score += 0.1
+        
         return {
-            'connection_count': len(connections),
-            'authenticity_score': 0.88,  # Placeholder
-            'fake_connection_ratio': 0.05,
-            'suspicious_connection_patterns': [],
-            'connection_quality_score': 0.85
+            'connection_count': connection_count,
+            'authenticity_score': authenticity_score,
+            'fake_connection_ratio': fake_ratio,
+            'suspicious_connection_patterns': suspicious_patterns,
+            'connection_quality_score': quality_score
         }
     
     async def _check_professional_compliance(self, profile_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -400,21 +727,114 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
         }
     
     async def _analyze_profile_professionalism(self, profile_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze profile professionalism and completeness."""
+        """
+        Analyze profile professionalism and completeness.
+        
+        Checks:
+        - Profile completeness (all sections filled)
+        - Professional photo presence
+        - Headline quality
+        - Summary quality
+        """
+        # Check profile completeness
+        completeness_factors = {
+            'first_name': bool(profile_data.get('first_name')),
+            'last_name': bool(profile_data.get('last_name')),
+            'headline': bool(profile_data.get('headline')),
+            'summary': bool(profile_data.get('summary')),
+            'industry': bool(profile_data.get('industry')),
+            'location': bool(profile_data.get('location')),
+            'profile_picture': bool(profile_data.get('profile_picture_url'))
+        }
+        
+        completeness_score = sum(completeness_factors.values()) / len(completeness_factors)
+        
+        # Analyze headline quality
+        headline = profile_data.get('headline', '')
+        headline_quality = 'low'
+        if len(headline) > 50:
+            headline_quality = 'high'
+        elif len(headline) > 20:
+            headline_quality = 'medium'
+        
+        # Analyze summary quality
+        summary = profile_data.get('summary', '')
+        summary_quality = 'low'
+        if len(summary) > 200:
+            summary_quality = 'high'
+        elif len(summary) > 50:
+            summary_quality = 'medium'
+        
+        # Calculate overall professionalism score
+        professionalism_score = completeness_score
+        if headline_quality == 'high':
+            professionalism_score += 0.1
+        if summary_quality == 'high':
+            professionalism_score += 0.1
+        
+        professionalism_score = min(1.0, professionalism_score)
+        
         return {
-            'professionalism_score': 0.88,  # Placeholder
-            'profile_completeness': 0.92,
-            'professional_photo_quality': 'high',
-            'content_appropriateness': 'appropriate'
+            'professionalism_score': professionalism_score,
+            'profile_completeness': completeness_score,
+            'professional_photo_quality': 'present' if completeness_factors['profile_picture'] else 'missing',
+            'content_appropriateness': 'appropriate',
+            'headline_quality': headline_quality,
+            'summary_quality': summary_quality,
+            'completeness_factors': completeness_factors
         }
     
     async def _check_content_professionalism(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Check content professionalism and appropriateness."""
+        """
+        Check content professionalism and appropriateness for LinkedIn.
+        
+        Analyzes:
+        - Professional language and tone
+        - Business relevance
+        - Appropriate formatting
+        - Industry-appropriate content
+        """
+        text = content_data.get('text', '')
+        
+        # Check for unprofessional language patterns
+        unprofessional_patterns = [
+            'lol', 'omg', 'wtf', 'lmao', 'rofl',
+            'yolo', 'tbh', 'smh', 'fomo'
+        ]
+        unprofessional_count = sum(1 for pattern in unprofessional_patterns if pattern in text.lower())
+        
+        # Check for excessive emojis (more than 3 is unprofessional)
+        emoji_count = sum(1 for char in text if ord(char) > 0x1F300)
+        
+        # Check for excessive capitalization (shouting)
+        if len(text) > 0:
+            caps_ratio = sum(1 for c in text if c.isupper()) / len(text)
+        else:
+            caps_ratio = 0
+        
+        # Check for professional keywords
+        professional_keywords = [
+            'strategy', 'leadership', 'innovation', 'growth', 'development',
+            'professional', 'business', 'industry', 'expertise', 'experience'
+        ]
+        professional_count = sum(1 for keyword in professional_keywords if keyword in text.lower())
+        
+        # Calculate professionalism score
+        professionalism_score = 1.0
+        professionalism_score -= (unprofessional_count * 0.1)  # -0.1 per unprofessional word
+        professionalism_score -= (max(0, emoji_count - 3) * 0.05)  # -0.05 per excessive emoji
+        professionalism_score -= (max(0, caps_ratio - 0.3) * 0.5)  # Penalty for excessive caps
+        professionalism_score += (professional_count * 0.02)  # +0.02 per professional keyword
+        professionalism_score = max(0.0, min(1.0, professionalism_score))
+        
         return {
-            'professionalism_score': 0.9,  # Placeholder
-            'content_appropriateness': 'appropriate',
-            'professional_language_use': True,
-            'business_relevance': 'high'
+            'professionalism_score': professionalism_score,
+            'content_appropriateness': 'appropriate' if professionalism_score > 0.7 else 'questionable',
+            'professional_language_use': unprofessional_count == 0,
+            'business_relevance': 'high' if professional_count > 2 else 'medium' if professional_count > 0 else 'low',
+            'unprofessional_word_count': unprofessional_count,
+            'emoji_count': emoji_count,
+            'caps_ratio': caps_ratio
         }
     
     async def _analyze_business_compliance(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -427,12 +847,68 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
         }
     
     async def _detect_spam_content(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Detect spam and promotional violations in professional content."""
+        """
+        Detect spam and promotional violations in professional content.
+        
+        Checks for:
+        - Excessive promotional language
+        - Spam keywords
+        - Suspicious links
+        - Engagement bait
+        """
+        text = content_data.get('text', '')
+        
+        # Spam keywords common in LinkedIn spam
+        spam_keywords = [
+            'click here', 'limited time', 'act now', 'buy now', 'free money',
+            'make money fast', 'work from home', 'guaranteed income', 'no experience',
+            'earn $$$', 'get rich', 'financial freedom', 'passive income scam'
+        ]
+        spam_count = sum(1 for keyword in spam_keywords if keyword in text.lower())
+        
+        # Promotional keywords
+        promotional_keywords = [
+            'sale', 'discount', 'offer', 'deal', 'promotion', 'limited',
+            'exclusive', 'special offer', 'buy', 'purchase', 'order now'
+        ]
+        promotional_count = sum(1 for keyword in promotional_keywords if keyword in text.lower())
+        
+        # Engagement bait patterns
+        engagement_bait = [
+            'like if', 'share if', 'comment below', 'tag someone',
+            'double tap', 'follow for more', 'dm me', 'link in bio'
+        ]
+        bait_count = sum(1 for pattern in engagement_bait if pattern in text.lower())
+        
+        # Check for excessive links
+        link_count = text.count('http://') + text.count('https://')
+        
+        # Calculate spam score
+        spam_score = 0.0
+        spam_score += (spam_count * 0.2)  # +0.2 per spam keyword
+        spam_score += (promotional_count * 0.1)  # +0.1 per promotional keyword
+        spam_score += (bait_count * 0.15)  # +0.15 per engagement bait
+        spam_score += (max(0, link_count - 2) * 0.1)  # Penalty for excessive links
+        spam_score = min(1.0, spam_score)
+        
+        spam_indicators = []
+        if spam_count > 0:
+            spam_indicators.append(f"Contains {spam_count} spam keywords")
+        if promotional_count > 3:
+            spam_indicators.append(f"Excessive promotional content ({promotional_count} keywords)")
+        if bait_count > 0:
+            spam_indicators.append(f"Contains engagement bait ({bait_count} patterns)")
+        if link_count > 2:
+            spam_indicators.append(f"Excessive links ({link_count})")
+        
         return {
-            'spam_score': 0.08,  # Placeholder
-            'promotional_violation': False,
-            'spam_indicators': [],
-            'content_quality_score': 0.85
+            'spam_score': spam_score,
+            'promotional_violation': promotional_count > 5,
+            'spam_indicators': spam_indicators,
+            'content_quality_score': max(0.0, 1.0 - spam_score),
+            'spam_keyword_count': spam_count,
+            'promotional_keyword_count': promotional_count,
+            'engagement_bait_count': bait_count
         }
     
     async def _check_misleading_claims(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -454,12 +930,64 @@ class LinkedInProtectionAdapter(SocialPlatformAdapter):
         }
     
     async def _check_recruitment_scam_content(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Check for recruitment scam content and fake job postings."""
+        """
+        Check for recruitment scam content and fake job postings.
+        
+        Identifies:
+        - Fake job posting indicators
+        - Recruitment scam patterns
+        - Suspicious compensation claims
+        - Pyramid scheme language
+        """
+        text = content_data.get('text', '')
+        content_type = content_data.get('content_type', 'post')
+        
+        # Recruitment scam indicators
+        scam_indicators = [
+            'no experience required', 'work from home', 'be your own boss',
+            'unlimited earning potential', 'make money fast', 'easy money',
+            'pay upfront fee', 'training fee required', 'investment required',
+            'multi-level marketing', 'mlm', 'pyramid', 'network marketing'
+        ]
+        scam_count = sum(1 for indicator in scam_indicators if indicator in text.lower())
+        
+        # Suspicious compensation patterns
+        suspicious_comp = [
+            '$$$', 'earn up to', 'make $', 'guaranteed income',
+            'passive income', 'residual income', 'unlimited income'
+        ]
+        comp_count = sum(1 for pattern in suspicious_comp if pattern in text.lower())
+        
+        # Legitimate job posting indicators
+        legitimate_indicators = [
+            'years of experience', 'bachelor', 'degree', 'qualifications',
+            'responsibilities', 'requirements', 'benefits', 'salary range',
+            'full-time', 'part-time', 'contract', 'apply now'
+        ]
+        legitimate_count = sum(1 for indicator in legitimate_indicators if indicator in text.lower())
+        
+        # Calculate scam score
+        scam_score = 0.0
+        scam_score += (scam_count * 0.25)  # +0.25 per scam indicator
+        scam_score += (comp_count * 0.15)  # +0.15 per suspicious compensation
+        scam_score -= (legitimate_count * 0.05)  # -0.05 per legitimate indicator
+        scam_score = max(0.0, min(1.0, scam_score))
+        
+        fake_job_indicators = []
+        if scam_count > 0:
+            fake_job_indicators.append(f"Contains {scam_count} recruitment scam indicators")
+        if comp_count > 2:
+            fake_job_indicators.append(f"Suspicious compensation claims ({comp_count})")
+        if content_type == 'job_posting' and legitimate_count == 0:
+            fake_job_indicators.append("Missing standard job posting elements")
+        
         return {
-            'recruitment_scam_score': 0.02,  # Placeholder
-            'fake_job_posting_indicators': [],
-            'recruitment_legitimacy': 'legitimate',
-            'scam_content_detected': False
+            'recruitment_scam_score': scam_score,
+            'fake_job_posting_indicators': fake_job_indicators,
+            'recruitment_legitimacy': 'legitimate' if scam_score < 0.3 else 'suspicious' if scam_score < 0.7 else 'likely_scam',
+            'scam_content_detected': scam_score > 0.5,
+            'scam_indicator_count': scam_count,
+            'legitimate_indicator_count': legitimate_count
         }
     
     async def _check_policy_violations(self, content_data: Dict[str, Any]) -> Dict[str, Any]:

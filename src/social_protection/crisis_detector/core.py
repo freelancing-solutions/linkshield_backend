@@ -8,6 +8,7 @@ returns a CrisisReport dataclass.
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from collections import Counter
@@ -20,6 +21,8 @@ from sqlalchemy import select
 from ..reputation_monitor.reputation_tracker import ReputationTracker
 from src.services.depends import get_ai_service
 from src.models.social_protection import CrisisAlertORM, CrisisStateORM
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -127,12 +130,18 @@ class CrisisDetector:
         # optional AI summary & classification
         summary = None
         try:
-            if self.ai and texts:
+            if self.ai and texts and len(texts) > 0:
                 sample = "\n".join(texts[:10])
-                ai_resp = await self.ai.classify(f"Summarize and label severity for these mentions: {sample}")
-                if isinstance(ai_resp, dict):
-                    summary = ai_resp.get("summary") or ai_resp.get("label")
-        except Exception:
+                prompt = f"Analyze these social media mentions for crisis indicators and provide a brief summary (max 200 words):\n\n{sample}"
+                # Use the AI service's analyze_content method
+                ai_result = await self.ai.analyze_content(sample, url="")
+                if isinstance(ai_result, dict):
+                    # Extract summary from AI analysis
+                    summary = ai_result.get("summary", f"Crisis detected with {len(texts)} mentions")
+                    if not summary and "analysis" in ai_result:
+                        summary = ai_result["analysis"][:200]
+        except Exception as e:
+            logger.warning(f"AI summary generation failed: {str(e)}")
             summary = None
 
         payload = {
@@ -153,25 +162,44 @@ class CrisisDetector:
 
         now_dt = datetime.now(timezone.utc)
         if not state:
-            state = CrisisStateORM(brand=brand, consecutive_windows=0, last_score=0.0, last_severity=None, last_evaluated_at=now_dt)
+            state = CrisisStateORM(
+                brand=brand,
+                consecutive_high_windows=0,
+                last_severity=None,
+                last_alert_at=None
+            )
             session.add(state)
             await session.flush()
 
         # determine if this window counts toward consecutive windows
         threshold_for_alert = 0.4
         is_alerting = score >= threshold_for_alert
-        if is_alerting:
-            state.consecutive_windows = (state.consecutive_windows or 0) + 1
-        else:
-            state.consecutive_windows = 0
+        
+        # Implement cooldown logic - don't increment if we're in cooldown period
+        cooldown_seconds = self.cfg.get("cooldown_seconds", 900)
+        in_cooldown = False
+        if state.last_alert_at:
+            time_since_last_alert = (now_dt - state.last_alert_at).total_seconds()
+            in_cooldown = time_since_last_alert < cooldown_seconds
+        
+        if is_alerting and not in_cooldown:
+            state.consecutive_high_windows = (state.consecutive_high_windows or 0) + 1
+        elif not is_alerting:
+            # Reset counter when score drops below threshold
+            state.consecutive_high_windows = 0
 
-        state.last_score = float(score)
         state.last_severity = severity
-        state.last_evaluated_at = now_dt
         await session.flush()
 
         # if consecutive_windows reached required and severity >= warning, create alert
-        if state.consecutive_windows >= self.cfg.get("hysteresis_windows_required", 2) and severity != "ok":
+        hysteresis_required = self.cfg.get("hysteresis_windows_required", 2)
+        should_create_alert = (
+            state.consecutive_high_windows >= hysteresis_required 
+            and severity != "ok" 
+            and not in_cooldown
+        )
+        
+        if should_create_alert:
             alert = CrisisAlertORM(
                 brand=brand,
                 platform=None,
@@ -183,6 +211,8 @@ class CrisisDetector:
                 payload=payload,
             )
             session.add(alert)
+            # Update last_alert_at to start cooldown period
+            state.last_alert_at = now_dt
             await session.flush()
 
         report = CrisisReport(
@@ -198,12 +228,24 @@ class CrisisDetector:
         return report
 
     async def evaluate_all_brands(self, session: AsyncSession, window_seconds: int = 3600, limit: int = 200) -> List[CrisisReport]:
+        """
+        Evaluate all brands for crisis indicators.
+        
+        Args:
+            session: Database session
+            window_seconds: Time window for analysis
+            limit: Maximum number of brands to evaluate
+            
+        Returns:
+            List of crisis reports for all evaluated brands
+        """
         # derive brands to evaluate from reputation tracker (available brands)
         try:
             # InMemoryPersistence exposes keys; RedisPersistence uses keys pattern; use rt.get_trending_brands to sample brands
             trending = await self.rt.get_trending_brands(limit=limit, window_seconds=window_seconds)
             brands = [t["brand"] for t in trending]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to get trending brands: {str(e)}")
             brands = []
 
         reports: List[CrisisReport] = []
@@ -211,7 +253,118 @@ class CrisisDetector:
             try:
                 r = await self.evaluate_brand(brand, session, window_seconds=window_seconds)
                 reports.append(r)
-            except Exception:
+            except Exception as e:
                 # continue evaluating other brands even if one fails
+                logger.error(f"Failed to evaluate brand {brand}: {str(e)}")
                 continue
         return reports
+
+    async def get_crisis_alerts(
+        self,
+        session: AsyncSession,
+        brand: Optional[str] = None,
+        severity: Optional[str] = None,
+        resolved: bool = False,
+        limit: int = 100
+    ) -> List[CrisisAlertORM]:
+        """
+        Retrieve crisis alerts from the database.
+        
+        Args:
+            session: Database session
+            brand: Optional brand filter
+            severity: Optional severity filter (ok, warning, high, critical)
+            resolved: Whether to include only resolved alerts
+            limit: Maximum number of alerts to return
+            
+        Returns:
+            List of crisis alerts matching the filters
+        """
+        stmt = select(CrisisAlertORM)
+        
+        if brand:
+            stmt = stmt.where(CrisisAlertORM.brand == brand)
+        
+        if severity:
+            stmt = stmt.where(CrisisAlertORM.severity == severity)
+        
+        stmt = stmt.where(CrisisAlertORM.resolved == resolved)
+        
+        # Order by creation time, most recent first
+        stmt = stmt.order_by(CrisisAlertORM.created_at.desc())
+        stmt = stmt.limit(limit)
+        
+        result = await session.execute(stmt)
+        alerts = result.scalars().all()
+        
+        return list(alerts)
+
+    async def get_crisis_history(
+        self,
+        session: AsyncSession,
+        brand: str,
+        days: int = 30
+    ) -> List[CrisisAlertORM]:
+        """
+        Get historical crisis data for a brand.
+        
+        Args:
+            session: Database session
+            brand: Brand name
+            days: Number of days of history to retrieve
+            
+        Returns:
+            List of crisis alerts for the brand
+        """
+        from datetime import timedelta
+        
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        
+        stmt = select(CrisisAlertORM).where(
+            CrisisAlertORM.brand == brand,
+            CrisisAlertORM.created_at >= cutoff_date
+        ).order_by(CrisisAlertORM.created_at.desc())
+        
+        result = await session.execute(stmt)
+        alerts = result.scalars().all()
+        
+        return list(alerts)
+
+    async def update_alert_status(
+        self,
+        session: AsyncSession,
+        alert_id: str,
+        resolved: bool = True
+    ) -> Optional[CrisisAlertORM]:
+        """
+        Update the resolution status of a crisis alert.
+        
+        Args:
+            session: Database session
+            alert_id: Alert ID (UUID as string)
+            resolved: Whether the alert is resolved
+            
+        Returns:
+            Updated alert or None if not found
+        """
+        from uuid import UUID
+        
+        try:
+            alert_uuid = UUID(alert_id)
+        except ValueError:
+            logger.error(f"Invalid alert ID format: {alert_id}")
+            return None
+        
+        stmt = select(CrisisAlertORM).where(CrisisAlertORM.id == alert_uuid)
+        result = await session.execute(stmt)
+        alert = result.scalars().one_or_none()
+        
+        if alert:
+            alert.resolved = resolved
+            if resolved:
+                alert.resolved_at = datetime.now(timezone.utc)
+            else:
+                alert.resolved_at = None
+            await session.flush()
+        
+        return alert

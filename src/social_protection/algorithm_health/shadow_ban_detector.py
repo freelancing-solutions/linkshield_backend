@@ -12,11 +12,9 @@ from enum import Enum
 import statistics
 import math
 from ..logging_utils import get_logger
-
-logger = get_logger("ShadowBanDetector")
 from ..types import PlatformType, RiskLevel
 
-logger = logging.getLogger(__name__)
+logger = get_logger("ShadowBanDetector")
 
 
 class ShadowBanType(Enum):
@@ -49,6 +47,8 @@ class DetectionMethod(Enum):
     SEARCH_VISIBILITY = "search_visibility"
     TIMELINE_PRESENCE = "timeline_presence"
     COMPARATIVE_ANALYSIS = "comparative_analysis"
+    REPLY_DEBOOSTING = "reply_deboosting"
+    DISCOVERY_BAN = "discovery_ban"
 
 
 @dataclass
@@ -126,7 +126,7 @@ class ShadowBanDetector:
                     "comparison_window_hours": 336  # 2 weeks for comparison
                 }
             },
-            PlatformType.INSTAGRAM: {
+            PlatformType.META_INSTAGRAM: {
                 "shadow_ban_indicators": {
                     "hashtag_reach_threshold": 0.05,     # 5% hashtag reach
                     "explore_visibility_threshold": 0.02, # 2% explore visibility
@@ -146,7 +146,7 @@ class ShadowBanDetector:
                     "comparison_window_hours": 240  # 10 days for comparison
                 }
             },
-            PlatformType.FACEBOOK: {
+            PlatformType.META_FACEBOOK: {
                 "shadow_ban_indicators": {
                     "organic_reach_threshold": 0.03,     # 3% organic reach
                     "timeline_visibility_threshold": 0.1, # 10% timeline visibility
@@ -309,7 +309,7 @@ class ShadowBanDetector:
                 detected_bans.append(timeline_ban)
             
             # Test for discovery ban (Instagram/TikTok specific)
-            if platform in [PlatformType.INSTAGRAM, PlatformType.TIKTOK]:
+            if platform in [PlatformType.META_INSTAGRAM, PlatformType.TIKTOK]:
                 discovery_ban = await self._test_discovery_ban(
                     recent_content, platform, user_metrics, historical_data
                 )
@@ -782,10 +782,10 @@ class ShadowBanDetector:
         if platform == PlatformType.TWITTER:
             expected_ratio = 0.05  # 5% of followers typically see tweets
             threshold = indicators.get('timeline_presence_threshold', 0.2)
-        elif platform == PlatformType.FACEBOOK:
+        elif platform == PlatformType.META_FACEBOOK:
             expected_ratio = 0.06  # 6% organic reach on Facebook
             threshold = indicators.get('timeline_visibility_threshold', 0.1)
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             expected_ratio = 0.08  # 8% of followers see posts
             threshold = indicators.get('story_visibility_threshold', 0.4)
         elif platform == PlatformType.LINKEDIN:
@@ -887,7 +887,7 @@ class ShadowBanDetector:
         historical_data: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[ShadowBanTest]:
         """Test for discovery ban (Instagram/TikTok specific)"""
-        if platform not in [PlatformType.INSTAGRAM, PlatformType.TIKTOK]:
+        if platform not in [PlatformType.META_INSTAGRAM, PlatformType.TIKTOK]:
             return None
         
         evidence = []
@@ -896,7 +896,7 @@ class ShadowBanDetector:
         config = self.platform_configs.get(platform, {})
         indicators = config.get('shadow_ban_indicators', {})
         
-        if platform == PlatformType.INSTAGRAM:
+        if platform == PlatformType.META_INSTAGRAM:
             # Check explore page visibility
             explore_reaches = [item.get('explore_reach', 0) for item in content_data]
             total_reaches = [item.get('reach', item.get('impressions', 0)) for item in content_data]
@@ -966,7 +966,7 @@ class ShadowBanDetector:
                 follower_conversion_rate = (sum(new_followers) / total_reach) * 100
                 
                 # Platform-specific conversion rate expectations
-                expected_rate = 0.1 if platform == PlatformType.INSTAGRAM else 0.2  # TikTok typically higher
+                expected_rate = 0.1 if platform == PlatformType.META_INSTAGRAM else 0.2  # TikTok typically higher
                 
                 if follower_conversion_rate < expected_rate * 0.3:  # Less than 30% of expected
                     evidence.append(
@@ -991,7 +991,7 @@ class ShadowBanDetector:
         overall_confidence = min(sum(confidence_factors), 1.0)
         severity = self._determine_severity(overall_confidence, ShadowBanType.DISCOVERY_BAN)
         
-        discovery_features = ["explore_page"] if platform == PlatformType.INSTAGRAM else ["for_you_page"]
+        discovery_features = ["explore_page"] if platform == PlatformType.META_INSTAGRAM else ["for_you_page"]
         
         return ShadowBanTest(
             test_type=ShadowBanType.DISCOVERY_BAN,
@@ -1094,8 +1094,8 @@ class ShadowBanDetector:
                 # Expected reach ratios by platform
                 expected_ratios = {
                     PlatformType.TWITTER: 0.05,
-                    PlatformType.INSTAGRAM: 0.08,
-                    PlatformType.FACEBOOK: 0.06,
+                    PlatformType.META_INSTAGRAM: 0.08,
+                    PlatformType.META_FACEBOOK: 0.06,
                     PlatformType.LINKEDIN: 0.04,
                     PlatformType.TIKTOK: 0.15
                 }
@@ -1252,7 +1252,7 @@ class ShadowBanDetector:
                 "Engage with trending topics naturally",
                 "Focus on thread creation for better reach"
             ])
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             suggestions.extend([
                 "Use Instagram Stories and Reels more frequently",
                 "Collaborate with other accounts in your niche",
@@ -1288,7 +1288,7 @@ class ShadowBanDetector:
                 "Monitor reply visibility in conversations",
                 "Track timeline presence using analytics"
             ])
-        elif platform == PlatformType.INSTAGRAM:
+        elif platform == PlatformType.META_INSTAGRAM:
             recommendations.extend([
                 "Test hashtag visibility in search",
                 "Monitor Explore page appearances",

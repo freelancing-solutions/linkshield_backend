@@ -11,12 +11,10 @@ Covers both Facebook and Instagram protection strategies.
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from enum import Enum
-import httpx
 
 from .base_adapter import SocialPlatformAdapter, PlatformType, RiskLevel
 from ..registry import registry
 from ..logging_utils import get_logger
-from ..exceptions import PlatformAdapterError
 
 logger = get_logger("MetaProtectionAdapter")
 
@@ -55,10 +53,6 @@ class MetaProtectionAdapter(SocialPlatformAdapter):
     - Community standards enforcement
     """
     
-    # Facebook Graph API endpoints
-    GRAPH_API_BASE = "https://graph.facebook.com/v18.0"
-    INSTAGRAM_GRAPH_API_BASE = "https://graph.facebook.com/v18.0"
-    
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize Meta protection adapter.
@@ -67,218 +61,10 @@ class MetaProtectionAdapter(SocialPlatformAdapter):
             config: Platform-specific configuration including API credentials,
                    risk thresholds, and feature flags for both Facebook and Instagram
         """
-        super().__init__(PlatformType.META_FACEBOOK, config or {})
+        super().__init__(PlatformType.META_FACEBOOK)
+        self.config = config or {}
         self.risk_thresholds = self._load_risk_thresholds()
-        self.fb_client: Optional[httpx.AsyncClient] = None
-        self.ig_client: Optional[httpx.AsyncClient] = None
-        self._rate_limit_status = {}
-        self._initialize_api_clients()
-    
-    def _initialize_api_clients(self) -> None:
-        """Initialize Facebook and Instagram Graph API clients with authentication."""
-        try:
-            fb_access_token = self.config.get('facebook_access_token')
-            fb_app_id = self.config.get('facebook_app_id')
-            fb_app_secret = self.config.get('facebook_app_secret')
-            ig_access_token = self.config.get('instagram_access_token')
-            
-            if fb_access_token:
-                self.fb_client = httpx.AsyncClient(
-                    base_url=self.GRAPH_API_BASE,
-                    timeout=30.0,
-                    headers={'Authorization': f'Bearer {fb_access_token}', 'Content-Type': 'application/json'}
-                )
-                logger.info("Facebook Graph API client initialized")
-            elif fb_app_id and fb_app_secret:
-                app_token = f"{fb_app_id}|{fb_app_secret}"
-                self.fb_client = httpx.AsyncClient(
-                    base_url=self.GRAPH_API_BASE,
-                    timeout=30.0,
-                    params={'access_token': app_token}
-                )
-                logger.info("Facebook Graph API client initialized with app token")
-                
-            if ig_access_token:
-                self.ig_client = httpx.AsyncClient(
-                    base_url=self.INSTAGRAM_GRAPH_API_BASE,
-                    timeout=30.0,
-                    headers={'Authorization': f'Bearer {ig_access_token}', 'Content-Type': 'application/json'}
-                )
-                logger.info("Instagram Graph API client initialized")
-            
-            self.is_enabled = (self.fb_client is not None) or (self.ig_client is not None)
-            self._rate_limit_status = {
-                'facebook': {'last_reset': datetime.utcnow(), 'requests_made': 0, 'limit_reached': False},
-                'instagram': {'last_reset': datetime.utcnow(), 'requests_made': 0, 'limit_reached': False}
-            }
-        except Exception as e:
-            logger.error(f"Failed to initialize Meta API clients: {str(e)}")
-            self.is_enabled = False
-    
-    async def validate_credentials(self) -> bool:
-        """Validate Meta API credentials and permissions."""
-        validation_results = {}
-        if self.fb_client:
-            try:
-                response = await self.fb_client.get('/me', params={'fields': 'id,name'})
-                validation_results['facebook'] = response.status_code == 200
-                if validation_results['facebook']:
-                    logger.info(f"Facebook API credentials validated")
-            except Exception as e:
-                logger.error(f"Facebook API validation error: {str(e)}")
-                validation_results['facebook'] = False
         
-        if self.ig_client:
-            try:
-                response = await self.ig_client.get('/me', params={'fields': 'id,username'})
-                validation_results['instagram'] = response.status_code == 200
-                if validation_results['instagram']:
-                    logger.info(f"Instagram API credentials validated")
-            except Exception as e:
-                logger.error(f"Instagram API validation error: {str(e)}")
-                validation_results['instagram'] = False
-        
-        return any(validation_results.values())
-    
-    async def _fetch_facebook_profile(self, profile_id: str) -> Dict[str, Any]:
-        """Fetch Facebook profile data using Graph API."""
-        if not self.fb_client:
-            raise PlatformAdapterError("Facebook API client not initialized")
-        
-        try:
-            fields = ['id', 'name', 'username', 'picture', 'verified', 'followers_count', 'friends_count']
-            response = await self.fb_client.get(f'/{profile_id}', params={'fields': ','.join(fields)})
-            
-            if response.status_code == 200:
-                profile_data = response.json()
-                profile_data['fetched_at'] = datetime.utcnow().isoformat()
-                profile_data['platform'] = 'facebook'
-                logger.info(f"Fetched Facebook profile: {profile_id}")
-                return profile_data
-            else:
-                raise PlatformAdapterError(f"Facebook API error: {response.status_code}")
-        except Exception as e:
-            logger.error(f"Error fetching Facebook profile: {str(e)}")
-            raise PlatformAdapterError(f"Failed to fetch Facebook profile: {str(e)}")
-    
-    async def _fetch_instagram_profile(self, profile_id: str) -> Dict[str, Any]:
-        """Fetch Instagram profile data using Graph API."""
-        if not self.ig_client:
-            raise PlatformAdapterError("Instagram API client not initialized")
-        
-        try:
-            fields = ['id', 'username', 'name', 'biography', 'followers_count', 'follows_count', 'media_count']
-            response = await self.ig_client.get(f'/{profile_id}', params={'fields': ','.join(fields)})
-            
-            if response.status_code == 200:
-                profile_data = response.json()
-                profile_data['fetched_at'] = datetime.utcnow().isoformat()
-                profile_data['platform'] = 'instagram'
-                logger.info(f"Fetched Instagram profile: {profile_id}")
-                return profile_data
-            else:
-                raise PlatformAdapterError(f"Instagram API error: {response.status_code}")
-        except Exception as e:
-            logger.error(f"Error fetching Instagram profile: {str(e)}")
-            raise PlatformAdapterError(f"Failed to fetch Instagram profile: {str(e)}")
-        
-    def _check_meta_content_policy(self, content: str, content_type: str) -> Dict[str, Any]:
-        """
-        Check content against Meta-specific policies.
-        
-        Args:
-            content: Content text to analyze
-            content_type: Type of content (post, ad, story, etc.)
-            
-        Returns:
-            Dict containing policy compliance assessment
-        """
-        policy_violations = []
-        risk_score = 0.0
-        
-        # Check for engagement bait patterns
-        engagement_bait_patterns = [
-            'like if', 'share if', 'tag someone', 'comment below',
-            'click here', 'link in bio', 'swipe up'
-        ]
-        for pattern in engagement_bait_patterns:
-            if pattern.lower() in content.lower():
-                policy_violations.append({
-                    'type': 'engagement_bait',
-                    'pattern': pattern,
-                    'severity': 'medium'
-                })
-                risk_score += 0.2
-        
-        # Check for external link patterns (reach reduction risk)
-        if 'http://' in content or 'https://' in content:
-            policy_violations.append({
-                'type': 'external_link',
-                'severity': 'low',
-                'note': 'External links may reduce organic reach'
-            })
-            risk_score += 0.15
-        
-        # Check for spam indicators
-        spam_indicators = ['!!!', 'FREE', 'CLICK NOW', 'LIMITED TIME', 'ACT NOW']
-        spam_count = sum(1 for indicator in spam_indicators if indicator in content.upper())
-        if spam_count > 2:
-            policy_violations.append({
-                'type': 'spam_indicators',
-                'count': spam_count,
-                'severity': 'high'
-            })
-            risk_score += 0.3
-        
-        # Check for sensational language
-        sensational_words = ['shocking', 'unbelievable', 'you won\'t believe', 'secret']
-        if any(word in content.lower() for word in sensational_words):
-            policy_violations.append({
-                'type': 'sensational_content',
-                'severity': 'medium',
-                'note': 'May trigger content review'
-            })
-            risk_score += 0.2
-        
-        # Ad-specific policy checks
-        if content_type in ['facebook_ad', 'instagram_ad']:
-            # Check for prohibited content in ads
-            prohibited_ad_terms = ['crypto', 'weight loss', 'get rich quick', 'miracle cure']
-            for term in prohibited_ad_terms:
-                if term in content.lower():
-                    policy_violations.append({
-                        'type': 'prohibited_ad_content',
-                        'term': term,
-                        'severity': 'critical'
-                    })
-                    risk_score += 0.4
-        
-        return {
-            'compliant': len(policy_violations) == 0,
-            'risk_score': min(risk_score, 1.0),
-            'violations': policy_violations,
-            'recommendations': self._generate_policy_recommendations(policy_violations)
-        }
-    
-    def _generate_policy_recommendations(self, violations: List[Dict]) -> List[str]:
-        """Generate recommendations based on policy violations."""
-        recommendations = []
-        
-        violation_types = {v['type'] for v in violations}
-        
-        if 'engagement_bait' in violation_types:
-            recommendations.append("Remove engagement bait language to avoid reach reduction")
-        if 'external_link' in violation_types:
-            recommendations.append("Consider using native content instead of external links for better reach")
-        if 'spam_indicators' in violation_types:
-            recommendations.append("Reduce excessive capitalization and urgency language")
-        if 'sensational_content' in violation_types:
-            recommendations.append("Use factual language to avoid content review flags")
-        if 'prohibited_ad_content' in violation_types:
-            recommendations.append("Remove prohibited terms to ensure ad approval")
-        
-        return recommendations
-    
     def _load_risk_thresholds(self) -> Dict[str, float]:
         """Load Meta-specific risk thresholds from configuration."""
         return self.config.get('risk_thresholds', {
@@ -373,7 +159,6 @@ class MetaProtectionAdapter(SocialPlatformAdapter):
         """
         try:
             content_type = content_data.get('content_type', 'facebook_post')
-            content_text = content_data.get('message', content_data.get('caption', ''))
             logger.info(f"Starting Meta content analysis for {content_type}: {content_data.get('content_id', 'unknown')}")
             
             # Initialize content risk assessment
@@ -387,10 +172,6 @@ class MetaProtectionAdapter(SocialPlatformAdapter):
                 'risk_score': 0.0,
                 'recommendations': []
             }
-            
-            # Run Meta-specific content policy check
-            policy_check = self._check_meta_content_policy(content_text, content_type)
-            risk_assessment['risk_factors']['policy_compliance'] = policy_check
             
             # Analyze link reach reduction risk
             link_reach_risk = await self._analyze_link_reach_reduction(content_data)

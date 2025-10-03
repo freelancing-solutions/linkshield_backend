@@ -38,19 +38,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
 from ..logging_utils import get_logger
 
 logger = get_logger("ReputationTracker")
-from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 try:
     import aioredis
 except Exception:  # pragma: no cover - optional dependency
     aioredis = None
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

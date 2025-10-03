@@ -681,6 +681,313 @@ class AIService:
         
         return "unknown"
     
+    async def detect_spam_patterns(self, content: str) -> Dict[str, Any]:
+        """
+        Detect spam patterns in content using AI and ML models.
+        
+        This method uses a multi-layered approach:
+        1. ML model-based classification (primary)
+        2. OpenAI GPT-based analysis (if available)
+        3. Pattern-based detection (fallback)
+        
+        Args:
+            content: Text content to analyze for spam
+        
+        Returns:
+            Dictionary with spam detection results including:
+            - spam_score: 0-100 score indicating spam likelihood
+            - is_spam: Boolean indicating if content is spam
+            - detected_patterns: List of detected spam patterns
+            - confidence: 0.0-1.0 confidence score
+            - ml_analysis: Details from ML model analysis
+        """
+        try:
+            spam_score = 0
+            is_spam = False
+            detected_patterns = []
+            confidence = 0.0
+            ml_analysis = {}
+            
+            # Primary: Use local ML spam detector model if available
+            if "spam_detector" in self.pipelines:
+                try:
+                    ml_result = await self._ml_spam_classification(content)
+                    spam_score = ml_result.get("spam_score", 0)
+                    is_spam = ml_result.get("is_spam", False)
+                    detected_patterns.extend(ml_result.get("patterns", []))
+                    confidence = ml_result.get("confidence", 0.0)
+                    ml_analysis = ml_result.get("details", {})
+                    
+                    # If ML model gives high confidence result, use it
+                    if confidence > 0.7:
+                        return {
+                            "spam_score": spam_score,
+                            "is_spam": is_spam,
+                            "detected_patterns": detected_patterns,
+                            "confidence": confidence,
+                            "ml_analysis": ml_analysis,
+                            "method": "ml_model"
+                        }
+                except Exception as e:
+                    # ML model failed, continue to other methods
+                    ml_analysis["error"] = str(e)
+            
+            # Secondary: Use OpenAI for advanced spam detection if available
+            if self.openai_enabled:
+                try:
+                    openai_result = await self._openai_spam_detection(content)
+                    openai_score = openai_result.get("spam_score", 0)
+                    openai_is_spam = openai_result.get("is_spam", False)
+                    openai_confidence = openai_result.get("confidence", 0.0)
+                    
+                    # Combine ML and OpenAI results if both available
+                    if spam_score > 0 and openai_score > 0:
+                        # Weighted average: ML 60%, OpenAI 40%
+                        spam_score = int(spam_score * 0.6 + openai_score * 0.4)
+                        is_spam = spam_score >= 60
+                        confidence = (confidence * 0.6 + openai_confidence * 0.4)
+                        detected_patterns.extend(openai_result.get("patterns", []))
+                    elif openai_score > 0:
+                        # Use OpenAI results if ML not available
+                        spam_score = openai_score
+                        is_spam = openai_is_spam
+                        confidence = openai_confidence
+                        detected_patterns.extend(openai_result.get("patterns", []))
+                    
+                    if confidence > 0.6:
+                        return {
+                            "spam_score": spam_score,
+                            "is_spam": is_spam,
+                            "detected_patterns": detected_patterns,
+                            "confidence": confidence,
+                            "ml_analysis": ml_analysis,
+                            "method": "ml_and_openai" if ml_analysis else "openai"
+                        }
+                except Exception as e:
+                    # OpenAI analysis failed, continue with pattern-based
+                    pass
+            
+            # Fallback: Pattern-based detection
+            if spam_score == 0:
+                pattern_result = await self._detect_spam_patterns(content)
+                spam_score = pattern_result.get("confidence_score", 0)
+                is_spam = pattern_result.get("is_spam", False)
+                detected_patterns.extend(pattern_result.get("spam_indicators", []))
+                confidence = spam_score / 100.0
+            
+            return {
+                "spam_score": spam_score,
+                "is_spam": is_spam,
+                "detected_patterns": detected_patterns,
+                "confidence": confidence,
+                "ml_analysis": ml_analysis,
+                "method": "pattern_based" if not ml_analysis else "ml_with_patterns"
+            }
+        
+        except Exception as e:
+            # Return safe default on error
+            return {
+                "spam_score": 0,
+                "is_spam": False,
+                "detected_patterns": [],
+                "confidence": 0.0,
+                "error": str(e),
+                "method": "error"
+            }
+    
+    async def _ml_spam_classification(self, content: str) -> Dict[str, Any]:
+        """
+        Use ML model for spam classification.
+        
+        This method uses a pre-trained transformer model to classify content
+        as spam or legitimate. The model analyzes various features including
+        toxicity, promotional content, and manipulation tactics.
+        
+        Args:
+            content: Text content to classify
+        
+        Returns:
+            Dictionary with ML classification results
+        """
+        try:
+            # Truncate content to model's max length
+            max_length = 512
+            truncated_content = content[:max_length]
+            
+            # Run inference with the spam detector model
+            model_output = self.pipelines["spam_detector"](truncated_content)
+            
+            if not model_output or len(model_output) == 0:
+                return {
+                    "spam_score": 0,
+                    "is_spam": False,
+                    "patterns": [],
+                    "confidence": 0.0,
+                    "details": {"error": "Empty model output"}
+                }
+            
+            # Parse model output
+            # The toxic-bert model returns scores for multiple labels
+            scores = model_output[0] if isinstance(model_output, list) else model_output
+            
+            # Extract relevant scores
+            spam_indicators = {
+                "toxic": 0.0,
+                "severe_toxic": 0.0,
+                "obscene": 0.0,
+                "threat": 0.0,
+                "insult": 0.0,
+                "identity_hate": 0.0
+            }
+            
+            detected_patterns = []
+            max_score = 0.0
+            
+            for score_dict in scores:
+                label = score_dict.get("label", "").lower()
+                score = score_dict.get("score", 0.0)
+                
+                # Map model labels to spam indicators
+                if "toxic" in label:
+                    spam_indicators["toxic"] = score
+                    if score > 0.6:
+                        detected_patterns.append(f"ml_toxic_content_{int(score*100)}")
+                elif "severe" in label:
+                    spam_indicators["severe_toxic"] = score
+                    if score > 0.5:
+                        detected_patterns.append(f"ml_severe_toxic_{int(score*100)}")
+                elif "obscene" in label:
+                    spam_indicators["obscene"] = score
+                    if score > 0.6:
+                        detected_patterns.append(f"ml_obscene_content_{int(score*100)}")
+                elif "threat" in label:
+                    spam_indicators["threat"] = score
+                    if score > 0.5:
+                        detected_patterns.append(f"ml_threatening_content_{int(score*100)}")
+                elif "insult" in label:
+                    spam_indicators["insult"] = score
+                    if score > 0.6:
+                        detected_patterns.append(f"ml_insulting_content_{int(score*100)}")
+                elif "identity" in label or "hate" in label:
+                    spam_indicators["identity_hate"] = score
+                    if score > 0.5:
+                        detected_patterns.append(f"ml_hate_speech_{int(score*100)}")
+                
+                max_score = max(max_score, score)
+            
+            # Calculate overall spam score
+            # Weight different indicators
+            weights = {
+                "toxic": 0.25,
+                "severe_toxic": 0.30,
+                "obscene": 0.15,
+                "threat": 0.10,
+                "insult": 0.10,
+                "identity_hate": 0.10
+            }
+            
+            weighted_score = sum(
+                spam_indicators[key] * weights[key] 
+                for key in spam_indicators.keys()
+            )
+            
+            spam_score = int(weighted_score * 100)
+            
+            # Determine if content is spam based on thresholds
+            is_spam = (
+                max_score > 0.7 or  # Any single indicator very high
+                weighted_score > 0.6 or  # Overall score high
+                len(detected_patterns) >= 3  # Multiple indicators present
+            )
+            
+            # Calculate confidence based on score distribution
+            confidence = max_score if max_score > 0.5 else weighted_score
+            
+            return {
+                "spam_score": spam_score,
+                "is_spam": is_spam,
+                "patterns": detected_patterns,
+                "confidence": round(confidence, 2),
+                "details": {
+                    "model": "toxic-bert",
+                    "indicators": spam_indicators,
+                    "weighted_score": round(weighted_score, 2),
+                    "max_score": round(max_score, 2),
+                    "content_length": len(content),
+                    "truncated": len(content) > max_length
+                }
+            }
+        
+        except Exception as e:
+            return {
+                "spam_score": 0,
+                "is_spam": False,
+                "patterns": [],
+                "confidence": 0.0,
+                "details": {"error": f"ML classification failed: {str(e)}"}
+            }
+    
+    async def _openai_spam_detection(self, content: str) -> Dict[str, Any]:
+        """
+        Use OpenAI API for advanced spam detection.
+        """
+        try:
+            prompt = f"""
+            Analyze the following content for spam indicators:
+            
+            Content: {content[:1000]}...
+            
+            Determine if this content is spam. Consider:
+            1. Engagement bait (like for like, follow for follow)
+            2. Financial scams and get-rich-quick schemes
+            3. Fake urgency and pressure tactics
+            4. Excessive promotional content
+            5. Repetitive or low-quality content
+            6. Suspicious links or contact information
+            
+            Respond with JSON format:
+            {{
+                "is_spam": boolean,
+                "spam_score": number (0-100),
+                "patterns": ["list of detected spam patterns"],
+                "confidence": number (0.0-1.0)
+            }}
+            """
+            
+            response = await openai.ChatCompletion.acreate(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a content moderation expert specializing in spam detection."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=300,
+                temperature=0.1
+            )
+            
+            result_text = response.choices[0].message.content
+            
+            # Parse JSON response
+            try:
+                result = json.loads(result_text)
+                return result
+            except json.JSONDecodeError:
+                # Fallback if JSON parsing fails
+                return {
+                    "is_spam": "spam" in result_text.lower(),
+                    "spam_score": 50 if "spam" in result_text.lower() else 0,
+                    "patterns": [],
+                    "confidence": 0.5
+                }
+        
+        except Exception as e:
+            return {
+                "is_spam": False,
+                "spam_score": 0,
+                "patterns": [],
+                "confidence": 0.0,
+                "error": str(e)
+            }
+    
     async def get_model_status(self) -> Dict[str, Any]:
         """
         Get status of loaded AI models.

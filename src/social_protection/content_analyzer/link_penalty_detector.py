@@ -293,8 +293,10 @@ class LinkPenaltyDetector:
                 
                 if link_result.get("has_penalty_risk", False):
                     has_penalty_risk = True
-                    penalty_types.extend(link_result.get("penalty_types", []))
-                    detected_issues.extend(link_result.get("issues", []))
+                
+                # Always extend penalty types and issues from individual links
+                penalty_types.extend(link_result.get("penalty_types", []))
+                detected_issues.extend(link_result.get("issues", []))
             
             # Platform-specific analysis
             if platform in self.platform_penalties:
@@ -577,6 +579,137 @@ class LinkPenaltyDetector:
         
         return result
     
+    async def _analyze_redirect_chain(self, link: str, max_redirects: int = 5) -> Dict[str, Any]:
+        """
+        Analyze redirect chain for a URL.
+        
+        Args:
+            link: URL to analyze
+            max_redirects: Maximum number of redirects to follow
+            
+        Returns:
+            Dictionary with redirect chain analysis
+        """
+        result = {
+            "has_redirects": False,
+            "redirect_count": 0,
+            "redirect_chain": [],
+            "final_url": link,
+            "suspicious_redirects": False,
+            "penalty_score": 0,
+            "issues": []
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                current_url = link
+                visited_urls = [link]
+                redirect_count = 0
+                
+                # Follow redirects manually to track the chain
+                for i in range(max_redirects):
+                    try:
+                        async with session.head(
+                            current_url,
+                            allow_redirects=False,
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        ) as response:
+                            # Check if there's a redirect
+                            if response.status in (301, 302, 303, 307, 308):
+                                redirect_count += 1
+                                next_url = response.headers.get('Location')
+                                
+                                if not next_url:
+                                    break
+                                
+                                # Handle relative URLs
+                                if not next_url.startswith(('http://', 'https://')):
+                                    from urllib.parse import urljoin
+                                    next_url = urljoin(current_url, next_url)
+                                
+                                visited_urls.append(next_url)
+                                
+                                # Check for redirect loops
+                                if next_url in visited_urls[:-1]:
+                                    result["issues"].append("Redirect loop detected")
+                                    result["suspicious_redirects"] = True
+                                    result["penalty_score"] += 30
+                                    break
+                                
+                                current_url = next_url
+                            else:
+                                # No more redirects
+                                break
+                    
+                    except asyncio.TimeoutError:
+                        result["issues"].append("Redirect chain timeout")
+                        break
+                    except Exception as e:
+                        result["issues"].append(f"Redirect error: {str(e)}")
+                        break
+                
+                result["has_redirects"] = redirect_count > 0
+                result["redirect_count"] = redirect_count
+                result["redirect_chain"] = visited_urls
+                result["final_url"] = current_url
+                
+                # Analyze redirect chain for suspicious patterns
+                if redirect_count > 0:
+                    # Multiple redirects are suspicious
+                    if redirect_count > 2:
+                        result["suspicious_redirects"] = True
+                        result["penalty_score"] += redirect_count * 10
+                        result["issues"].append(
+                            f"Excessive redirects ({redirect_count}) - may hide destination"
+                        )
+                    
+                    # Check if redirects go through different domains
+                    domains = set()
+                    for url in visited_urls:
+                        parsed = urlparse(url)
+                        domains.add(parsed.netloc.lower())
+                    
+                    if len(domains) > 2:
+                        result["suspicious_redirects"] = True
+                        result["penalty_score"] += 15
+                        result["issues"].append(
+                            f"Redirects through multiple domains ({len(domains)})"
+                        )
+                    
+                    # Check if final URL is very different from original
+                    original_domain = urlparse(link).netloc.lower()
+                    final_domain = urlparse(current_url).netloc.lower()
+                    
+                    if original_domain != final_domain:
+                        # Check if it's a known shortener redirecting (acceptable)
+                        is_shortener_redirect = any(
+                            shortener in original_domain 
+                            for shortener in self.problematic_domains["url_shorteners"]
+                        )
+                        
+                        if not is_shortener_redirect:
+                            result["suspicious_redirects"] = True
+                            result["penalty_score"] += 10
+                            result["issues"].append(
+                                f"Unexpected domain change: {original_domain} -> {final_domain}"
+                            )
+                    
+                    # Check for protocol downgrade (HTTPS -> HTTP)
+                    for i in range(len(visited_urls) - 1):
+                        current_parsed = urlparse(visited_urls[i])
+                        next_parsed = urlparse(visited_urls[i + 1])
+                        
+                        if current_parsed.scheme == 'https' and next_parsed.scheme == 'http':
+                            result["suspicious_redirects"] = True
+                            result["penalty_score"] += 25
+                            result["issues"].append("Security downgrade: HTTPS -> HTTP redirect")
+                            break
+        
+        except Exception as e:
+            result["issues"].append(f"Redirect analysis error: {str(e)}")
+        
+        return result
+    
     async def _analyze_single_link(self, link: str, platform: str) -> Dict[str, Any]:
         """Analyze a single link for penalty risks."""
         analysis = {
@@ -654,12 +787,26 @@ class LinkPenaltyDetector:
                     analysis["penalty_types"].append("penalty_trigger")
                     analysis["issues"].append(f"Penalty trigger in URL: {pattern}")
             
-            # Check for redirect indicators
+            # Check for redirect indicators in path
             for pattern in self.penalty_patterns["redirect_indicators"]:
                 if re.search(pattern, path, re.IGNORECASE):
                     analysis["penalty_score"] += 15
-                    analysis["penalty_types"].append("redirect_chain")
-                    analysis["issues"].append(f"Redirect indicator: {pattern}")
+                    analysis["penalty_types"].append("redirect_indicator")
+                    analysis["issues"].append(f"Redirect indicator in path: {pattern}")
+            
+            # Analyze redirect chain (subtask 6.4)
+            redirect_result = await self._analyze_redirect_chain(link)
+            if redirect_result["has_redirects"]:
+                analysis["penalty_score"] += redirect_result["penalty_score"]
+                if redirect_result["suspicious_redirects"]:
+                    analysis["penalty_types"].append("suspicious_redirect_chain")
+                    analysis["has_penalty_risk"] = True
+                analysis["issues"].extend(redirect_result["issues"])
+                analysis["redirect_info"] = {
+                    "redirect_count": redirect_result["redirect_count"],
+                    "final_url": redirect_result["final_url"],
+                    "suspicious": redirect_result["suspicious_redirects"]
+                }
             
             # Check protocol security
             if not link.startswith("https://"):

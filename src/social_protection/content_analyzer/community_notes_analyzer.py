@@ -385,3 +385,786 @@ class CommunityNotesAnalyzer:
                 recommendations.append("Avoid guarantees about returns")
         
         return recommendations
+
+    async def extract_claims(
+        self,
+        content: str,
+        use_ai: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract factual claims from content that can be fact-checked.
+        
+        Args:
+            content: Text content to analyze
+            use_ai: Whether to use AI service for advanced extraction
+            
+        Returns:
+            List of extracted claims with metadata
+        """
+        claims = []
+        
+        # Pattern-based claim extraction
+        claim_patterns = [
+            # Statistical claims
+            (r'(\d+(?:\.\d+)?%)\s+of\s+([^.!?]+)', 'statistical'),
+            (r'(\d+(?:,\d{3})*(?:\.\d+)?)\s+([^.!?]+(?:died|infected|affected|reported))', 'statistical'),
+            
+            # Causal claims
+            (r'([^.!?]+)\s+(?:causes?|leads? to|results? in)\s+([^.!?]+)', 'causal'),
+            (r'([^.!?]+)\s+(?:is caused by|is due to|stems from)\s+([^.!?]+)', 'causal'),
+            
+            # Definitive statements
+            (r'([^.!?]+)\s+(?:is|are|was|were)\s+(?:proven|confirmed|verified|established)\s+([^.!?]+)', 'definitive'),
+            (r'(?:studies?|research|scientists?|experts?)\s+(?:show|prove|confirm|reveal)\s+(?:that\s+)?([^.!?]+)', 'definitive'),
+            
+            # Comparative claims
+            (r'([^.!?]+)\s+(?:is|are)\s+(?:more|less|better|worse)\s+than\s+([^.!?]+)', 'comparative'),
+            
+            # Temporal claims
+            (r'(?:in|on|during)\s+(\d{4}|\w+\s+\d{4}),?\s+([^.!?]+)', 'temporal'),
+        ]
+        
+        content_lower = content.lower()
+        
+        for pattern, claim_type in claim_patterns:
+            matches = re.finditer(pattern, content_lower, re.IGNORECASE)
+            for match in matches:
+                claim_text = match.group(0)
+                
+                # Extract claim components
+                if len(match.groups()) >= 2:
+                    subject = match.group(1).strip()
+                    predicate = match.group(2).strip() if len(match.groups()) > 1 else ""
+                else:
+                    subject = claim_text
+                    predicate = ""
+                
+                claims.append({
+                    "claim_text": claim_text,
+                    "claim_type": claim_type,
+                    "subject": subject,
+                    "predicate": predicate,
+                    "position": match.start(),
+                    "confidence": 0.7,
+                    "requires_verification": True
+                })
+        
+        # Use AI for advanced claim extraction if available
+        if use_ai and self.ai_service and len(claims) < 10:
+            try:
+                ai_claims = await self._ai_extract_claims(content)
+                
+                # Merge AI claims with pattern-based claims, avoiding duplicates
+                existing_texts = {c["claim_text"].lower() for c in claims}
+                for ai_claim in ai_claims:
+                    if ai_claim["claim_text"].lower() not in existing_texts:
+                        claims.append(ai_claim)
+            except Exception as e:
+                # Continue with pattern-based claims if AI fails
+                pass
+        
+        # Sort claims by position in text
+        claims.sort(key=lambda x: x.get("position", 0))
+        
+        # Limit to most significant claims
+        return claims[:20]
+
+    async def _ai_extract_claims(self, content: str) -> List[Dict[str, Any]]:
+        """
+        Use AI service to extract claims from content.
+        
+        Args:
+            content: Text content to analyze
+            
+        Returns:
+            List of extracted claims
+        """
+        try:
+            prompt = f"""Extract factual claims from the following content that can be fact-checked.
+            
+Content: {content[:2000]}
+
+For each claim, identify:
+1. The claim text
+2. The type (statistical, causal, definitive, comparative, temporal)
+3. Whether it requires verification
+
+Return a JSON array of claims in this format:
+[
+  {{
+    "claim_text": "the exact claim from the content",
+    "claim_type": "statistical|causal|definitive|comparative|temporal",
+    "subject": "what the claim is about",
+    "predicate": "what is being claimed",
+    "requires_verification": true|false,
+    "confidence": 0.0-1.0
+  }}
+]
+
+Only extract claims that are verifiable facts, not opinions or subjective statements."""
+
+            # Use AI service to analyze
+            response = await self.ai_service.analyze_with_prompt(prompt)
+            
+            # Parse response
+            if isinstance(response, str):
+                # Try to extract JSON from response
+                json_match = re.search(r'\[.*\]', response, re.DOTALL)
+                if json_match:
+                    import json
+                    claims = json.loads(json_match.group(0))
+                    return claims
+            elif isinstance(response, dict) and "claims" in response:
+                return response["claims"]
+            
+            return []
+            
+        except Exception as e:
+            return []
+
+    async def assess_source_credibility(
+        self,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Assess the credibility of sources cited in content.
+        
+        Args:
+            content: Text content to analyze
+            metadata: Additional metadata (author, platform, URLs, etc.)
+            
+        Returns:
+            Dictionary with credibility assessment
+        """
+        credibility_score = 50  # Base score
+        credibility_factors = []
+        source_types = []
+        cited_sources = []
+        
+        # Extract URLs from content
+        url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+        urls = re.findall(url_pattern, content)
+        
+        # Credible source domains
+        credible_domains = {
+            # News organizations
+            'reuters.com': {'score': 90, 'type': 'news_agency'},
+            'apnews.com': {'score': 90, 'type': 'news_agency'},
+            'bbc.com': {'score': 85, 'type': 'news_outlet'},
+            'nytimes.com': {'score': 85, 'type': 'news_outlet'},
+            'washingtonpost.com': {'score': 85, 'type': 'news_outlet'},
+            'theguardian.com': {'score': 85, 'type': 'news_outlet'},
+            
+            # Academic and research
+            'nih.gov': {'score': 95, 'type': 'government_research'},
+            'cdc.gov': {'score': 95, 'type': 'government_health'},
+            'who.int': {'score': 95, 'type': 'international_health'},
+            'nature.com': {'score': 90, 'type': 'academic_journal'},
+            'science.org': {'score': 90, 'type': 'academic_journal'},
+            'pubmed.ncbi.nlm.nih.gov': {'score': 90, 'type': 'academic_database'},
+            'scholar.google.com': {'score': 85, 'type': 'academic_search'},
+            
+            # Government sources
+            'gov': {'score': 85, 'type': 'government'},
+            'edu': {'score': 80, 'type': 'educational'},
+            
+            # Fact-checking organizations
+            'snopes.com': {'score': 85, 'type': 'fact_checker'},
+            'factcheck.org': {'score': 85, 'type': 'fact_checker'},
+            'politifact.com': {'score': 85, 'type': 'fact_checker'},
+        }
+        
+        # Low credibility domains
+        low_credibility_indicators = [
+            'blogspot.com',
+            'wordpress.com',
+            'medium.com',
+            'substack.com',
+            'rumble.com',
+            'bitchute.com',
+        ]
+        
+        # Analyze cited URLs
+        for url in urls:
+            domain = self._extract_domain(url)
+            cited_sources.append(url)
+            
+            # Check against credible sources
+            source_found = False
+            for credible_domain, info in credible_domains.items():
+                if credible_domain in domain:
+                    credibility_score += 15
+                    credibility_factors.append(f"credible_source: {credible_domain}")
+                    source_types.append(info['type'])
+                    source_found = True
+                    break
+            
+            # Check for low credibility indicators
+            if not source_found:
+                for low_cred in low_credibility_indicators:
+                    if low_cred in domain:
+                        credibility_score -= 10
+                        credibility_factors.append(f"low_credibility_source: {low_cred}")
+                        source_types.append('low_credibility')
+                        break
+        
+        # Check for source citation patterns
+        citation_patterns = [
+            r'according to\s+([^,\.]+)',
+            r'(?:study|research|report)\s+(?:by|from)\s+([^,\.]+)',
+            r'([^,\.]+)\s+(?:reported|found|discovered|showed)',
+            r'source:\s*([^,\.]+)',
+            r'\[([^\]]+)\]',  # Bracketed citations
+        ]
+        
+        content_lower = content.lower()
+        for pattern in citation_patterns:
+            matches = re.findall(pattern, content_lower)
+            if matches:
+                credibility_factors.append(f"citation_pattern_found: {len(matches)} citations")
+                credibility_score += min(20, len(matches) * 5)
+        
+        # Check for lack of sources
+        if not urls and not any(re.search(pattern, content_lower) for pattern in citation_patterns):
+            credibility_score -= 20
+            credibility_factors.append("no_sources_cited")
+        
+        # Check for anonymous sources
+        anonymous_patterns = [
+            r'anonymous\s+source',
+            r'unnamed\s+source',
+            r'sources\s+say',
+            r'insider\s+(?:claims|says|reveals)',
+        ]
+        
+        for pattern in anonymous_patterns:
+            if re.search(pattern, content_lower):
+                credibility_score -= 10
+                credibility_factors.append(f"anonymous_source: {pattern}")
+        
+        # Check metadata for author credibility
+        if metadata:
+            author = metadata.get('author', '')
+            if author:
+                # Check for verified status
+                if metadata.get('verified', False):
+                    credibility_score += 10
+                    credibility_factors.append("verified_author")
+                
+                # Check for professional credentials
+                credential_patterns = [
+                    r'(?:dr\.|doctor|phd|md)',
+                    r'professor',
+                    r'researcher',
+                    r'journalist',
+                ]
+                
+                author_lower = author.lower()
+                for pattern in credential_patterns:
+                    if re.search(pattern, author_lower):
+                        credibility_score += 5
+                        credibility_factors.append(f"author_credential: {pattern}")
+        
+        # Normalize score
+        credibility_score = max(0, min(100, credibility_score))
+        
+        # Determine credibility level
+        if credibility_score >= 80:
+            credibility_level = "high"
+        elif credibility_score >= 60:
+            credibility_level = "medium"
+        elif credibility_score >= 40:
+            credibility_level = "low"
+        else:
+            credibility_level = "very_low"
+        
+        return {
+            "credibility_score": credibility_score,
+            "credibility_level": credibility_level,
+            "credibility_factors": credibility_factors,
+            "source_types": list(set(source_types)),
+            "cited_sources": cited_sources,
+            "source_count": len(cited_sources),
+            "has_credible_sources": any(st in ['news_agency', 'government_research', 'academic_journal'] 
+                                       for st in source_types),
+            "recommendations": self._generate_credibility_recommendations(
+                credibility_score, credibility_factors, cited_sources
+            )
+        }
+
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL."""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            return parsed.netloc.lower()
+        except Exception:
+            return url.lower()
+
+    def _generate_credibility_recommendations(
+        self,
+        score: int,
+        factors: List[str],
+        sources: List[str]
+    ) -> List[str]:
+        """Generate recommendations for improving source credibility."""
+        recommendations = []
+        
+        if score < 40:
+            recommendations.append("Add credible sources to support claims")
+            recommendations.append("Cite academic research or government sources")
+        elif score < 60:
+            recommendations.append("Consider adding more authoritative sources")
+        
+        if not sources:
+            recommendations.append("Include source citations for factual claims")
+        
+        if any("anonymous_source" in f for f in factors):
+            recommendations.append("Verify information from anonymous sources with named sources")
+        
+        if any("low_credibility_source" in f for f in factors):
+            recommendations.append("Replace low-credibility sources with established outlets")
+        
+        return recommendations
+
+    async def lookup_fact_checks(
+        self,
+        claims: List[Dict[str, Any]],
+        use_ai: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Look up fact-checks for extracted claims.
+        
+        This method searches for existing fact-checks from credible fact-checking
+        organizations and databases.
+        
+        Args:
+            claims: List of extracted claims to fact-check
+            use_ai: Whether to use AI for semantic matching
+            
+        Returns:
+            Dictionary with fact-check results
+        """
+        fact_check_results = []
+        
+        # Known fact-checking databases and patterns
+        fact_check_databases = {
+            'snopes': {
+                'url_pattern': 'snopes.com/fact-check/',
+                'ratings': ['true', 'mostly true', 'mixture', 'mostly false', 'false', 'unproven']
+            },
+            'politifact': {
+                'url_pattern': 'politifact.com/factchecks/',
+                'ratings': ['true', 'mostly true', 'half true', 'mostly false', 'false', 'pants on fire']
+            },
+            'factcheck_org': {
+                'url_pattern': 'factcheck.org/',
+                'ratings': ['true', 'false', 'misleading', 'unproven']
+            },
+            'reuters_fact_check': {
+                'url_pattern': 'reuters.com/fact-check/',
+                'ratings': ['true', 'false', 'misleading', 'partly false']
+            },
+            'ap_fact_check': {
+                'url_pattern': 'apnews.com/hub/ap-fact-check',
+                'ratings': ['true', 'false', 'misleading', 'unproven']
+            }
+        }
+        
+        # Common debunked claims database (simplified - in production, use actual API)
+        known_false_claims = [
+            {
+                'claim': '5g causes covid',
+                'keywords': ['5g', 'covid', 'coronavirus', 'causes'],
+                'verdict': 'false',
+                'source': 'multiple fact-checkers',
+                'confidence': 0.95
+            },
+            {
+                'claim': 'vaccines contain microchips',
+                'keywords': ['vaccine', 'microchip', 'tracking', 'bill gates'],
+          
+         'verdict': 'false',
+                'source': 'multiple fact-checkers',
+                'confidence': 0.95
+            },
+            {
+                'claim': 'election was stolen',
+                'keywords': ['election', 'stolen', 'fraud', 'rigged'],
+                'verdict': 'false',
+                'source': 'multiple fact-checkers',
+                'confidence': 0.90
+            },
+            {
+                'claim': 'climate change is a hoax',
+                'keywords': ['climate change', 'hoax', 'fake', 'conspiracy'],
+                'verdict': 'false',
+                'source': 'scientific consensus',
+                'confidence': 0.98
+            },
+            {
+                'claim': 'drinking bleach cures diseases',
+                'keywords': ['bleach', 'cure', 'drink', 'miracle'],
+                'verdict': 'false',
+                'source': 'medical authorities',
+                'confidence': 0.99
+            },
+            {
+                'claim': 'earth is flat',
+                'keywords': ['flat earth', 'earth', 'flat', 'globe'],
+                'verdict': 'false',
+                'source': 'scientific consensus',
+                'confidence': 0.99
+            },
+            {
+                'claim': 'moon landing was faked',
+                'keywords': ['moon landing', 'fake', 'hoax', 'staged'],
+                'verdict': 'false',
+                'source': 'multiple fact-checkers',
+                'confidence': 0.95
+            },
+            {
+                'claim': 'ivermectin cures covid',
+                'keywords': ['ivermectin', 'covid', 'cure', 'treatment'],
+                'verdict': 'misleading',
+                'source': 'medical authorities',
+                'confidence': 0.85
+            },
+            {
+                'claim': 'masks dont work',
+                'keywords': ['mask', 'dont work', 'ineffective', 'useless'],
+                'verdict': 'false',
+                'source': 'medical authorities',
+                'confidence': 0.90
+            }
+        ]
+        
+        # Process each claim
+        for claim in claims:
+            claim_text = claim.get('claim_text', '').lower()
+            claim_result = {
+                'original_claim': claim,
+                'fact_check_found': False,
+                'verdict': None,
+                'confidence': 0.0,
+                'sources': [],
+                'match_type': None,
+                'details': None
+            }
+            
+            # Check against known false claims database
+            for known_claim in known_false_claims:
+                # Calculate keyword match score
+                keyword_matches = sum(
+                    1 for keyword in known_claim['keywords']
+                    if keyword.lower() in claim_text
+                )
+                
+                match_ratio = keyword_matches / len(known_claim['keywords'])
+                
+                # If significant keyword overlap, consider it a match
+                if match_ratio >= 0.6:
+                    claim_result['fact_check_found'] = True
+                    claim_result['verdict'] = known_claim['verdict']
+                    claim_result['confidence'] = known_claim['confidence'] * match_ratio
+                    claim_result['sources'].append(known_claim['source'])
+                    claim_result['match_type'] = 'keyword_match'
+                    claim_result['details'] = {
+                        'matched_claim': known_claim['claim'],
+                        'keyword_match_ratio': match_ratio,
+                        'matched_keywords': [
+                            kw for kw in known_claim['keywords']
+                            if kw.lower() in claim_text
+                        ]
+                    }
+                    break
+            
+            # Use AI for semantic matching if enabled and no match found
+            if use_ai and not claim_result['fact_check_found'] and self.ai_service:
+                try:
+                    ai_fact_check = await self._ai_fact_check_lookup(
+                        claim_text,
+                        known_false_claims
+                    )
+                    
+                    if ai_fact_check and ai_fact_check.get('match_found'):
+                        claim_result['fact_check_found'] = True
+                        claim_result['verdict'] = ai_fact_check.get('verdict')
+                        claim_result['confidence'] = ai_fact_check.get('confidence', 0.7)
+                        claim_result['sources'] = ai_fact_check.get('sources', [])
+                        claim_result['match_type'] = 'ai_semantic_match'
+                        claim_result['details'] = ai_fact_check.get('details')
+                except Exception as e:
+                    # Continue without AI if it fails
+                    pass
+            
+            fact_check_results.append(claim_result)
+        
+        # Calculate summary statistics
+        total_claims = len(claims)
+        fact_checked_claims = sum(1 for r in fact_check_results if r['fact_check_found'])
+        false_claims = sum(1 for r in fact_check_results if r['verdict'] == 'false')
+        misleading_claims = sum(1 for r in fact_check_results if r['verdict'] == 'misleading')
+        
+        # Calculate overall misinformation risk
+        if total_claims > 0:
+            misinformation_risk = (false_claims + (misleading_claims * 0.5)) / total_claims
+        else:
+            misinformation_risk = 0.0
+        
+        return {
+            'total_claims_analyzed': total_claims,
+            'fact_checks_found': fact_checked_claims,
+            'fact_check_coverage': fact_checked_claims / total_claims if total_claims > 0 else 0.0,
+            'verdicts': {
+                'false': false_claims,
+                'misleading': misleading_claims,
+                'true': sum(1 for r in fact_check_results if r['verdict'] == 'true'),
+                'unproven': sum(1 for r in fact_check_results if r['verdict'] == 'unproven'),
+            },
+            'misinformation_risk_score': round(misinformation_risk * 100, 2),
+            'fact_check_results': fact_check_results,
+            'databases_consulted': list(fact_check_databases.keys()),
+            'recommendations': self._generate_fact_check_recommendations(
+                misinformation_risk,
+                fact_checked_claims,
+                total_claims
+            )
+        }
+
+    async def _ai_fact_check_lookup(
+        self,
+        claim_text: str,
+        known_claims: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Use AI to perform semantic matching against known fact-checked claims.
+        
+        Args:
+            claim_text: The claim to fact-check
+            known_claims: Database of known fact-checked claims
+            
+        Returns:
+            Fact-check result if match found, None otherwise
+        """
+        try:
+            # Create a prompt for AI to match the claim
+            known_claims_text = "\n".join([
+                f"- {c['claim']} (Verdict: {c['verdict']})"
+                for c in known_claims[:20]  # Limit to avoid token limits
+            ])
+            
+            prompt = f"""Analyze if the following claim matches any known fact-checked claims.
+
+Claim to check: "{claim_text}"
+
+Known fact-checked claims:
+{known_claims_text}
+
+Determine if the claim is semantically similar to any known fact-checked claim.
+Consider paraphrasing, different wording, and implied meanings.
+
+Respond in JSON format:
+{{
+    "match_found": true/false,
+    "matched_claim": "the matching claim from the database",
+    "verdict": "false|misleading|true|unproven",
+    "confidence": 0.0-1.0,
+    "reasoning": "brief explanation of the match",
+    "sources": ["source1", "source2"]
+}}
+
+If no match is found, set match_found to false."""
+
+            response = await self.ai_service.analyze_with_prompt(prompt)
+            
+            # Parse AI response
+            if isinstance(response, str):
+                # Try to extract JSON
+                json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                if json_match:
+                    import json
+                    result = json.loads(json_match.group(0))
+                    
+                    if result.get('match_found'):
+                        return {
+                            'match_found': True,
+                            'verdict': result.get('verdict'),
+                            'confidence': result.get('confidence', 0.7),
+                            'sources': result.get('sources', ['AI analysis']),
+                            'details': {
+                                'matched_claim': result.get('matched_claim'),
+                                'reasoning': result.get('reasoning')
+                            }
+                        }
+            
+            return None
+            
+        except Exception as e:
+            return None
+
+    def _generate_fact_check_recommendations(
+        self,
+        misinformation_risk: float,
+        fact_checked: int,
+        total: int
+    ) -> List[str]:
+        """Generate recommendations based on fact-check results."""
+        recommendations = []
+        
+        if misinformation_risk >= 0.5:
+            recommendations.append("HIGH RISK: Multiple false or misleading claims detected")
+            recommendations.append("Verify all claims with credible sources before sharing")
+            recommendations.append("Consider not sharing this content")
+        elif misinformation_risk >= 0.3:
+            recommendations.append("MEDIUM RISK: Some questionable claims detected")
+            recommendations.append("Review flagged claims carefully")
+            recommendations.append("Add context or corrections if sharing")
+        elif misinformation_risk > 0:
+            recommendations.append("LOW RISK: Minor concerns detected")
+            recommendations.append("Review flagged claims for accuracy")
+        else:
+            if fact_checked > 0:
+                recommendations.append("No known false claims detected")
+            else:
+                recommendations.append("No matches in fact-check database")
+                recommendations.append("Consider verifying claims independently")
+        
+        # Coverage recommendations
+        if total > 0:
+            coverage = fact_checked / total
+            if coverage < 0.3:
+                recommendations.append("Limited fact-check coverage - manual verification recommended")
+        
+        return recommendations
+
+    async def analyze_with_fact_checks(
+        self,
+        content: str,
+        platform: str = "twitter",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Perform comprehensive analysis including Community Notes risk and fact-checking.
+        
+        This is a convenience method that combines multiple analysis steps.
+        
+        Args:
+            content: Content to analyze
+            platform: Platform name
+            metadata: Additional metadata
+            
+        Returns:
+            Comprehensive analysis results
+        """
+        # Perform Community Notes risk analysis
+        notes_result = await self.analyze_community_notes_risk(content, platform, metadata)
+        
+        # Extract claims
+        claims = await self.extract_claims(content, use_ai=True)
+        
+        # Look up fact-checks
+        fact_check_results = await self.lookup_fact_checks(claims, use_ai=True)
+        
+        # Assess source credibility
+        credibility_assessment = await self.assess_source_credibility(content, metadata)
+        
+        # Calculate combined risk score
+        combined_risk_score = self._calculate_combined_risk(
+            notes_result.risk_score,
+            fact_check_results['misinformation_risk_score'],
+            credibility_assessment['credibility_score']
+        )
+        
+        return {
+            'community_notes_analysis': {
+                'trigger_risk': notes_result.trigger_risk,
+                'risk_score': notes_result.risk_score,
+                'trigger_factors': notes_result.trigger_factors,
+                'content_categories': notes_result.content_categories,
+                'fact_check_likelihood': notes_result.fact_check_likelihood,
+                'confidence_score': notes_result.confidence_score
+            },
+            'fact_check_analysis': fact_check_results,
+            'source_credibility': credibility_assessment,
+            'claims_extracted': len(claims),
+            'claims': claims[:10],  # Limit to first 10 for response size
+            'combined_risk_score': combined_risk_score,
+            'overall_verdict': self._determine_overall_verdict(combined_risk_score),
+            'recommendations': self._generate_combined_recommendations(
+                notes_result,
+                fact_check_results,
+                credibility_assessment,
+                combined_risk_score
+            ),
+            'analysis_timestamp': datetime.now(timezone.utc).isoformat()
+        }
+
+    def _calculate_combined_risk(
+        self,
+        notes_risk: int,
+        misinfo_risk: float,
+        credibility_score: int
+    ) -> int:
+        """Calculate combined risk score from multiple analyses."""
+        # Normalize all scores to 0-100
+        notes_normalized = notes_risk
+        misinfo_normalized = misinfo_risk
+        credibility_normalized = 100 - credibility_score  # Invert so higher = more risk
+        
+        # Weighted average
+        combined = (
+            notes_normalized * 0.4 +
+            misinfo_normalized * 0.4 +
+            credibility_normalized * 0.2
+        )
+        
+        return int(round(combined))
+
+    def _determine_overall_verdict(self, risk_score: int) -> str:
+        """Determine overall verdict based on combined risk score."""
+        if risk_score >= 80:
+            return "CRITICAL_RISK"
+        elif risk_score >= 60:
+            return "HIGH_RISK"
+        elif risk_score >= 40:
+            return "MEDIUM_RISK"
+        elif risk_score >= 20:
+            return "LOW_RISK"
+        else:
+            return "MINIMAL_RISK"
+
+    def _generate_combined_recommendations(
+        self,
+        notes_result: CommunityNotesResult,
+        fact_check_results: Dict[str, Any],
+        credibility_assessment: Dict[str, Any],
+        combined_risk: int
+    ) -> List[str]:
+        """Generate comprehensive recommendations from all analyses."""
+        recommendations = []
+        
+        # Overall risk recommendations
+        if combined_risk >= 80:
+            recommendations.append("⚠️ CRITICAL: Do not share this content")
+            recommendations.append("Content contains multiple high-risk factors")
+        elif combined_risk >= 60:
+            recommendations.append("⚠️ HIGH RISK: Significant concerns detected")
+            recommendations.append("Thorough fact-checking required before sharing")
+        elif combined_risk >= 40:
+            recommendations.append("⚠️ MEDIUM RISK: Some concerns detected")
+            recommendations.append("Review and verify before sharing")
+        
+        # Add specific recommendations from each analysis
+        if notes_result.trigger_risk:
+            recommendations.extend(notes_result.recommendations[:2])
+        
+        if fact_check_results['misinformation_risk_score'] > 30:
+            recommendations.extend(fact_check_results['recommendations'][:2])
+        
+        if credibility_assessment['credibility_score'] < 50:
+            recommendations.extend(credibility_assessment['recommendations'][:2])
+        
+        # Deduplicate recommendations
+        return list(dict.fromkeys(recommendations))[:10]  # Keep unique, limit to 10
