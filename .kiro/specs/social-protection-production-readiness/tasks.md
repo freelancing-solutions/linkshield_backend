@@ -825,7 +825,8 @@
 
 - [x] 26. Create API Routes for CrisisController
 
-- [ ] 26.1 Create crisis routes file
+- [x] 26.1 Create crisis routes file
+
   - Create src/routes/social_protection_crisis.py
 
   - _Requirements: 2.1_
@@ -834,6 +835,7 @@
   - POST /api/v1/social-protection/crisis/evaluate
   - _Requirements: 2.6_
 
+
 - [ ] 26.3 Add alert retrieval endpoints
   - GET /api/v1/social-protection/crisis/alerts
 
@@ -841,8 +843,10 @@
 - [x] 26.4 Add crisis history endpoints
 
   - GET /api/v1/social-protection/crisis/history
+
   - _Requirements: 2.6_
-- [ ] 26.5 Add alert update endpoints
+- [x] 26.5 Add alert update endpoints
+
   - PUT /api/v1/social-protection/crisis/alerts/{id}
   - _Requirements: 2.6_
 - [ ] 26.6 Add authentication and rate limiting
@@ -853,13 +857,16 @@
 - [x] 27.1 Add deprecation warnings
 
 
+
   - Add deprecation notices to all methods
   - _Requirements: 2.7_
 
-- [ ] 27.2 Add redirect logic
+- [x] 27.2 Add redirect logic
+
   - Redirect to new controller endpoints
 
   - _Requirements: 2.7_
+
 - [ ] 27.3 Update documentation
   - Document migration path
   - _Requirements: 12.1, 12.2_

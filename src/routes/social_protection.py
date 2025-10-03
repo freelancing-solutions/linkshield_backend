@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """
-Social Protection Routes
+Social Protection Routes (DEPRECATED)
+
+⚠️ DEPRECATION WARNING ⚠️
+These routes are deprecated and will be removed in a future version.
+
+Please migrate to the new specialized routes:
+- /api/v1/social-protection/user/* - For user dashboard operations
+- /api/v1/social-protection/bot/* - For bot integration
+- /api/v1/social-protection/extension/* - For browser extension integration
+- /api/v1/social-protection/crisis/* - For crisis detection
 
 FastAPI router for social media protection functionality including:
 - Extension data processing
@@ -10,10 +19,11 @@ FastAPI router for social media protection functionality including:
 """
 
 import uuid
+import warnings
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks, status
+from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks, status, Response
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, HttpUrl, Field
 
@@ -30,9 +40,31 @@ from src.authentication.dependencies import get_current_user
 
 
 # Initialize router
-router = APIRouter(prefix="/api/v1/social-protection", tags=["Social Protection"])
+router = APIRouter(
+    prefix="/api/v1/social-protection", 
+    tags=["Social Protection (Deprecated)"],
+    deprecated=True
+)
 security = HTTPBearer()
 settings = get_settings()
+
+# Deprecation warning
+warnings.warn(
+    "The /api/v1/social-protection routes are deprecated. "
+    "Please use the new specialized routes: /user/*, /bot/*, /extension/*, /crisis/*",
+    DeprecationWarning,
+    stacklevel=2
+)
+
+
+def add_deprecation_headers(response: Response):
+    """Add deprecation headers to response"""
+    response.headers["X-API-Deprecated"] = "true"
+    response.headers["X-API-Deprecation-Date"] = "2025-10-03"
+    response.headers["X-API-Sunset-Date"] = "2026-01-01"
+    response.headers["X-API-Migration-Guide"] = "https://docs.linkshield.com/migration/social-protection"
+    response.headers["Warning"] = '299 - "This API endpoint is deprecated. Please migrate to the new specialized endpoints."'
+    return response
 
 
 # Request/Response Models
@@ -170,16 +202,24 @@ class ContentAssessmentResponse(BaseModel):
     "/extension/process",
     response_model=ExtensionDataResponse,
     status_code=status.HTTP_200_OK,
-    summary="Process extension data",
-    description="Process data received from browser extension for real-time analysis"
+    summary="Process extension data (DEPRECATED)",
+    description="⚠️ DEPRECATED: Use /api/v1/social-protection/extension/process instead. Process data received from browser extension for real-time analysis",
+    deprecated=True
 )
 async def process_extension_data(
     request: ExtensionDataRequest,
+    response: Response,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     controller: SocialProtectionController = Depends(get_social_protection_controller)
 ) -> ExtensionDataResponse:
-    """Process data from browser extension."""
+    """Process data from browser extension.
+    
+    ⚠️ DEPRECATED: This endpoint is deprecated. Please use:
+    POST /api/v1/social-protection/extension/process
+    """
+    add_deprecation_headers(response)
+    
     result = await controller.process_extension_data(
         data=request.data,
         user=current_user,
