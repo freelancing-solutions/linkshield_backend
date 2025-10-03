@@ -100,14 +100,22 @@ class InMemoryCache(CacheService):
                     del self._cache[key]
                     del self._expiry[key]
                     self._misses += 1
+                    record_cache_operation("get", "miss")
                     return None
                 
                 # Move to end (most recently used)
                 self._cache.move_to_end(key)
                 self._hits += 1
+                record_cache_operation("get", "hit")
+                
+                # Update metrics periodically
+                if (self._hits + self._misses) % 100 == 0:
+                    await self._update_metrics()
+                
                 return self._cache[key]
             
             self._misses += 1
+            record_cache_operation("get", "miss")
             return None
     
     async def set(self, key: str, value: Any, ttl: int = None) -> bool:
@@ -123,12 +131,18 @@ class InMemoryCache(CacheService):
                 if oldest_key in self._expiry:
                     del self._expiry[oldest_key]
                 self._evictions += 1
+                record_cache_operation("evict", "success")
             
             # Set value and expiry
             self._cache[key] = value
             self._cache.move_to_end(key)
             self._expiry[key] = time.time() + ttl
             self._sets += 1
+            record_cache_operation("set", "success")
+            
+            # Update metrics periodically
+            if self._sets % 100 == 0:
+                await self._update_metrics()
             
             return True
     
