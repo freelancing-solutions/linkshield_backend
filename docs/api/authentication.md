@@ -249,6 +249,55 @@ Available permissions for API keys:
 
 ### Rate Limiting
 
+## Per-Endpoint Authentication Requirements
+
+This section summarizes authentication requirements across major API groups based on current implementations.
+
+### URL Analysis (/api/v1/url-check)
+
+- POST /check: Optional (anonymous allowed with stricter rate limits). Supports JWT or API Key.
+- POST /bulk-check: Required (JWT).
+- GET /check/{check_id}: Optional.
+- GET /check/{check_id}/results: Optional.
+- GET /check/{check_id}/broken-links: Optional (only available when broken-link scan was performed).
+- GET /history: Required (JWT).
+- GET /reputation/{domain}: Optional.
+- GET /stats: Required (JWT).
+
+### Bot Webhooks (/api/v1/bots)
+
+- POST /discord/webhook: Platform signature headers required.
+  - Headers: X-Signature-Ed25519, X-Signature-Timestamp
+- POST /telegram/webhook: Platform secret token required.
+  - Header: X-Telegram-Bot-Api-Secret-Token
+- POST /twitter/webhook: Platform signature required.
+  - Header: X-Twitter-Webhooks-Signature
+- GET /twitter/webhook: CRC challenge response (query param `crc_token`). No JWT.
+- GET /discord/webhook, GET /telegram/webhook: Endpoint verification. No JWT.
+- GET /status, GET /health, POST /commands/register, POST /platforms/{platform}/restart, GET /platforms/{platform}/info: No JWT required in current implementation.
+
+Note: Management endpoints are unauthenticated in the current codebase. Ensure network-level protection and proper deployment controls if exposed.
+
+### Social Protection Bot (/api/v1/social-protection/bot)
+
+Authentication: JWT is required for all endpoints except the health check.
+- POST /analyze
+- POST /account-safety
+- POST /compliance
+- POST /followers
+- POST /batch-analyze
+- POST /webhook (requires header X-Bot-Signature and JWT)
+- GET /health (public; no JWT required)
+- GET /stats
+
+### Header Naming Conventions
+
+FastAPI Header dependencies use snake_case parameter names that map to HTTP header names by converting underscores to hyphens and capitalizing appropriately. Examples:
+- `x_signature_ed25519` → `X-Signature-Ed25519`
+- `x_signature_timestamp` → `X-Signature-Timestamp`
+- `x_telegram_bot_api_secret_token` → `X-Telegram-Bot-Api-Secret-Token`
+- `x_twitter_webhooks_signature` → `X-Twitter-Webhooks-Signature`
+
 LinkShield implements comprehensive rate limiting per authentication method:
 
 | Endpoint Type | JWT Token Limit | API Key Limit | Scope |

@@ -69,6 +69,19 @@ X-Twitter-Webhooks-Signature: sha256=<signature>
 }
 ```
 
+#### CRC Verification
+
+Twitter requires CRC challenge verification for webhook setup.
+
+**GET** `/api/v1/bots/twitter/webhook?crc_token=<token>`
+
+**Response:**
+```json
+{
+  "response_token": "sha256=<signature>"
+}
+```
+
 ### Telegram Bot Webhook
 
 **POST** `/api/v1/bots/telegram/webhook`
@@ -104,6 +117,19 @@ X-Telegram-Bot-Api-Secret-Token: <secret_token>
 ```json
 {
   "status": "processed"
+}
+```
+
+#### Verification
+
+Some setups may perform a GET verification.
+
+**GET** `/api/v1/bots/telegram/webhook`
+
+**Response:**
+```json
+{
+  "message": "Telegram webhook endpoint active"
 }
 ```
 
@@ -157,76 +183,118 @@ X-Signature-Timestamp: <timestamp>
 }
 ```
 
-## Bot Analysis Service
+#### Verification
 
-### Quick Analysis
+Some setups may perform a GET verification.
 
-**POST** `/api/v1/bots/analyze/quick`
+**GET** `/api/v1/bots/discord/webhook`
 
-Performs optimized URL analysis for bot responses with reduced timeout and simplified results.
-
-#### Request Headers
-```http
-Content-Type: application/json
-Authorization: Bearer <service_token>
-```
-
-#### Request Body
+**Response:**
 ```json
 {
-  "url": "https://example.com",
-  "platform": "discord",
-  "user_id": "123456789012345678",
-  "context": {
-    "guild_id": "987654321098765432",
-    "channel_id": "456789012345678901"
+  "message": "Discord webhook endpoint active"
+}
+```
+
+## Bot Management and Status
+
+The bot service exposes endpoints for status, health, command registration, and platform management.
+
+### Service Status
+
+**GET** `/api/v1/bots/status`
+
+Returns comprehensive status information for all bot platforms.
+
+**Response:**
+```json
+{
+  "platform_statuses": {
+    "discord": "running",
+    "telegram": "running",
+    "twitter": "running"
+  },
+  "platform_health": {
+    "discord": {"healthy": true},
+    "telegram": {"healthy": true},
+    "twitter": {"healthy": true}
   }
 }
 ```
 
-#### Response
+### Service Health
+
+**GET** `/api/v1/bots/health`
+
+Returns health information suitable for monitoring systems.
+
+**Response:**
 ```json
 {
-  "analysis_id": "uuid-string",
-  "url": "https://example.com",
-  "risk_level": "low",
-  "risk_score": 15,
-  "is_safe": true,
-  "threats_detected": [],
-  "summary": "This URL appears to be safe with no detected threats.",
-  "analysis_time": "2024-01-15T10:30:00Z",
-  "cached": false,
-  "quick_analysis": true
-}
-```
-
-### User Statistics
-
-**GET** `/api/v1/bots/users/{platform}/{user_id}/stats`
-
-Retrieves user statistics and interaction history for a specific platform.
-
-#### Parameters
-- `platform`: Platform identifier (twitter, telegram, discord)
-- `user_id`: Platform-specific user ID
-
-#### Response
-```json
-{
-  "user_id": "123456789012345678",
-  "platform": "discord",
-  "total_requests": 45,
-  "safe_urls": 38,
-  "risky_urls": 7,
-  "blocked_urls": 0,
-  "first_interaction": "2024-01-01T00:00:00Z",
-  "last_interaction": "2024-01-15T10:30:00Z",
-  "rate_limit_status": {
-    "requests_remaining": 8,
-    "reset_time": "2024-01-15T11:00:00Z"
+  "healthy": true,
+  "platforms": {
+    "discord": {"healthy": true},
+    "telegram": {"healthy": true},
+    "twitter": {"healthy": true}
   }
 }
 ```
+
+### Register Bot Commands
+
+**POST** `/api/v1/bots/commands/register`
+
+Triggers command registration across platforms.
+
+**Response:**
+```json
+{
+  "message": "Command registration completed",
+  "results": {
+    "discord": "ok",
+    "telegram": "ok",
+    "twitter": "ok"
+  }
+}
+```
+
+### Restart Platform
+
+**POST** `/api/v1/bots/platforms/{platform}/restart`
+
+Restarts a specific platform (discord, telegram, twitter).
+
+**Response:**
+```json
+{
+  "message": "Platform discord restart initiated"
+}
+```
+
+### Platform Info
+
+**GET** `/api/v1/bots/platforms/{platform}/info`
+
+Returns platform configuration, status, and health.
+
+**Response:**
+```json
+{
+  "platform": "discord",
+  "status": "running",
+  "bot_info": {"id": "bot-123"},
+  "config": {
+    "enabled": true,
+    "features": {},
+    "limits": {}
+  },
+  "health": {"healthy": true}
+}
+```
+
+## Related API: Social Protection Bot
+
+For content analysis services optimized for bot integrations (analyze, account safety, compliance, followers, batch analysis), see the Social Protection Bot API documentation under `/api/v1/social-protection/bot`.
 
 ## Rate Limiting
 

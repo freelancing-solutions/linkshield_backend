@@ -27,6 +27,16 @@ URL analysis endpoints support multiple authentication methods:
 - **API Key**: `X-API-Key: <api_key>` (recommended for server integrations)
 - **Anonymous**: Limited functionality without authentication
 
+Authentication requirements per endpoint:
+- `POST /check`: Optional (anonymous allowed, stricter rate limits)
+- `POST /bulk-check`: Required (JWT)
+- `GET /check/{check_id}`: Optional
+- `GET /check/{check_id}/results`: Optional
+- `GET /check/{check_id}/broken-links`: Optional (only available if broken-link scanning was performed)
+- `GET /history`: Required (JWT)
+- `GET /reputation/{domain}`: Optional
+- `GET /stats`: Required (JWT)
+
 ## Endpoints
 
 ### 1. Analyze Single URL
@@ -261,7 +271,38 @@ Retrieve granular scan results from individual security providers.
 ]
 ```
 
-### 5. Get Analysis History
+### 5. Get Broken Link Details
+
+Get detailed broken link information for a specific URL check.
+
+**Endpoint:** `GET /check/{check_id}/broken-links`
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `check_id` | UUID | Yes | URL check ID from analysis request |
+
+**Response:**
+```json
+[
+  {
+    "url": "https://example.com/broken-link",
+    "status_code": 404,
+    "status": "BROKEN",
+    "error_message": "Not Found",
+    "response_time": 0.123,
+    "redirect_url": null,
+    "depth_level": 1
+  }
+]
+```
+
+Notes:
+- Only available if broken-link scanning was requested and performed.
+- Response fields may include `null` values when data is not applicable.
+
+### 6. Get Analysis History
 
 Retrieve URL analysis history for the authenticated user.
 
@@ -281,10 +322,11 @@ Retrieve URL analysis history for the authenticated user.
 **Response:**
 ```json
 {
-  "items": [
+  "checks": [
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "original_url": "https://example.com",
+      "normalized_url": "https://example.com/",
       "domain": "example.com",
       "status": "COMPLETED",
       "threat_level": "SAFE",
@@ -292,10 +334,9 @@ Retrieve URL analysis history for the authenticated user.
       "created_at": "2024-01-15T10:30:00Z"
     }
   ],
-  "total": 150,
+  "total_count": 150,
   "page": 1,
-  "page_size": 20,
-  "total_pages": 8
+  "page_size": 20
 }
 ```
 
@@ -305,7 +346,7 @@ curl -X GET "https://api.linkshield.com/api/v1/url-check/history?domain=example.
   -H "Authorization: Bearer <jwt_token>"
 ```
 
-### 6. Get Domain Reputation
+### 7. Get Domain Reputation
 
 Retrieve reputation information for a specific domain.
 
@@ -322,27 +363,15 @@ Retrieve reputation information for a specific domain.
 {
   "domain": "example.com",
   "reputation_score": 88,
-  "trust_score": 92,
-  "safety_score": 95,
-  "domain_age_days": 7300,
-  "first_seen": "2004-01-15T00:00:00Z",
-  "last_analyzed": "2024-01-15T10:30:00Z",
   "total_checks": 1250,
-  "threat_history": {
-    "malware_detections": 0,
-    "phishing_detections": 0,
-    "spam_detections": 2,
-    "last_threat_detected": null
-  },
-  "categories": ["business", "technology"],
-  "blacklist_status": "clean",
-  "ssl_grade": "A+",
-  "hosting_provider": "Cloudflare",
-  "country": "US"
+  "malicious_count": 2,
+  "last_threat_level": "LOW",
+  "first_seen": "2004-01-15T00:00:00Z",
+  "last_seen": "2024-01-15T10:30:00Z"
 }
 ```
 
-### 7. Get Analysis Statistics
+### 8. Get Analysis Statistics
 
 Retrieve URL analysis statistics for the authenticated user.
 

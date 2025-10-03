@@ -214,6 +214,48 @@ async def check_url(request: Request, ...):
 | Report Generation | 20/minute | `report_key_func` |
 | General API | 100/minute | `get_remote_address` |
 
+### URL Analysis (/api/v1/url-check)
+
+Operational limits per current documentation and implementation:
+- Single URL Analysis (POST /check):
+  - Authenticated users: up to 100 checks/hour
+  - Anonymous users: no enforced hourly cap in current implementation; stricter broken-link parameters apply (e.g., scan_depth=1, max_links=10). Operational policy recommendation: 10/hour if global middleware is enabled.
+  - Broken link scans: additional limits apply based on subscription (scan_depth 1–5; max_links up to 1000)
+- Bulk URL Analysis (POST /bulk-check):
+  - Free: 10 URLs per batch, 5 batches/hour
+  - Pro: 50 URLs per batch, 20 batches/hour
+  - Enterprise: 100 URLs per batch, unlimited batches
+- History (GET /history): JWT required; typical 100/hour per user
+- Reputation (GET /reputation/{domain}): Anonymous allowed; typical 20/hour per IP
+- Stats (GET /stats): JWT required; typical 100/hour per user
+
+Rate limit headers are returned on rate-limited endpoints, e.g.:
+```
+X-RateLimit-Limit: 30
+X-RateLimit-Remaining: 25
+X-RateLimit-Reset: 1642262400
+X-RateLimit-Scope: user
+```
+
+### Bot Integration (/api/v1/bots)
+
+Default limits (current implementation):
+- Per user per platform: 50 requests/hour (sliding window) enforced via BotRateLimit (see src/models/bot.py)
+- Platform verification and provider-side throttling still apply (Discord, Telegram, Twitter)
+- Quick responses: platform handlers optimized for low latency; typical 3-second timeout targets
+
+Webhook endpoints are subject to platform-specific throttling and verification challenges.
+
+### Social Protection Bot (/api/v1/social-protection/bot)
+
+Applies standard per-user limits according to subscription plan. Recommended defaults:
+- Analyze endpoints: 100/hour per user
+- Batch analyze: Max 50 items per request
+
+Note: Health endpoint (GET /health) is public and not rate-limited at the user level.
+
+Implement additional quotas as needed for compliance and platform rules.
+
 ## Rate Limit Headers
 
 ### Standard Headers
@@ -271,6 +313,8 @@ X-RateLimit-Window: 3600
 ```
 
 ## Advanced Rate Limiting Service
+
+Implementation note: In the current codebase, SlowAPI decorators are not used and the global rate-limit middleware is not active. Rate limits are primarily enforced within controllers/services (e.g., SecurityService and URLCheckController) and via the BotRateLimit model. Header injection (X-RateLimit-*) occurs only when the advanced limiter is enabled.
 
 ### Core Service Architecture
 
