@@ -738,32 +738,35 @@ class ExtensionController(BaseController):
         platform: PlatformType
     ) -> None:
         """Track extension session activity"""
-        session_key = f"{user_id}:{session_id}"
-        
-        if session_key not in self._active_sessions:
-            self._active_sessions[session_key] = {
-                "user_id": user_id,
-                "session_id": session_id,
-                "start_time": utc_datetime(),
-                "last_activity": utc_datetime(),
-                "event_count": 0,
-                "platforms": set(),
-                "events": []
-            }
-        
-        session = self._active_sessions[session_key]
-        session["last_activity"] = utc_datetime()
-        session["event_count"] += 1
-        session["platforms"].add(platform.value)
-        session["events"].append({
-            "type": event_type.value,
-            "platform": platform.value,
-            "timestamp": utc_datetime().isoformat()
-        })
-        
-        # Keep only recent events (last 100)
-        if len(session["events"]) > 100:
-            session["events"] = session["events"][-100:]
+        try:
+            session_key = f"{user_id}:{session_id}"
+            
+            if session_key not in self._active_sessions:
+                self._active_sessions[session_key] = {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "start_time": utc_datetime(),
+                    "last_activity": utc_datetime(),
+                    "event_count": 0,
+                    "platforms": set(),
+                    "events": []
+                }
+            
+            session = self._active_sessions[session_key]
+            session["last_activity"] = utc_datetime()
+            session["event_count"] += 1
+            session["platforms"].add(platform.value)
+            session["events"].append({
+                "type": event_type.value,
+                "platform": platform.value,
+                "timestamp": utc_datetime().isoformat()
+            })
+            
+            # Keep only recent events (last 100)
+            if len(session["events"]) > 100:
+                session["events"] = session["events"][-100:]
+        except Exception as e:
+            logger.error(f"Error tracking extension session: {str(e)}")
     
     async def _process_extension_event(
         self,
@@ -774,51 +777,58 @@ class ExtensionController(BaseController):
         analysis_mode: ExtensionAnalysisMode
     ) -> Dict[str, Any]:
         """Process extension event based on type and mode"""
-        
-        start_time = utc_datetime()
-        
-        if event_type == ExtensionEventType.POST_COMPOSE:
-            # Analyze content being composed
-            content = extension_data.get("content", "")
-            if content:
-                result = await self._quick_risk_assessment(content, platform, extension_data)
+        try:
+            start_time = utc_datetime()
+            
+            if event_type == ExtensionEventType.POST_COMPOSE:
+                # Analyze content being composed
+                content = extension_data.get("content", "")
+                if content:
+                    result = await self._quick_risk_assessment(content, platform, extension_data)
+                else:
+                    result = {"risk_score": 0.0, "risk_level": "low", "message": "No content to analyze"}
+            
+            elif event_type == ExtensionEventType.LINK_HOVER:
+                # Quick link safety check
+                link = extension_data.get("link", "")
+                if link:
+                    result = await self._quick_link_safety_check([link], platform)
+                else:
+                    result = {"safe": True, "message": "No link to analyze"}
+            
+            elif event_type == ExtensionEventType.PROFILE_VIEW:
+                # Basic profile risk assessment
+                profile_data = extension_data.get("profile", {})
+                result = await self._quick_profile_assessment(profile_data, platform)
+            
+            elif event_type == ExtensionEventType.CONTENT_CHANGE:
+                # Monitor content changes for real-time analysis
+                content = extension_data.get("content", "")
+                if content and analysis_mode == ExtensionAnalysisMode.REAL_TIME:
+                    result = await self._quick_risk_assessment(content, platform, extension_data)
+                else:
+                    result = {"status": "monitored", "analysis_deferred": True}
+            
             else:
-                result = {"risk_score": 0.0, "risk_level": "low", "message": "No content to analyze"}
-        
-        elif event_type == ExtensionEventType.LINK_HOVER:
-            # Quick link safety check
-            link = extension_data.get("link", "")
-            if link:
-                result = await self._quick_link_safety_check([link], platform)
-            else:
-                result = {"safe": True, "message": "No link to analyze"}
-        
-        elif event_type == ExtensionEventType.PROFILE_VIEW:
-            # Basic profile risk assessment
-            profile_data = extension_data.get("profile", {})
-            result = await self._quick_profile_assessment(profile_data, platform)
-        
-        elif event_type == ExtensionEventType.CONTENT_CHANGE:
-            # Monitor content changes for real-time analysis
-            content = extension_data.get("content", "")
-            if content and analysis_mode == ExtensionAnalysisMode.REAL_TIME:
-                result = await self._quick_risk_assessment(content, platform, extension_data)
-            else:
-                result = {"status": "monitored", "analysis_deferred": True}
-        
-        else:
-            # Default processing for other events
-            result = {
-                "event_processed": True,
+                # Default processing for other events
+                result = {
+                    "event_processed": True,
+                    "event_type": event_type.value,
+                    "platform": platform.value,
+                    "analysis_mode": analysis_mode.value
+                }
+            
+            processing_time = (utc_datetime() - start_time).total_seconds()
+            result["processing_time"] = processing_time
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error processing extension event: {str(e)}")
+            return {
+                "error": "Event processing failed",
                 "event_type": event_type.value,
-                "platform": platform.value,
-                "analysis_mode": analysis_mode.value
+                "processing_time": 0.0
             }
-        
-        processing_time = (utc_datetime() - start_time).total_seconds()
-        result["processing_time"] = processing_time
-        
-        return result
     
     async def _quick_risk_assessment(
         self,
@@ -1146,8 +1156,64 @@ class ExtensionController(BaseController):
         tab_data: Dict[str, Any]
     ) -> None:
         """Update tab tracking information"""
-        # Implementation would track active tabs
-        pass
+        try:
+            session_key = f"{user_id}:{session_id}"
+            
+            # Initialize session if it doesn't exist
+            if session_key not in self._active_sessions:
+                self._active_sessions[session_key] = {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "active_tabs": {},
+                    "created_at": utc_datetime(),
+                    "last_activity": utc_datetime()
+                }
+            
+            session = self._active_sessions[session_key]
+            
+            # Extract tab information
+            tab_id = tab_data.get("tab_id", str(uuid.uuid4()))
+            tab_url = tab_data.get("url", "")
+            tab_title = tab_data.get("title", "")
+            
+            # Update or add tab tracking
+            session["active_tabs"][tab_id] = {
+                "platform": platform.value,
+                "url": tab_url,
+                "title": tab_title,
+                "last_seen": utc_datetime(),
+                "activity_count": session["active_tabs"].get(tab_id, {}).get("activity_count", 0) + 1
+            }
+            
+            # Update session activity timestamp
+            session["last_activity"] = utc_datetime()
+            
+            # Clean up stale tabs (not seen in last 30 minutes)
+            stale_threshold = utc_datetime() - timedelta(minutes=30)
+            stale_tabs = [
+                tid for tid, tdata in session["active_tabs"].items()
+                if tdata["last_seen"] < stale_threshold
+            ]
+            for stale_tab_id in stale_tabs:
+                del session["active_tabs"][stale_tab_id]
+            
+            # Limit total tracked tabs per session
+            if len(session["active_tabs"]) > 50:
+                # Remove oldest tabs
+                sorted_tabs = sorted(
+                    session["active_tabs"].items(),
+                    key=lambda x: x[1]["last_seen"]
+                )
+                for old_tab_id, _ in sorted_tabs[:-50]:
+                    del session["active_tabs"][old_tab_id]
+            
+            logger.debug(
+                f"Updated tab tracking for session {session_id}: "
+                f"{len(session['active_tabs'])} active tabs"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error updating tab tracking: {str(e)}")
     
     async def _update_extension_session(
         self,

@@ -1,6 +1,20 @@
 #!/usr/bin/env python3
 """
-Social Protection Controller
+Social Protection Controller (DEPRECATED)
+
+⚠️ DEPRECATION WARNING ⚠️
+This controller is deprecated and will be removed in a future version.
+
+Please use the following controllers instead:
+- UserController: For user-facing dashboard operations
+- BotController: For bot integration and automated analysis
+- ExtensionController: For browser extension integration
+
+Migration Guide:
+- Extension data processing → ExtensionController.process_extension_data()
+- Social profile scanning → UserController.initiate_user_platform_scan()
+- Content risk assessment → UserController.analyze_user_content()
+- Bot operations → BotController methods
 
 Handles business logic for social media protection including:
 - Extension data processing
@@ -10,6 +24,7 @@ Handles business logic for social media protection including:
 """
 
 import uuid
+import warnings
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -36,6 +51,9 @@ from src.social_protection.services import (
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 from src.utils import utc_datetime
+from src.social_protection.logging_utils import get_logger
+
+logger = get_logger("SocialProtectionController")
 
 # DEPRECATED - THIS CONTROLLER SHOULD NOT BE USED EITHER USE BOT_CONTROLLER OR 
 # EXTENSION_CONTROLLER OR USER_CONTROLLER DEPENDING ON WHAT YOU ARE DOING 
@@ -87,6 +105,9 @@ class SocialProtectionController(BaseController):
     ) -> Dict[str, Any]:
         """Process data from browser extension.
         
+        ⚠️ DEPRECATED: Use ExtensionController.process_extension_data() instead.
+        This method will be removed in version 2.0.
+        
         Args:
             data: Raw data from extension
             user: User submitting the data
@@ -99,6 +120,13 @@ class SocialProtectionController(BaseController):
         Raises:
             HTTPException: If validation fails or rate limit exceeded
         """
+        # Log deprecation warning
+        logger.warning(
+            "DEPRECATED: SocialProtectionController.process_extension_data() is deprecated. "
+            "Use ExtensionController.process_extension_data() instead.",
+            extra={"user_id": str(user.id), "method": "process_extension_data"}
+        )
+        
         # Check rate limits
         rate_limit = (
             self.max_assessments_per_hour_premium
@@ -178,6 +206,9 @@ class SocialProtectionController(BaseController):
         background_tasks: Optional[BackgroundTasks] = None
     ) -> SocialProfileScan:
         """Initiate a social media profile scan.
+        
+        ⚠️ DEPRECATED: Use UserController.initiate_user_platform_scan() instead.
+        This method will be removed in version 2.0.
         
         Args:
             platform: Social media platform type
