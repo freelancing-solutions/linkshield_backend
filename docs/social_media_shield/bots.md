@@ -319,7 +319,7 @@ python app.py
 **Testing Bot Integration:**
 ```bash
 # Test webhook endpoints
-curl -X POST http://localhost:8000/api/v1/bots/webhooks/telegram \
+curl -X POST https://www.linkshield.site/api/v1/bots/webhooks/telegram \
   -H "Content-Type: application/json" \
   -d '{"message": {"text": "/check https://example.com"}}'
 ```

@@ -30,8 +30,8 @@ The LinkShield API is built using modern Python technologies:
 
 ### Base URLs
 
-- **Development**: `http://localhost:8000`
-- **Production**: `https://api.linkshield.com`
+- **Development**: `https://www.linkshield.site`
+- **Production**: `https://api.linkshield.site`
 
 ### Authentication
 
@@ -51,7 +51,7 @@ LinkShield API supports two authentication methods:
 
 ```bash
 # Register a new user
-curl -X POST "http://localhost:8000/api/v1/user/register" \
+curl -X POST "https://www.linkshield.site/api/v1/user/register" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
@@ -60,7 +60,7 @@ curl -X POST "http://localhost:8000/api/v1/user/register" \
   }'
 
 # Login and get JWT token
-curl -X POST "http://localhost:8000/api/v1/user/login" \
+curl -X POST "https://www.linkshield.site/api/v1/user/login" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
@@ -68,7 +68,7 @@ curl -X POST "http://localhost:8000/api/v1/user/login" \
   }'
 
 # Check a URL for threats
-curl -X POST "http://localhost:8000/api/v1/url-check/" \
+curl -X POST "https://www.linkshield.site/api/v1/url-check/" \
   -H "Authorization: Bearer <jwt_token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -158,9 +158,9 @@ Error responses include additional error details:
 
 When running in development mode, LinkShield provides interactive API documentation:
 
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
-- **OpenAPI JSON**: `http://localhost:8000/openapi.json`
+- **Swagger UI**: `https://www.linkshield.site/docs`
+- **ReDoc**: `https://www.linkshield.site/redoc`
+- **OpenAPI JSON**: `https://www.linkshield.site/openapi.json`
 
 ## SDKs and Integration
 

@@ -46,7 +46,7 @@ sequenceDiagram
 Register a new user account:
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/user/register" \
+curl -X POST "https://www.linkshield.site/api/v1/user/register" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
@@ -83,7 +83,7 @@ curl -X POST "http://localhost:8000/api/v1/user/register" \
 Authenticate and receive JWT token:
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/user/login" \
+curl -X POST "https://www.linkshield.site/api/v1/user/login" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
@@ -118,7 +118,7 @@ curl -X POST "http://localhost:8000/api/v1/user/login" \
 Include the JWT token in the Authorization header:
 
 ```bash
-curl -X GET "http://localhost:8000/api/v1/user/profile" \
+curl -X GET "https://www.linkshield.site/api/v1/user/profile" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
@@ -143,19 +143,19 @@ Passwords must meet the following criteria:
 
 **List Active Sessions:**
 ```bash
-curl -X GET "http://localhost:8000/api/v1/user/sessions" \
+curl -X GET "https://www.linkshield.site/api/v1/user/sessions" \
   -H "Authorization: Bearer <jwt_token>"
 ```
 
 **Revoke Specific Session:**
 ```bash
-curl -X DELETE "http://localhost:8000/api/v1/user/sessions/{session_id}" \
+curl -X DELETE "https://www.linkshield.site/api/v1/user/sessions/{session_id}" \
   -H "Authorization: Bearer <jwt_token>"
 ```
 
 **Terminate All Sessions:**
 ```bash
-curl -X DELETE "http://localhost:8000/api/v1/user/sessions" \
+curl -X DELETE "https://www.linkshield.site/api/v1/user/sessions" \
   -H "Authorization: Bearer <jwt_token>"
 ```
 
@@ -164,7 +164,7 @@ curl -X DELETE "http://localhost:8000/api/v1/user/sessions" \
 Invalidate current session:
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/user/logout" \
+curl -X POST "https://www.linkshield.site/api/v1/user/logout" \
   -H "Authorization: Bearer <jwt_token>"
 ```
 
@@ -179,7 +179,7 @@ API keys provide programmatic access to LinkShield API without user sessions. Th
 Create a new API key:
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/user/api-keys" \
+curl -X POST "https://www.linkshield.site/api/v1/user/api-keys" \
   -H "Authorization: Bearer <jwt_token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -210,7 +210,7 @@ curl -X POST "http://localhost:8000/api/v1/user/api-keys" \
 Include the API key in the `X-API-Key` header:
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/url-check/check" \
+curl -X POST "https://www.linkshield.site/api/v1/url-check/check" \
   -H "X-API-Key: lsk_live_1234567890abcdef1234567890abcdef12345678" \
   -H "Content-Type: application/json" \
   -d '{
@@ -223,13 +223,13 @@ curl -X POST "http://localhost:8000/api/v1/url-check/check" \
 
 **List API Keys:**
 ```bash
-curl -X GET "http://localhost:8000/api/v1/user/api-keys" \
+curl -X GET "https://www.linkshield.site/api/v1/user/api-keys" \
   -H "Authorization: Bearer <jwt_token>"
 ```
 
 **Delete API Key:**
 ```bash
-curl -X DELETE "http://localhost:8000/api/v1/user/api-keys/{key_id}" \
+curl -X DELETE "https://www.linkshield.site/api/v1/user/api-keys/{key_id}" \
   -H "Authorization: Bearer <jwt_token>"
 ```
 
@@ -356,12 +356,12 @@ Email verification is required for new accounts:
 
 **Verify Email:**
 ```bash
-curl -X POST "http://localhost:8000/api/v1/user/verify-email/{token}"
+curl -X POST "https://www.linkshield.site/api/v1/user/verify-email/{token}"
 ```
 
 **Resend Verification:**
 ```bash
-curl -X POST "http://localhost:8000/api/v1/user/resend-verification" \
+curl -X POST "https://www.linkshield.site/api/v1/user/resend-verification" \
   -H "Authorization: Bearer <jwt_token>"
 ```
 

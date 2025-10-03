@@ -228,7 +228,7 @@ pytest tests/test_controllers/test_bot_controller.py -v
 
 ```bash
 # Test webhook endpoints
-curl -X POST "http://localhost:8000/api/v1/bots/telegram/webhook" \
+curl -X POST "https://www.linkshield.site/api/v1/bots/telegram/webhook" \
   -H "Content-Type: application/json" \
   -H "X-Telegram-Bot-Api-Secret-Token: your-secret" \
   -d '{
@@ -277,7 +277,7 @@ curl -X POST "http://localhost:8000/api/v1/bots/telegram/webhook" \
 3. **Health check endpoints**
    ```bash
    # Check bot service health
-   curl http://localhost:8000/health/bots
+curl https://www.linkshield.site/health/bots
    ```
 
 ## Configuration Management
