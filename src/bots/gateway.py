@@ -37,7 +37,7 @@ class QuickAccessBotGateway:
         """Initialize all platform handlers and services."""
         if self.is_initialized:
             return
-            
+        
         try:
             # Initialize platform handlers
             await self._initialize_platform_handlers()
