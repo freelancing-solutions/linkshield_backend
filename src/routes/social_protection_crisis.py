@@ -6,11 +6,11 @@ API routes for crisis detection and management for brand protection.
 
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
-from src.authentication.auth_service import get_current_user
+from src.authentication.dependencies import get_current_user
 from src.config.database import get_db
 from src.models.user import User
 from src.social_protection.controllers.crisis_controller import CrisisController
@@ -69,8 +69,8 @@ async def get_crisis_alerts(
     brand: Optional[str] = None,
     severity: Optional[str] = None,
     resolved: Optional[bool] = None,
-    limit: int = Field(default=50, ge=1, le=100),
-    offset: int = Field(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
     controller: CrisisController = Depends(get_crisis_controller),
     db: AsyncSession = Depends(get_db)
@@ -101,7 +101,7 @@ async def get_crisis_alerts(
 @router.get("/history")
 async def get_crisis_history(
     brand: str,
-    days: int = Field(default=30, ge=1, le=365),
+    days: int = Query(default=30, ge=1, le=365),
     current_user: User = Depends(get_current_user),
     controller: CrisisController = Depends(get_crisis_controller),
     db: AsyncSession = Depends(get_db)

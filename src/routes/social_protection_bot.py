@@ -8,7 +8,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 
-from src.authentication.auth_service import get_current_user
+from src.authentication.dependencies import get_current_user
 from src.models.user import User
 from src.social_protection.controllers.bot_controller import BotController
 from src.social_protection.controllers.depends import get_bot_controller
@@ -48,6 +48,13 @@ class FollowerAnalysisRequest(BaseModel):
     account_identifier: str
     sample_size: int = Field(default=100, ge=10, le=1000)
     check_verified_only: bool = False
+
+
+class BatchAnalysisRequest(BaseModel):
+    """Model for batch content analysis"""
+    contents: List[str] = Field(..., max_length=50)
+    platform: Optional[PlatformType] = None
+    response_format: str = Field(default="json", pattern="^(json|minimal|detailed)$")
 
 
 @router.post("/analyze")
@@ -154,9 +161,7 @@ async def bot_health_check(
 
 @router.post("/batch-analyze")
 async def batch_content_analysis(
-    contents: List[str] = Field(..., max_items=50),
-    platform: Optional[PlatformType] = None,
-    response_format: str = "json",
+    request: BatchAnalysisRequest,
     current_user: User = Depends(get_current_user),
     controller: BotController = Depends(get_bot_controller)
 ):
@@ -167,14 +172,14 @@ async def batch_content_analysis(
     Maximum 50 items per batch.
     """
     results = []
-    for content in contents:
+    for content in request.contents:
         try:
             result = await controller.quick_content_analysis(
                 current_user,
                 content,
-                platform,
+                request.platform,
                 {},
-                response_format
+                request.response_format
             )
             results.append(result)
         except Exception as e:
@@ -186,7 +191,7 @@ async def batch_content_analysis(
     
     return {
         "success": True,
-        "batch_size": len(contents),
+        "batch_size": len(request.contents),
         "results": results,
         "failed_count": sum(1 for r in results if not r.get("success", True))
     }

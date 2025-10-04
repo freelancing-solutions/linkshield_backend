@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from datetime import datetime
 
-from src.authentication.auth_service import get_current_user
+from src.authentication.dependencies import get_current_user
 from src.models.user import User, UserRole
 from src.social_protection.monitoring import get_system_monitor
 

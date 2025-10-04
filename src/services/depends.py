@@ -2,12 +2,13 @@
 from typing import Optional
 from fastapi import Depends, HTTPException
 from src.authentication.auth_service import AuthService
-from src.config.database import AsyncSession, get_db_session
+from src.config.database import AsyncSession, get_db_session, get_db
 from src.services.admin_service import AdminService
 from src.services.ai_service import AIService
 from src.services.ai_analysis_service import AIAnalysisService
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
+from src.services.subscription_service import SubscriptionService
 from src.services.url_analysis_service import URLAnalysisService
 from src.services.quick_analysis_service import QuickAnalysisService
 from src.social_protection.services import ExtensionDataProcessor, SocialScanService
@@ -150,3 +151,7 @@ async def get_shadow_ban_detector(ai_service: AIService = Depends(get_ai_service
     Get ShadowBanDetector instance for shadow ban detection.
     """
     return ShadowBanDetector(ai_service=ai_service)
+
+def get_subscription_service(db: AsyncSession = Depends(get_db)) -> SubscriptionService:
+    """Dependency to get SubscriptionService instance."""
+    return SubscriptionService(db)

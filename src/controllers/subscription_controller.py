@@ -5,21 +5,21 @@ LinkShield Backend Subscription Controller
 API controller for subscription management endpoints.
 Handles HTTP requests for subscription operations.
 """
-
+import logging
 import uuid
 from typing import Optional, List, Dict, Any
-from datetime import datetime
 
-from fastapi import HTTPException, status, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import HTTPException
+from fastapi import status  as response_status
+from src.authentication.auth_service import AuthService
 from src.controllers.base_controller import BaseController
-from src.services.subscription_service import SubscriptionService
-from src.models.subscription import BillingInterval, UsageType
-from src.config.database import get_db
-from src.config.security import get_current_user
+from src.models.subscription import BillingInterval
 from src.models.user import User
-from src.config.logging import logger
+from src.services.email_service import EmailService
+from src.services.security_service import SecurityService
+from src.services.subscription_service import SubscriptionService
+
+logger = logging.getLogger(__name__)
 
 
 class SubscriptionController(BaseController):
@@ -27,13 +27,15 @@ class SubscriptionController(BaseController):
     Controller for handling subscription-related API requests.
     """
 
-    def __init__(self, subscription_service: SubscriptionService):
+    def __init__(self, subscription_service: SubscriptionService, security_service: SecurityService,
+                 auth_service: AuthService, email_service: EmailService):
         """
         Initialize subscription controller.
         
         Args:
             subscription_service: Subscription service instance
         """
+        super().__init__(security_service, auth_service, email_service)
         self.subscription_service = subscription_service
 
     async def create_subscription(
@@ -82,13 +84,13 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription creation failed for user {user.id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except Exception as e:
             logger.error(f"Unexpected error creating subscription for user {user.id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to create subscription"
             )
 
@@ -110,7 +112,7 @@ class SubscriptionController(BaseController):
             
             if not subscription:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
+                    status_code=response_status.HTTP_404_NOT_FOUND,
                     detail="No active subscription found"
                 )
             
@@ -141,7 +143,7 @@ class SubscriptionController(BaseController):
         except Exception as e:
             logger.error(f"Unexpected error getting subscription for user {user.id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve subscription"
             )
 
@@ -172,7 +174,7 @@ class SubscriptionController(BaseController):
             subscription = await self.subscription_service._get_active_subscription(user.id)
             if not subscription or subscription.id != subscription_id:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
+                    status_code=response_status.HTTP_404_NOT_FOUND,
                     detail="Subscription not found"
                 )
             
@@ -197,7 +199,7 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription update failed for user {user.id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except HTTPException:
@@ -205,7 +207,7 @@ class SubscriptionController(BaseController):
         except Exception as e:
             logger.error(f"Unexpected error updating subscription {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update subscription"
             )
 
@@ -250,13 +252,13 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription Paddle ID update failed: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except Exception as e:
             logger.error(f"Unexpected error updating subscription Paddle ID {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update subscription Paddle ID"
             )
 
@@ -301,13 +303,13 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription webhook update failed: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except Exception as e:
             logger.error(f"Unexpected error updating subscription from webhook {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update subscription from webhook"
             )
 
@@ -350,13 +352,13 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription webhook cancellation failed: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except Exception as e:
             logger.error(f"Unexpected error cancelling subscription from webhook {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to cancel subscription from webhook"
             )
 
@@ -394,13 +396,13 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription activation failed: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except Exception as e:
             logger.error(f"Unexpected error activating subscription {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to activate subscription"
             )
 
@@ -438,13 +440,13 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription pausing failed: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except Exception as e:
             logger.error(f"Unexpected error pausing subscription {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to pause subscription"
             )
 
@@ -482,13 +484,13 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription resuming failed: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except Exception as e:
             logger.error(f"Unexpected error resuming subscription {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to resume subscription"
             )
 
@@ -550,13 +552,13 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Payment recording failed: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except Exception as e:
             logger.error(f"Unexpected error recording payment for subscription {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to record payment"
             )
 
@@ -587,7 +589,7 @@ class SubscriptionController(BaseController):
             subscription = await self.subscription_service._get_active_subscription(user.id)
             if not subscription or subscription.id != subscription_id:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
+                    status_code=response_status.HTTP_404_NOT_FOUND,
                     detail="Subscription not found"
                 )
             
@@ -610,7 +612,7 @@ class SubscriptionController(BaseController):
         except ValueError as e:
             logger.warning(f"Subscription cancellation failed for user {user.id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=response_status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         except HTTPException:
@@ -618,7 +620,7 @@ class SubscriptionController(BaseController):
         except Exception as e:
             logger.error(f"Unexpected error cancelling subscription {subscription_id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to cancel subscription"
             )
 
@@ -652,7 +654,7 @@ class SubscriptionController(BaseController):
         except Exception as e:
             logger.error(f"Unexpected error getting usage for user {user.id}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve usage information"
             )
 
@@ -670,21 +672,7 @@ class SubscriptionController(BaseController):
         except Exception as e:
             logger.error(f"Unexpected error getting subscription plans: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=response_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve subscription plans"
             )
 
-
-# Dependency injection for subscription controller
-def get_subscription_controller(db: AsyncSession = Depends(get_db)) -> SubscriptionController:
-    """
-    Get subscription controller instance with database dependency.
-    
-    Args:
-        db: Async database session
-        
-    Returns:
-        SubscriptionController instance
-    """
-    subscription_service = SubscriptionService(db)
-    return SubscriptionController(subscription_service)

@@ -187,8 +187,7 @@ async def get_extension_controller(
     )
 
 
-a
-sync def get_crisis_controller(
+async def get_crisis_controller(
     security_service: SecurityService = Depends(get_security_service),
     auth_service: AuthService = Depends(get_auth_service),
     email_service: EmailService = Depends(get_email_service),

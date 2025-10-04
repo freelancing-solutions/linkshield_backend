@@ -12,12 +12,12 @@ from fastapi import APIRouter, Request, HTTPException, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 import json
 
-from ..config.settings import settings
-from ..bots.registration import bot_registration_manager
-from ..bots.gateway import bot_gateway
-from ..bots.lifecycle import bot_lifecycle_manager
-from ..bots.error_handler import bot_error_handler
-from ..auth.bot_auth import verify_webhook_signature
+from src.config.settings import settings
+from src.bots.registration import bot_registration_manager
+from src.bots.gateway import bot_gateway
+from src.bots.lifecycle import bot_lifecycle_manager
+from src.bots.error_handler import bot_error_handler
+from src.auth.bot_auth import verify_webhook_signature
 
 logger = logging.getLogger(__name__)
 

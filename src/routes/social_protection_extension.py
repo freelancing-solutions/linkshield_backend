@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, BackgroundTasks, Request
 from pydantic import BaseModel, Field
 
-from src.authentication.auth_service import get_current_user
+from src.authentication.dependencies import get_current_user
 from src.models.user import User
 from src.social_protection.controllers.extension_controller import (
     ExtensionController,

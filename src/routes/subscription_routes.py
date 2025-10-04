@@ -7,7 +7,7 @@ API endpoints for subscription management, including:
 - Checking subscription usage
 - Getting available subscription plans
 """
-
+import logging
 from datetime import datetime
 from typing import Optional, List
 import uuid
@@ -15,7 +15,9 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
-from src.database import get_db
+from src.authentication.dependencies import get_current_user
+from src.config.database import get_db
+from src.controllers.depends import get_subscription_controller
 from src.services.subscription_service import SubscriptionService
 from src.controllers.subscription_controller import SubscriptionController
 from src.schemas.subscription import (
@@ -29,7 +31,7 @@ from src.schemas.subscription import (
     ErrorResponse
 )
 from src.models.user import User
-from src.auth.dependencies import get_current_active_user
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/subscriptions",
@@ -43,16 +45,7 @@ router = APIRouter(
 )
 
 
-def get_subscription_service(db: Session = Depends(get_db)) -> SubscriptionService:
-    """Dependency to get SubscriptionService instance."""
-    return SubscriptionService(db)
 
-
-def get_subscription_controller(
-    subscription_service: SubscriptionService = Depends(get_subscription_service)
-) -> SubscriptionController:
-    """Dependency to get SubscriptionController instance."""
-    return SubscriptionController(subscription_service)
 
 
 @router.post(
@@ -66,7 +59,7 @@ def get_subscription_controller(
 )
 async def create_subscription(
     subscription_data: SubscriptionCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     subscription_controller: SubscriptionController = Depends(get_subscription_controller)
 ):
     """
@@ -76,7 +69,7 @@ async def create_subscription(
     """
     try:
         subscription = await subscription_controller.create_subscription(
-            user_id=current_user.id,
+            user=current_user,
             plan_name=subscription_data.plan_name,
             billing_interval=subscription_data.billing_interval,
             trial_days=subscription_data.trial_days
@@ -102,7 +95,7 @@ async def create_subscription(
     }
 )
 async def get_subscription(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     subscription_controller: SubscriptionController = Depends(get_subscription_controller)
 ):
     """
@@ -136,7 +129,7 @@ async def get_subscription(
 )
 async def update_subscription(
     subscription_data: SubscriptionUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     subscription_controller: SubscriptionController = Depends(get_subscription_controller)
 ):
     """
@@ -147,9 +140,10 @@ async def update_subscription(
     """
     try:
         subscription = await subscription_controller.update_subscription(
-            user_id=current_user.id,
+            user=current_user,
             new_plan_name=subscription_data.new_plan_name,
-            billing_interval=subscription_data.billing_interval
+            billing_interval=subscription_data.billing_interval,
+            subscription_id=subscription_data.subscription_id
         )
         return subscription
     except ValueError as e:
@@ -173,7 +167,7 @@ async def update_subscription(
 )
 async def cancel_subscription(
     cancel_data: Optional[SubscriptionCancel] = None,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     subscription_controller: SubscriptionController = Depends(get_subscription_controller)
 ):
     """
@@ -191,9 +185,10 @@ async def cancel_subscription(
             reason = cancel_data.reason
         
         result = await subscription_controller.cancel_subscription(
-            user_id=current_user.id,
+            user=current_user,
             cancel_at_period_end=cancel_at_period_end,
-            reason=reason
+            reason=reason,
+            subscription_id=cancel_data.subscription_id if cancel_data else None
         )
         return result
     except ValueError as e:
@@ -216,7 +211,7 @@ async def cancel_subscription(
     }
 )
 async def get_subscription_usage(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     subscription_controller: SubscriptionController = Depends(get_subscription_controller)
 ):
     """
@@ -276,7 +271,7 @@ async def get_available_plans(
 )
 async def reset_subscription_usage(
     subscription_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     subscription_controller: SubscriptionController = Depends(get_subscription_controller)
 ):
     """

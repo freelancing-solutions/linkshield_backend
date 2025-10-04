@@ -14,11 +14,12 @@ from sqlalchemy import select, and_, or_
 
 from src.authentication.auth_service import AuthService
 from src.controllers.base_controller import BaseController
+from src.models.social_protection import CrisisAlertORM
 from src.models.user import User
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
 from src.social_protection.crisis_detector import CrisisDetector
-from src.social_protection.models import CrisisAlertORM
+
 from src.social_protection.logging_utils import get_logger
 from src.utils import utc_datetime
 

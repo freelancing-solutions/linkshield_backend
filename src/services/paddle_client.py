@@ -16,17 +16,19 @@ import uuid
 
 from paddle_billing import Client, Environment, Options
 from paddle_billing.Entities.Shared import CurrencyCode, TaxCategory
-from paddle_billing.Entities.Products import Product
-from paddle_billing.Entities.Prices import Price, PriceType, UnitPriceOverride
-from paddle_billing.Entities.Subscriptions import Subscription, SubscriptionStatus
-from paddle_billing.Entities.Customers import Customer
+from paddle_billing.Entities.Product import Product
+from paddle_billing.Entities.Price import Price
+from paddle_billing.Entities.Subscription import Subscription, SubscriptionStatus
+from paddle_billing.Entities.Customer import Customer
+from paddle_billing.Entities.Transaction import Transaction
 from paddle_billing.Exceptions.ApiError import ApiError
 from paddle_billing.Resources.Products.Operations import CreateProduct
 from paddle_billing.Resources.Prices.Operations import CreatePrice
-from paddle_billing.Resources.Subscriptions.Operations import CreateSubscription
+from paddle_billing.Resources.Transactions.Operations import CreateTransaction
 from paddle_billing.Resources.Customers.Operations import CreateCustomer
+from paddle_billing.Resources.Subscriptions.Operations import UpdateSubscription
 
-from src.config.logging import logger
+from loguru import logger
 from src.config.settings import get_settings
 
 
@@ -103,11 +105,10 @@ class PaddleClientService:
                 CreatePrice(
                     description=f"{billing_interval.capitalize()}ly subscription",
                     product_id=product_id,
-                    unit_price=UnitPriceOverride(
-                        amount=str(amount),
-                        currency_code=currency
-                    ),
-                    type=PriceType.Recurring,
+                    unit_price={
+                        "amount": str(int(amount * 100)),  # Convert to cents
+                        "currency_code": currency
+                    },
                     billing_cycle={
                         "interval": billing_interval,
                         "frequency": 1
@@ -163,9 +164,9 @@ class PaddleClientService:
         customer_id: str,
         price_id: str,
         trial_days: int = 0
-    ) -> Subscription:
+    ) -> Transaction:
         """
-        Create a subscription in Paddle.
+        Create a subscription in Paddle via a transaction.
         
         Args:
             customer_id: Paddle customer ID
@@ -173,11 +174,10 @@ class PaddleClientService:
             trial_days: Trial period in days
             
         Returns:
-            Subscription: Created subscription
+            Transaction: Created transaction (which creates the subscription)
         """
         try:
-            subscription_data = {
-                "customer_id": customer_id,
+            transaction_data = {
                 "items": [
                     {
                         "price_id": price_id,
@@ -186,19 +186,22 @@ class PaddleClientService:
                 ]
             }
             
+            if customer_id:
+                transaction_data["customer_id"] = customer_id
+            
             if trial_days > 0:
-                subscription_data["trial_period"] = {
+                transaction_data["billing_period"] = {
                     "interval": "day",
                     "frequency": trial_days
                 }
             
-            subscription = self.client.subscriptions.create(
-                CreateSubscription(**subscription_data)
+            transaction = self.client.transactions.create(
+                CreateTransaction(**transaction_data)
             )
-            logger.info(f"Created Paddle subscription: {subscription.id}")
-            return subscription
+            logger.info(f"Created Paddle transaction: {transaction.id}")
+            return transaction
         except ApiError as e:
-            logger.error(f"Failed to create Paddle subscription: {e}")
+            logger.error(f"Failed to create Paddle transaction: {e}")
             raise
     
     async def get_subscription(self, subscription_id: str) -> Optional[Subscription]:
@@ -234,11 +237,14 @@ class PaddleClientService:
             Updated subscription if successful, None otherwise
         """
         try:
-            # Paddle SDK doesn't have direct cancel method in current version
-            # This would need to be implemented based on Paddle's API
-            # For now, we'll handle this through webhooks
-            logger.warning(f"Subscription cancellation should be handled via Paddle webhooks for {subscription_id}")
-            return None
+            from paddle_billing.Resources.Subscriptions.Operations import CancelSubscription
+            
+            subscription = self.client.subscriptions.cancel(
+                subscription_id,
+                CancelSubscription(effective_from=effective_from)
+            )
+            logger.info(f"Cancelled Paddle subscription: {subscription_id}")
+            return subscription
         except ApiError as e:
             logger.error(f"Failed to cancel Paddle subscription: {e}")
             return None

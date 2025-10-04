@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.authentication.auth_service import get_current_user
+from src.authentication.dependencies import get_current_user
 from src.config.database import get_db
 from src.models.user import User
 from src.social_protection.controllers.user_controller import UserController
@@ -56,6 +56,7 @@ class AlgorithmHealthRequest(BaseModel):
 @router.get("/settings")
 async def get_protection_settings(
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     controller: UserController = Depends(get_user_controller)
 ):
     """
@@ -64,7 +65,7 @@ async def get_protection_settings(
     Returns current protection configuration including auto-scan settings,
     notification preferences, and platform-specific settings.
     """
-    return await controller.get_user_protection_settings(current_user)
+    return await controller.get_user_protection_settings(user=current_user, db=db)
 
 
 @router.put("/settings")

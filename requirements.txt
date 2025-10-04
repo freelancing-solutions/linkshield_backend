@@ -98,4 +98,4 @@ asyncpg
 psutil
 
 # Payment Processing
-paddle-billing
+paddle-python-sdk

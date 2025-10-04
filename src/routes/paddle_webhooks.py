@@ -17,7 +17,7 @@ from fastapi import APIRouter, Request, HTTPException, Header, Depends, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from src.database import get_db
+from src.config.database import get_db
 from src.services.paddle_client import PaddleClientService
 from src.services.subscription_service import SubscriptionService
 from src.controllers.subscription_controller import SubscriptionController

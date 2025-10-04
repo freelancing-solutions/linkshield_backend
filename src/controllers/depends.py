@@ -4,6 +4,8 @@ from src.authentication.auth_service import AuthService
 from src.config.database import AsyncSession, get_db_session
 from src.controllers import URLCheckController, ReportController, HealthController, UserController, AdminController, AIAnalysisController, DashboardController
 from src.controllers.bot_controller import BotController
+from src.controllers.subscription_controller import SubscriptionController
+from src.services.subscription_service import SubscriptionService
 from src.social_protection.controllers import SocialProtectionController
 from src.social_protection.controllers.user_controller import UserController as SocialUserController
 from src.social_protection.controllers.bot_controller import BotController as SocialBotController
@@ -22,8 +24,11 @@ from src.services.security_service import SecurityService
 from src.services.url_analysis_service import URLAnalysisService
 from src.services.ai_analysis_service import AIAnalysisService
 from src.services.ai_service import AIService
-from src.services.depends import get_security_service, get_auth_service, get_url_analysis_service, get_ai_analysis_service, get_ai_service, get_email_service, get_admin_service, get_extension_data_processor, get_social_scan_service, get_quick_analysis_service, get_content_risk_analyzer, get_link_penalty_detector, get_spam_pattern_detector, get_community_notes_analyzer, get_visibility_scorer, get_engagement_analyzer, get_penalty_detector, get_shadow_ban_detector
-
+from src.services.depends import get_security_service, get_auth_service, get_url_analysis_service, \
+    get_ai_analysis_service, get_ai_service, get_email_service, get_admin_service, get_extension_data_processor, \
+    get_social_scan_service, get_quick_analysis_service, get_content_risk_analyzer, get_link_penalty_detector, \
+    get_spam_pattern_detector, get_community_notes_analyzer, get_visibility_scorer, get_engagement_analyzer, \
+    get_penalty_detector, get_shadow_ban_detector, get_subscription_service
 
 
 async def get_health_controller() -> HealthController:
@@ -242,3 +247,11 @@ async def get_extension_controller(
 
 
 
+async def get_subscription_controller(
+        subscription_service: SubscriptionService = Depends(get_subscription_service),
+        security_service: SecurityService  = Depends(get_security_service),
+        auth_service: AuthService  =Depends(get_auth_service),
+        email_service:EmailService = Depends(get_email_service)) -> SubscriptionController:
+    """Dependency to get SubscriptionController instance."""
+    return SubscriptionController(subscription_service=subscription_service, security_service=security_service,
+                                  auth_service=auth_service, email_service=email_service)

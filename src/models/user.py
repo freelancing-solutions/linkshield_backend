@@ -138,6 +138,10 @@ class User(Base):
     def full_name(self) -> str:
         return self.get_full_name()
 
+    @property
+    def is_admin(self) -> bool:
+        return self.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]
+
     def get_full_name(self) -> str:
         """
         Get user's full name or fallback to email.

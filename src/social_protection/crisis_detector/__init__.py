@@ -13,8 +13,11 @@ from .crisis_analyzer import CrisisAnalyzer
 from .alert_generator import AlertGenerator
 from .emergency_responder import EmergencyResponder
 from .escalation_monitor import EscalationMonitor
+from .core import CrisisDetector, CrisisReport
 
 __all__ = [
+    "CrisisDetector",
+    "CrisisReport",
     "CrisisAnalyzer",
     "AlertGenerator",
     "EmergencyResponder",

@@ -80,6 +80,21 @@ class PaymentStatus(enum.Enum):
     CANCELLED = "cancelled"
 
 
+class UsageType(enum.Enum):
+    """
+    Usage type enumeration for tracking different types of API usage.
+    """
+    LINK_CHECK = "link_check"
+    API_CALL = "api_call"
+    BULK_CHECK = "bulk_check"
+    DEEP_SCAN = "deep_scan"
+    AI_ANALYSIS = "ai_analysis"
+    BOT_CHECK = "bot_check"
+    SOCIAL_PROTECTION = "social_protection"
+    CRISIS_DETECTION = "crisis_detection"
+    RADAR_LENS = "radar_lens"
+
+
 class SubscriptionPlan(Base):
     """
     Subscription plan model defining available plans and their features.
@@ -381,7 +396,9 @@ class UserSubscription(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    
+    resumed_at = Column(DateTime(timezone=True), nullable=True)
+    activated_at = Column(DateTime(timezone=True), nullable=True)
+    paused_at = Column(DateTime(timezone=True), nullable=True)
     # Relationships
     user = relationship("User", back_populates="subscription")
     plan = relationship("SubscriptionPlan", back_populates="subscriptions")
@@ -651,7 +668,7 @@ class UsageRecord(Base):
     subscription_id = Column(UUID(as_uuid=True), ForeignKey("user_subscriptions.id", ondelete="CASCADE"), nullable=False, index=True)
     
     # Usage information
-    usage_type = Column(String(50), nullable=False, index=True)  # url_check, api_call, etc.
+    usage_type = Column(Enum(UsageType), nullable=False, index=True)
     quantity = Column(Integer, default=1, nullable=False)
     
     # Time period
@@ -687,7 +704,7 @@ class UsageRecord(Base):
             "id": str(self.id),
             "user_id": str(self.user_id),
             "subscription_id": str(self.subscription_id),
-            "usage_type": self.usage_type,
+            "usage_type": self.usage_type.value if isinstance(self.usage_type, UsageType) else self.usage_type,
             "quantity": self.quantity,
             "usage_date": self.usage_date.isoformat() if self.usage_date else None,
             "billing_period_start": self.billing_period_start.isoformat() if self.billing_period_start else None,

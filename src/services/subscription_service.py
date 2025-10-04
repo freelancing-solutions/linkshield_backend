@@ -26,7 +26,7 @@ from src.models.subscription import (
     UsageType
 )
 from src.models.user import User
-from src.config.logging import logger
+
 from src.config.settings import get_settings
 from src.services.paddle_client import PaddleClientService
 from src.exceptions.subscription_exceptions import (
@@ -37,6 +37,8 @@ from src.exceptions.subscription_exceptions import (
     PaddleIntegrationError,
     SubscriptionAlreadyExistsError
 )
+import logging
+logger = logging.getLogger(__name__)
 
 # Subscription plans configuration
 SUBSCRIPTION_PLANS = {
