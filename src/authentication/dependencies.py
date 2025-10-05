@@ -15,6 +15,7 @@ from src.config.database import get_db_session
 from src.models.user import User
 from src.authentication.auth_service import AuthService, AuthenticationError
 from src.services.security_service import SecurityService
+from src.services.session_manager import SessionManager
 from src.auth.bot_auth import verify_webhook_signature, verify_api_key
 
 # Security scheme for JWT tokens
@@ -23,7 +24,7 @@ security = HTTPBearer(auto_error=False)
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: AsyncSession = Depends(get_db_session)) -> User:
     """
-    Get current authenticated user with JWT blacklist validation.
+    Get current authenticated user with JWT blacklist validation and session management.
     """
     try:
         if not credentials:
@@ -52,6 +53,10 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         user = await _get_user_by_id(db, user_id)
         if not user or not user.is_active:
             raise HTTPException(status_code=401, detail="User not found or inactive")
+        
+        # Update session activity for concurrent session management
+        session_manager = SessionManager(db)
+        await session_manager.update_session_activity(session_id)
         
         return user
     

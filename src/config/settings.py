@@ -148,6 +148,42 @@ class Settings(BaseSettings):
     DISTRIBUTED_RATE_LIMIT_USER_SPECIFIC: bool = Field(default=True, env="LINKSHIELD_DISTRIBUTED_RATE_LIMIT_USER_SPECIFIC")
     DISTRIBUTED_RATE_LIMIT_ENDPOINT_SPECIFIC: bool = Field(default=True, env="LINKSHIELD_DISTRIBUTED_RATE_LIMIT_ENDPOINT_SPECIFIC")
     
+    # IP Spoofing Protection Settings (REQ-008)
+    # Trusted proxy networks for secure client IP detection
+    TRUSTED_PROXY_NETWORKS: List[str] = Field(
+        default=[
+            # Private networks (RFC 1918)
+            "10.0.0.0/8",
+            "172.16.0.0/12", 
+            "192.168.0.0/16",
+            # Loopback
+            "127.0.0.0/8",
+            "::1/128",
+            # Link-local
+            "169.254.0.0/16",
+            "fe80::/10",
+            # Carrier-grade NAT
+            "100.64.0.0/10",
+        ],
+        env="LINKSHIELD_TRUSTED_PROXY_NETWORKS",
+        description="List of trusted proxy network CIDRs for IP validation"
+    )
+    IP_SPOOFING_PROTECTION_ENABLED: bool = Field(
+        default=True, 
+        env="LINKSHIELD_IP_SPOOFING_PROTECTION_ENABLED",
+        description="Enable IP spoofing protection and proxy validation"
+    )
+    IP_SPOOFING_LOG_ATTEMPTS: bool = Field(
+        default=True,
+        env="LINKSHIELD_IP_SPOOFING_LOG_ATTEMPTS", 
+        description="Log potential IP spoofing attempts"
+    )
+    IP_VALIDATION_STRICT_MODE: bool = Field(
+        default=False,
+        env="LINKSHIELD_IP_VALIDATION_STRICT_MODE",
+        description="Strict mode rejects all proxy headers from untrusted sources"
+    )
+    
     # SSRF Protection Settings
     SSRF_PROTECTION_ENABLED: bool = Field(default=True, env="LINKSHIELD_SSRF_PROTECTION_ENABLED")
     SSRF_ALLOWED_DOMAINS: List[str] = Field(default=[], env="LINKSHIELD_SSRF_ALLOWED_DOMAINS")

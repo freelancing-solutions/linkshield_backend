@@ -363,19 +363,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     
     def _get_client_ip(self, request: Request) -> str:
         """
-        Get client IP address, considering proxy headers.
+        Securely extract client IP address from request with proxy validation.
+        
+        Implements REQ-008 IP spoofing protection by validating proxy headers
+        against trusted proxy networks and falling back to direct connection IP
+        when headers are untrusted.
+        
+        Args:
+            request: FastAPI request object
+            
+        Returns:
+            Client IP address string
         """
-        # Check for forwarded headers (when behind proxy/load balancer)
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
-        
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip
-        
-        # Fallback to direct client IP
-        return request.client.host if request.client else "unknown"
+        from src.utils.ip_utils import get_client_ip
+        return get_client_ip(request)
     
     def _determine_limit_scope(self, request: Request):
         """

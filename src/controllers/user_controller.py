@@ -25,6 +25,7 @@ from src.models.email import EmailRequest, EmailType
 from src.models.user import User, UserSession, APIKey, PasswordResetToken, EmailVerificationToken
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
+from src.services.session_manager import SessionManager
 from src.services.content_analyzer import ContentAnalyzerService
 from src.services.algorithm_health import AlgorithmHealthService
 from src.social_protection.types import PlatformType, RiskLevel
@@ -769,6 +770,12 @@ class UserController(BaseController):
         request: Optional[Request] = None,
     ) -> UserSession:
         async with self.get_db_session() as session:
+            # Initialize session manager for concurrent session limits
+            session_manager = SessionManager(session)
+            
+            # Enforce concurrent session limits before creating new session
+            await session_manager.enforce_session_limits(user.id)
+            
             us = UserSession(
                 id=uuid.uuid4(),
                 user_id=user.id,
@@ -783,6 +790,10 @@ class UserController(BaseController):
             session.add(us)
             await session.commit()
             await session.refresh(us)
+            
+            # Register the new session with the session manager
+            await session_manager.register_session(us)
+            
             return us
 
     async def _create_email_verification_token(self, *, user: User) -> EmailVerificationToken:
