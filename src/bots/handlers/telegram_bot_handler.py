@@ -18,6 +18,12 @@ from ..models import (
     BotCommand, BotResponse, PlatformCommand, FormattedResponse,
     CommandType, ResponseType, DeliveryMethod, CommandRegistry
 )
+from ...models.social_protection import PlatformType
+from ...models.bot import BotUser, get_or_create_bot_user
+from ...models.user import User
+from ...services.bot_subscription_validator import BotSubscriptionValidator
+from ...config.database import get_db
+from ..error_handler import bot_error_handler_instance, ErrorCategory, ErrorSeverity
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,7 @@ class TelegramBotHandler:
         self.api_base_url = f"https://api.telegram.org/bot{self.bot_token}" if self.bot_token else None
         self.is_initialized = False
         self.platform = "telegram"
+        self.subscription_validator = BotSubscriptionValidator()
         
     async def initialize(self):
         """Initialize the Telegram bot handler with API session."""
@@ -143,6 +150,18 @@ class TelegramBotHandler:
             )
             
         except Exception as e:
+            # Use centralized error handling for command parsing errors
+            await bot_error_handler_instance.handle_error(
+                category=ErrorCategory.COMMAND_PARSING,
+                severity=ErrorSeverity.MEDIUM,
+                platform=self.platform,
+                user_id=user_id if 'user_id' in locals() else None,
+                original_error=e,
+                context={
+                    "message_data": message_data,
+                    "text": text if 'text' in locals() else None
+                }
+            )
             logger.error(f"Error parsing Telegram command: {e}")
             return None
     
@@ -186,6 +205,19 @@ class TelegramBotHandler:
             )
             
         except Exception as e:
+            # Use centralized error handling for response formatting errors
+            await bot_error_handler_instance.handle_error(
+                category=ErrorCategory.RESPONSE_FORMATTING,
+                severity=ErrorSeverity.HIGH,
+                platform=self.platform,
+                original_error=e,
+                context={
+                    "bot_response": {
+                        "success": bot_response.success if bot_response else None,
+                        "response_type": bot_response.response_type.value if bot_response and bot_response.response_type else None
+                    }
+                }
+            )
             logger.error(f"Error formatting Telegram response: {e}")
             # Return basic error response
             return FormattedResponse(
@@ -380,6 +412,39 @@ class TelegramBotHandler:
             text = message.get("text", "")
             
             logger.info(f"Processing message from @{username} (ID: {user_id}): {text}")
+            
+            # Resolve or create bot user
+            db = next(get_db())
+            try:
+                bot_user = await get_or_create_bot_user(
+                    db=db,
+                    platform=PlatformType.TELEGRAM,
+                    platform_user_id=str(user_id),
+                    platform_username=username
+                )
+                
+                # Validate subscription access
+                validation_result = await self.subscription_validator.validate_bot_user_subscription(
+                    db=db,
+                    bot_user=bot_user,
+                    requested_feature="bot_access"
+                )
+                
+                if not validation_result.is_valid:
+                    # Send subscription required message
+                    error_message = validation_result.error_message or "Subscription required for bot access"
+                    await self._send_message(chat_id, f"❌ {error_message}", "Markdown")
+                    
+                    return {
+                        "type": "message",
+                        "message_id": message_id,
+                        "action": "subscription_required",
+                        "user": username,
+                        "error": "subscription_required"
+                    }
+                
+            finally:
+                db.close()
             
             # Handle commands using standardized interface
             if text.startswith("/"):

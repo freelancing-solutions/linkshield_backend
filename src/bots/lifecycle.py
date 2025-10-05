@@ -16,7 +16,7 @@ import sys
 from ..config.settings import settings
 from .registration import bot_registration_manager, bot_configuration_manager
 from .gateway import bot_gateway
-from .error_handler import bot_error_handler
+from .error_handler import bot_error_handler_instance
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class BotLifecycleManager:
             logger.info("Bot gateway initialized")
             
             # Initialize error handler
-            await bot_error_handler.initialize()
+            await bot_error_handler_instance.initialize()
             logger.info("Bot error handler initialized")
             
             # Get enabled platforms
@@ -251,7 +251,7 @@ class BotLifecycleManager:
             # Shutdown components
             await bot_gateway.shutdown()
             await bot_registration_manager.shutdown()
-            await bot_error_handler.shutdown()
+            await bot_error_handler_instance.shutdown()
             
             self.status = BotStatus.STOPPED
             logger.info("Bot lifecycle manager shutdown completed")

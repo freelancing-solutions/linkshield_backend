@@ -17,6 +17,7 @@ from src.models.user import User, UserRole
 from src.models.project import Project
 from src.services.email_service import EmailService
 from src.services.security_service import SecurityService
+from src.services.bot_subscription_validator import BotSubscriptionValidator
 from src.social_protection.types import PlatformType, RiskLevel, ScanStatus
 from src.social_protection.data_models import ContentRiskAssessment, ContentType
 from src.social_protection.services import SocialScanService
@@ -93,6 +94,9 @@ class BotController(BaseController):
         self.penalty_detector = penalty_detector
         self.shadow_ban_detector = shadow_ban_detector
         
+        # Subscription validation service
+        self.subscription_validator = BotSubscriptionValidator()
+        
         # Bot-specific rate limits (higher for automated systems)
         self.max_bot_requests_per_minute = 100
         self.max_bot_requests_per_hour = 2000
@@ -106,7 +110,8 @@ class BotController(BaseController):
         self, 
         user: User, 
         account_identifier: str, 
-        platform: PlatformType
+        platform: PlatformType,
+        db: AsyncSession = None
     ) -> Dict[str, Any]:
         """
         Analyze account safety using existing social protection services.
@@ -115,11 +120,26 @@ class BotController(BaseController):
             user: User requesting the analysis
             account_identifier: Account username or identifier to analyze
             platform: Platform where the account exists
+            db: Database session for subscription validation
             
         Returns:
             Dict containing account safety analysis results compatible with BotResponse
         """
         try:
+            # Validate subscription access if database session provided
+            if db:
+                validation_result = await self.subscription_validator.validate_user_subscription(
+                    db=db,
+                    user=user,
+                    requested_feature="account_analysis"
+                )
+                
+                if not validation_result.is_valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=validation_result.error_message or "Subscription required for account analysis"
+                    )
+            
             # Check rate limits
             if not await self.check_rate_limit(
                 user.id, "bot_account_analysis", 
@@ -243,7 +263,8 @@ class BotController(BaseController):
         self, 
         user: User, 
         content: str, 
-        platform: PlatformType
+        platform: PlatformType,
+        db: AsyncSession = None
     ) -> Dict[str, Any]:
         """
         Check content compliance using existing analysis services.
@@ -252,11 +273,26 @@ class BotController(BaseController):
             user: User requesting the compliance check
             content: Content text to analyze for compliance
             platform: Platform context for compliance rules
+            db: Database session for subscription validation
             
         Returns:
             Dict containing compliance check results compatible with BotResponse
         """
         try:
+            # Validate subscription access if database session provided
+            if db:
+                validation_result = await self.subscription_validator.validate_user_subscription(
+                    db=db,
+                    user=user,
+                    requested_feature="content_compliance"
+                )
+                
+                if not validation_result.is_valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=validation_result.error_message or "Subscription required for content compliance check"
+                    )
+            
             # Check rate limits
             if not await self.check_rate_limit(
                 user.id, "bot_compliance_check", 
@@ -369,7 +405,8 @@ class BotController(BaseController):
         self, 
         user: User, 
         account_identifier: Optional[str] = None, 
-        platform: PlatformType = PlatformType.TWITTER
+        platform: PlatformType = PlatformType.TWITTER,
+        db: AsyncSession = None
     ) -> Dict[str, Any]:
         """
         Analyze verified followers using existing follower analysis services.
@@ -378,11 +415,26 @@ class BotController(BaseController):
             user: User requesting the follower analysis
             account_identifier: Account to analyze (optional, defaults to user's account)
             platform: Platform context for follower analysis
+            db: Database session for subscription validation
             
         Returns:
             Dict containing verified follower analysis results compatible with BotResponse
         """
         try:
+            # Validate subscription access if database session provided
+            if db:
+                validation_result = await self.subscription_validator.validate_user_subscription(
+                    db=db,
+                    user=user,
+                    requested_feature="follower_analysis"
+                )
+                
+                if not validation_result.is_valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=validation_result.error_message or "Subscription required for follower analysis"
+                    )
+            
             # Check rate limits (stricter for follower analysis as it's resource intensive)
             if not await self.check_rate_limit(
                 user.id, "bot_follower_analysis", 
@@ -504,7 +556,8 @@ class BotController(BaseController):
         platform: PlatformType,
         analysis_type: BotAnalysisType = BotAnalysisType.QUICK_SCAN,
         response_format: BotResponseFormat = BotResponseFormat.JSON,
-        cache_enabled: bool = True
+        cache_enabled: bool = True,
+        db: AsyncSession = None
     ) -> Dict[str, Any]:
         """
         Perform quick content analysis optimized for bot integration
@@ -516,11 +569,26 @@ class BotController(BaseController):
             analysis_type: Type of analysis to perform
             response_format: Format of the response
             cache_enabled: Whether to use caching
+            db: Database session for subscription validation
             
         Returns:
             Dict containing quick analysis results
         """
         try:
+            # Validate subscription access if database session provided
+            if db:
+                validation_result = await self.subscription_validator.validate_user_subscription(
+                    db=db,
+                    user=user,
+                    requested_feature="quick_analysis"
+                )
+                
+                if not validation_result.is_valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=validation_result.error_message or "Subscription required for quick content analysis"
+                    )
+            
             # Check bot rate limits
             if not await self.check_rate_limit(
                 user.id, "bot_quick_analysis", 

@@ -7,17 +7,13 @@ Thin HTTP layer; all business logic & response models imported from controller.
 from datetime import datetime
 from typing import List, Optional, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Path, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, Path, BackgroundTasks, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy.orm import Session
 
-from src.authentication.dependencies import get_current_user
-from src.config.database import get_db_session
-from src.config.settings import get_settings
-from src.models.user import User
-from src.services.security_service import SecurityService, AuthenticationError
 from src.authentication.auth_service import AuthService
+from src.authentication.dependencies import get_current_user
+from src.config.settings import get_settings
 from src.controllers.user_controller import (
     UserController,
     UserResponse,
@@ -25,7 +21,9 @@ from src.controllers.user_controller import (
     APIKeyResponse,
     SessionResponse,
 )
+from src.models.user import User
 from src.services.depends import get_security_service, get_auth_service, get_email_service
+from src.services.security_service import SecurityService
 
 # ------------------------------------------------------------------
 # Router

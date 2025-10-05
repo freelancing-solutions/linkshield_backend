@@ -14,6 +14,9 @@ from ..config.settings import settings
 from ..services.quick_analysis_service import QuickAnalysisService
 from ..models.bot import BotInteraction, BotUser
 from ..config.database import get_db_session
+from .models import BotCommand, BotResponse, CommandType
+from ..social_protection.controllers.bot_controller import BotController
+from .error_handler import bot_error_handler, ErrorCategory, ErrorSeverity
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,7 @@ class QuickAccessBotGateway:
         self.quick_analysis_service = QuickAnalysisService()
         self.platform_handlers: Dict[str, Any] = {}
         self.rate_limiter: Dict[str, List[datetime]] = {}
+        self.bot_controller = BotController()
         self.is_initialized = False
         
     async def initialize(self):
@@ -77,6 +81,271 @@ class QuickAccessBotGateway:
             await self.platform_handlers['discord'].initialize()
             logger.info("Discord bot handler initialized")
     
+    @bot_error_handler(ErrorCategory.COMMAND_PARSING, ErrorSeverity.HIGH)
+    async def route_command(self, command: BotCommand) -> BotResponse:
+        """
+        Route incoming bot commands to appropriate handlers.
+        
+        Args:
+            command: Standardized bot command
+            
+        Returns:
+            BotResponse with analysis results or error information
+        """
+        try:
+            # Ensure gateway is initialized
+            if not self.is_initialized:
+                await self.initialize()
+            
+            # Route to appropriate handler based on command type
+            if command.command_type == CommandType.ANALYZE_ACCOUNT:
+                return await self.handle_account_analysis(command)
+            elif command.command_type == CommandType.CHECK_COMPLIANCE:
+                return await self.handle_compliance_check(command)
+            elif command.command_type == CommandType.ANALYZE_FOLLOWERS:
+                return await self.handle_follower_analysis(command)
+            elif command.command_type == CommandType.ANALYZE_URL:
+                return await self.handle_url_analysis(command)
+            elif command.command_type == CommandType.GET_HELP:
+                return await self.handle_help_request(command)
+            else:
+                return BotResponse(
+                    success=False,
+                    message="Unknown command type",
+                    error_code="UNKNOWN_COMMAND",
+                    data={}
+                )
+                
+        except Exception as e:
+            logger.error(f"Error routing command {command.command_type}: {e}")
+            return BotResponse(
+                success=False,
+                message="Internal error processing command",
+                error_code="ROUTING_ERROR",
+                data={}
+            )
+    
+    @bot_error_handler(ErrorCategory.BOT_CONTROLLER, ErrorSeverity.HIGH)
+    async def handle_account_analysis(self, command: BotCommand) -> BotResponse:
+        """
+        Route to BotController account analysis functionality.
+        
+        Args:
+            command: BotCommand with account analysis request
+            
+        Returns:
+            BotResponse with account safety analysis results
+        """
+        try:
+            # Extract account identifier from command arguments
+            account_identifier = command.arguments.get('account_identifier')
+            if not account_identifier:
+                return BotResponse(
+                    success=False,
+                    message="Account identifier is required for analysis",
+                    error_code="MISSING_ACCOUNT",
+                    data={}
+                )
+            
+            # Call BotController method for account analysis
+            result = await self.bot_controller.analyze_account_safety(
+                user=command.user,
+                account_identifier=account_identifier,
+                platform=command.platform
+            )
+            
+            return BotResponse(
+                success=True,
+                message="Account analysis completed",
+                data=result
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in account analysis: {e}")
+            return BotResponse(
+                success=False,
+                message="Failed to analyze account",
+                error_code="ANALYSIS_ERROR",
+                data={}
+            )
+    
+    @bot_error_handler(ErrorCategory.BOT_CONTROLLER, ErrorSeverity.HIGH)
+    async def handle_compliance_check(self, command: BotCommand) -> BotResponse:
+        """
+        Route to BotController compliance checking functionality.
+        
+        Args:
+            command: BotCommand with compliance check request
+            
+        Returns:
+            BotResponse with content compliance analysis results
+        """
+        try:
+            # Extract content from command arguments
+            content = command.arguments.get('content')
+            if not content:
+                return BotResponse(
+                    success=False,
+                    message="Content is required for compliance check",
+                    error_code="MISSING_CONTENT",
+                    data={}
+                )
+            
+            # Call BotController method for compliance check
+            result = await self.bot_controller.check_content_compliance(
+                user=command.user,
+                content=content,
+                platform=command.platform
+            )
+            
+            return BotResponse(
+                success=True,
+                message="Compliance check completed",
+                data=result
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in compliance check: {e}")
+            return BotResponse(
+                success=False,
+                message="Failed to check compliance",
+                error_code="COMPLIANCE_ERROR",
+                data={}
+            )
+    
+    @bot_error_handler(ErrorCategory.BOT_CONTROLLER, ErrorSeverity.HIGH)
+    async def handle_follower_analysis(self, command: BotCommand) -> BotResponse:
+        """
+        Route to BotController follower analysis functionality.
+        
+        Args:
+            command: BotCommand with follower analysis request
+            
+        Returns:
+            BotResponse with verified followers analysis results
+        """
+        try:
+            # Extract account identifier from command arguments
+            account_identifier = command.arguments.get('account_identifier')
+            if not account_identifier:
+                return BotResponse(
+                    success=False,
+                    message="Account identifier is required for follower analysis",
+                    error_code="MISSING_ACCOUNT",
+                    data={}
+                )
+            
+            # Call BotController method for follower analysis
+            result = await self.bot_controller.analyze_verified_followers(
+                user=command.user,
+                account_identifier=account_identifier,
+                platform=command.platform
+            )
+            
+            return BotResponse(
+                success=True,
+                message="Follower analysis completed",
+                data=result
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in follower analysis: {e}")
+            return BotResponse(
+                success=False,
+                message="Failed to analyze followers",
+                error_code="FOLLOWER_ERROR",
+                data={}
+            )
+    
+    @bot_error_handler(ErrorCategory.BOT_CONTROLLER, ErrorSeverity.MEDIUM)
+    async def handle_url_analysis(self, command: BotCommand) -> BotResponse:
+        """
+        Route to quick URL analysis functionality.
+        
+        Args:
+            command: BotCommand with URL analysis request
+            
+        Returns:
+            BotResponse with URL analysis results
+        """
+        try:
+            # Extract URL from command arguments
+            url = command.arguments.get('url')
+            if not url:
+                return BotResponse(
+                    success=False,
+                    message="URL is required for analysis",
+                    error_code="MISSING_URL",
+                    data={}
+                )
+            
+            # Use existing quick analysis functionality
+            result = await self.analyze_url_quick(
+                url=url,
+                user_id=command.user_id,
+                platform=command.platform.value
+            )
+            
+            return BotResponse(
+                success=True,
+                message="URL analysis completed",
+                data=result
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in URL analysis: {e}")
+            return BotResponse(
+                success=False,
+                message="Failed to analyze URL",
+                error_code="URL_ERROR",
+                data={}
+            )
+    
+    @bot_error_handler(ErrorCategory.COMMAND_PARSING, ErrorSeverity.LOW)
+    async def handle_help_request(self, command: BotCommand) -> BotResponse:
+        """
+        Handle help command requests.
+        
+        Args:
+            command: BotCommand with help request
+            
+        Returns:
+            BotResponse with help information
+        """
+        help_data = {
+            "available_commands": [
+                {
+                    "command": "/analyze_account @username",
+                    "description": "Analyze account safety and risk level"
+                },
+                {
+                    "command": "/check_compliance \"content text\"",
+                    "description": "Check content for compliance violations"
+                },
+                {
+                    "command": "/analyze_followers @username",
+                    "description": "Analyze verified followers for an account"
+                },
+                {
+                    "command": "/analyze_url https://example.com",
+                    "description": "Analyze URL for security threats"
+                },
+                {
+                    "command": "/help",
+                    "description": "Show this help message"
+                }
+            ],
+            "platform": command.platform.value,
+            "support_info": "For additional support, contact our team through the platform's support channels."
+        }
+        
+        return BotResponse(
+            success=True,
+            message="Available commands and help information",
+            data=help_data
+        )
+
+    @bot_error_handler(ErrorCategory.WEBHOOK_PROCESSING, ErrorSeverity.HIGH)
     async def handle_webhook(self, platform: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle incoming webhook from a specific platform.

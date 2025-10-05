@@ -204,9 +204,10 @@ class ContentAssessmentResponse(BaseModel):
     status_code=status.HTTP_200_OK,
     summary="Process extension data (DEPRECATED)",
     description="⚠️ DEPRECATED: Use /api/v1/social-protection/extension/process instead. Process data received from browser extension for real-time analysis",
-    deprecated=True
+    deprecated=True,
+    operation_id="process_extension_data_deprecated"
 )
-async def process_extension_data(
+async def process_extension_data_deprecated(
     request: ExtensionDataRequest,
     response: Response,
     background_tasks: BackgroundTasks,

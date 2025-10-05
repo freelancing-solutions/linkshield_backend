@@ -8,10 +8,23 @@ user statistics, and platform-specific user mappings.
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, Float, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from sqlalchemy.dialects.postgresql import UUID
+from datetime import datetime, timezone
 from typing import Optional
-
 from src.config.database import Base
+import enum
+
+
+class BotPlatform(enum.Enum):
+    """
+    Social media platform enumeration for bot operations.
+    
+    Defines the supported platforms where LinkShield bots can operate
+    and interact with users for social protection services.
+    """
+    TWITTER = "twitter"
+    TELEGRAM = "telegram"
+    DISCORD = "discord"
 
 
 class BotUser(Base):
@@ -19,11 +32,16 @@ class BotUser(Base):
     Model for tracking bot users across different platforms.
     
     Maps platform-specific user IDs to internal user records
-    and tracks user preferences and statistics.
+    and tracks user preferences and statistics. Now linked to
+    authenticated users with subscription validation.
     """
     __tablename__ = "bot_users"
     
     id = Column(Integer, primary_key=True, index=True)
+    
+    # Link to authenticated user (required for subscription validation)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    
     platform = Column(String(20), nullable=False, index=True)  # twitter, telegram, discord
     platform_user_id = Column(String(100), nullable=False, index=True)
     username = Column(String(100), nullable=True)
@@ -40,12 +58,23 @@ class BotUser(Base):
     risky_urls_count = Column(Integer, default=0)
     last_analysis_at = Column(DateTime, nullable=True)
     
+    # Subscription validation fields
+    subscription_validated_at = Column(DateTime(timezone=True), nullable=True)
+    last_subscription_check = Column(DateTime(timezone=True), nullable=True)
+    subscription_plan_at_link = Column(String(20), nullable=True)
+    
+    # Bot-specific usage tracking
+    monthly_bot_requests = Column(Integer, default=0, nullable=False)
+    monthly_reset_date = Column(DateTime(timezone=True), nullable=True)
+    feature_access_level = Column(String(20), default="basic", nullable=False)
+    
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
     
     # Relationships
+    user = relationship("User", back_populates="bot_users")
     rate_limits = relationship("BotRateLimit", back_populates="user")
     sessions = relationship("BotSession", back_populates="user")
     analysis_requests = relationship("BotAnalysisRequest", back_populates="user")
@@ -53,7 +82,103 @@ class BotUser(Base):
     analytics_events = relationship("BotAnalyticsEvent", back_populates="user")
     
     def __repr__(self):
-        return f"<BotUser(platform={self.platform}, user_id={self.platform_user_id}, username={self.username})>"
+        return f"<BotUser(platform={self.platform}, user_id={self.platform_user_id}, username={self.username}, linked_user={self.user_id})>"
+    
+    def is_subscription_valid(self) -> bool:
+        """
+        Check if the linked user has a valid subscription for bot access.
+        
+        Returns:
+            bool: True if user has valid subscription, False otherwise
+        """
+        if not self.user:
+            return False
+        
+        # FREE plan users don't have bot access
+        if self.user.subscription_plan.value == "free":
+            return False
+        
+        # Check if subscription is active
+        return self.user.is_subscription_active()
+    
+    def get_bot_feature_limits(self) -> dict:
+        """
+        Get bot-specific feature limits based on user's subscription plan.
+        
+        Returns:
+            dict: Dictionary containing feature limits
+        """
+        if not self.user:
+            return {"monthly_requests": 0, "deep_analysis": False, "priority_support": False}
+        
+        plan = self.user.subscription_plan.value
+        limits = {
+            "basic": {
+                "monthly_requests": 100,
+                "deep_analysis": False,
+                "priority_support": False,
+                "platforms_allowed": 1
+            },
+            "pro": {
+                "monthly_requests": 1000,
+                "deep_analysis": True,
+                "priority_support": True,
+                "platforms_allowed": 3
+            },
+            "enterprise": {
+                "monthly_requests": 10000,
+                "deep_analysis": True,
+                "priority_support": True,
+                "platforms_allowed": 10
+            }
+        }
+        
+        return limits.get(plan, {"monthly_requests": 0, "deep_analysis": False, "priority_support": False})
+    
+    def can_make_bot_request(self) -> bool:
+        """
+        Check if bot user can make another request based on subscription limits.
+        
+        Returns:
+            bool: True if request is allowed, False otherwise
+        """
+        if not self.is_subscription_valid():
+            return False
+        
+        limits = self.get_bot_feature_limits()
+        
+        # Reset monthly count if needed
+        now = datetime.now(timezone.utc)
+        if not self.monthly_reset_date or self.monthly_reset_date.month != now.month:
+            self.monthly_bot_requests = 0
+            self.monthly_reset_date = now
+        
+        return self.monthly_bot_requests < limits["monthly_requests"]
+    
+    def increment_bot_request_count(self) -> None:
+        """
+        Increment the bot request counter for usage tracking.
+        """
+        self.monthly_bot_requests += 1
+        self.last_analysis_at = datetime.utcnow()
+    
+    def update_subscription_validation(self) -> None:
+        """
+        Update subscription validation timestamp and plan info.
+        """
+        now = datetime.now(timezone.utc)
+        self.last_subscription_check = now
+        
+        if self.user and self.is_subscription_valid():
+            self.subscription_validated_at = now
+            self.subscription_plan_at_link = self.user.subscription_plan.value
+            
+            # Update feature access level based on subscription
+            limits = self.get_bot_feature_limits()
+            if limits["deep_analysis"]:
+                self.feature_access_level = "premium"
+            else:
+                self.feature_access_level = "basic"
 
 
 class BotAnalysisRequest(Base):

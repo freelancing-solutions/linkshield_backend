@@ -15,11 +15,16 @@ from datetime import datetime
 import json
 
 from ...config.settings import settings
+from ...database.models import PlatformType, BotUser, User
+from ...database.crud.bot_user import get_or_create_bot_user
+from ...database.database import get_db
+from ...services.subscription_validator import BotSubscriptionValidator
 from ..models import (
     BotCommand, BotResponse, PlatformCommand, FormattedResponse,
     CommandType, ResponseType, DeliveryMethod, CommandRegistry,
     parse_platform_command, format_response_for_platform
 )
+from ..error_handler import bot_error_handler, ErrorCategory, ErrorSeverity
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,7 @@ class DiscordBotHandler:
         self.is_initialized = False
         self.platform = "discord"
         self.application_id: Optional[str] = None
+        self.subscription_validator = BotSubscriptionValidator()
         
     async def initialize(self):
         """Initialize the Discord bot handler with API session."""
@@ -75,6 +81,7 @@ class DiscordBotHandler:
             logger.error(f"Failed to initialize Discord bot handler: {e}")
             raise
     
+    @bot_error_handler(ErrorCategory.PLATFORM_INTEGRATION, ErrorSeverity.HIGH)
     async def handle_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle incoming Discord webhook events (interactions).
@@ -122,6 +129,7 @@ class DiscordBotHandler:
                 }
             }
     
+    @bot_error_handler(ErrorCategory.COMMAND_PARSING, ErrorSeverity.MEDIUM)
     async def parse_command(self, interaction_data: Dict[str, Any]) -> Optional[BotCommand]:
         """
         Parse Discord interactions into standardized commands.
@@ -153,6 +161,7 @@ class DiscordBotHandler:
             logger.error(f"Error parsing Discord command: {e}")
             return None
     
+    @bot_error_handler(ErrorCategory.RESPONSE_FORMATTING, ErrorSeverity.MEDIUM)
     async def format_response(self, bot_response: BotResponse) -> FormattedResponse:
         """
         Format BotController response for Discord embeds, components, and structured responses.
@@ -190,6 +199,7 @@ class DiscordBotHandler:
                 formatting_applied=["error_fallback"]
             )
     
+    @bot_error_handler(ErrorCategory.PLATFORM_INTEGRATION, ErrorSeverity.HIGH)
     async def send_response(self, formatted_response: FormattedResponse, 
                           context: Dict[str, Any]) -> bool:
         """
@@ -770,6 +780,38 @@ class DiscordBotHandler:
             custom_id = component_data.get("custom_id", "")
             user = interaction.get("member", {}).get("user") or interaction.get("user", {})
             user_id = user.get("id")
+            username = user.get("username", "")
+            
+            # Resolve or create bot user
+            db = next(get_db())
+            try:
+                bot_user = await get_or_create_bot_user(
+                    db=db,
+                    platform=PlatformType.DISCORD,
+                    platform_user_id=str(user_id),
+                    platform_username=username
+                )
+                
+                # Validate subscription access
+                validation_result = await self.subscription_validator.validate_bot_user_subscription(
+                    db=db,
+                    bot_user=bot_user,
+                    requested_feature="bot_access"
+                )
+                
+                if not validation_result.is_valid:
+                    # Send subscription required message
+                    error_message = validation_result.error_message or "Subscription required for bot access"
+                    return {
+                        "type": 4,  # CHANNEL_MESSAGE_WITH_SOURCE
+                        "data": {
+                            "content": f"❌ {error_message}",
+                            "flags": 64  # EPHEMERAL
+                        }
+                    }
+                
+            finally:
+                db.close()
             
             if custom_id.startswith("reanalyze_account:"):
                 account_id = custom_id.split(":", 1)[1]

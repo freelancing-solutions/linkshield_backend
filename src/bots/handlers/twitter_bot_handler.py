@@ -19,7 +19,11 @@ from src.bots.models import (
     parse_platform_command, format_response_for_platform
 )
 from src.models.social_protection import PlatformType
-from src.bots.error_handler import bot_error_handler, ErrorCategory
+from src.bots.error_handler import bot_error_handler_instance, ErrorCategory
+from src.models.bot import BotUser, get_or_create_bot_user
+from src.models.user import User
+from src.services.bot_subscription_validator import BotSubscriptionValidator
+from src.config.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,7 @@ class TwitterBotHandler:
         self.platform = PlatformType.TWITTER
         self.max_tweet_length = 280
         self.max_thread_tweets = 5
+        self.subscription_validator = BotSubscriptionValidator()
         
     async def initialize(self):
         """Initialize the Twitter bot handler with API session."""
@@ -141,7 +146,7 @@ class TwitterBotHandler:
             raw_command = tweet_data.get("text", "")
             user_id = tweet_data.get("user", {}).get("id_str", "")
             
-            error_response = await bot_error_handler.handle_command_parsing_error(
+            error_response = await bot_error_handler_instance.handle_command_parsing_error(
                 error=e,
                 platform=self.platform,
                 raw_command=raw_command,
@@ -181,7 +186,7 @@ class TwitterBotHandler:
             
         except Exception as e:
             # Use centralized error handling for formatting errors
-            return await bot_error_handler.handle_response_formatting_error(
+            return await bot_error_handler_instance.handle_response_formatting_error(
                 error=e,
                 bot_response=bot_response,
                 platform=self.platform,
@@ -237,6 +242,51 @@ class TwitterBotHandler:
             user_screen_name = event.get("user", {}).get("screen_name")
             
             logger.info(f"Processing tweet mention from @{user_screen_name}: {tweet_text}")
+            
+            # Resolve or create bot user
+            db = next(get_db())
+            try:
+                bot_user = await get_or_create_bot_user(
+                    db=db,
+                    platform=PlatformType.TWITTER,
+                    platform_user_id=user_id,
+                    platform_username=user_screen_name
+                )
+                
+                # Validate subscription access
+                validation_result = await self.subscription_validator.validate_bot_user_subscription(
+                    db=db,
+                    bot_user=bot_user,
+                    requested_feature="bot_access"
+                )
+                
+                if not validation_result.is_valid:
+                    # Send subscription required message
+                    error_response = BotResponse(
+                        response_type=ResponseType.ERROR,
+                        content=validation_result.error_message or "Subscription required for bot access",
+                        metadata={"error_code": "SUBSCRIPTION_REQUIRED"}
+                    )
+                    formatted_response = await self.format_response(error_response)
+                    
+                    context = {
+                        "tweet_id": tweet_id,
+                        "user_id": user_id,
+                        "user_screen_name": user_screen_name
+                    }
+                    
+                    await self.send_response(formatted_response, context)
+                    
+                    return {
+                        "type": "tweet_mention",
+                        "tweet_id": tweet_id,
+                        "action": "subscription_required",
+                        "user": user_screen_name,
+                        "error": "subscription_required"
+                    }
+                
+            finally:
+                db.close()
             
             # Parse command from tweet
             bot_command = await self.parse_command(event)
@@ -312,6 +362,51 @@ class TwitterBotHandler:
                 return {"type": "direct_message", "action": "ignored_self"}
             
             logger.info(f"Processing direct message from user {sender_id}: {message_text}")
+            
+            # Resolve or create bot user
+            db = next(get_db())
+            try:
+                bot_user = await get_or_create_bot_user(
+                    db=db,
+                    platform=PlatformType.TWITTER,
+                    platform_user_id=sender_id,
+                    platform_username=None  # Username not available in DM events
+                )
+                
+                # Validate subscription access
+                validation_result = await self.subscription_validator.validate_bot_user_subscription(
+                    db=db,
+                    bot_user=bot_user,
+                    requested_feature="bot_access"
+                )
+                
+                if not validation_result.is_valid:
+                    # Send subscription required message
+                    error_response = BotResponse(
+                        response_type=ResponseType.ERROR,
+                        content=validation_result.error_message or "Subscription required for bot access",
+                        metadata={"error_code": "SUBSCRIPTION_REQUIRED"}
+                    )
+                    formatted_response = await self.format_response(error_response)
+                    
+                    context = {
+                        "message_id": message_id,
+                        "sender_id": sender_id,
+                        "is_dm": True
+                    }
+                    
+                    await self.send_response(formatted_response, context)
+                    
+                    return {
+                        "type": "direct_message",
+                        "message_id": message_id,
+                        "action": "subscription_required",
+                        "sender": sender_id,
+                        "error": "subscription_required"
+                    }
+                
+            finally:
+                db.close()
             
             # Parse command from DM
             bot_command = await self.parse_command(event)

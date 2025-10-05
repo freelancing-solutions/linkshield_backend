@@ -123,6 +123,9 @@ class User(Base):
     extension_sessions = relationship("ExtensionSessionORM", back_populates="user", cascade="all, delete-orphan")
     algorithm_health_metrics = relationship("AlgorithmHealthMetricsORM", back_populates="user", cascade="all, delete-orphan")
     
+    # Bot user relationships for social media bot integration
+    bot_users = relationship("BotUser", back_populates="user", cascade="all, delete-orphan")
+    
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"
     
@@ -197,6 +200,62 @@ class User(Base):
         """
         self.daily_check_count += 1
         self.total_check_count += 1
+    
+    def get_bot_feature_limits(self) -> dict:
+        """
+        Get bot-specific feature limits based on subscription plan.
+        Returns limits for monthly requests, analysis types, and features.
+        """
+        limits = {
+            SubscriptionPlan.FREE: {
+                "monthly_requests": 50,
+                "analysis_types": ["account_safety"],
+                "features": ["basic_analysis"],
+                "concurrent_requests": 1,
+                "priority": "low"
+            },
+            SubscriptionPlan.PRO: {
+                "monthly_requests": 500,
+                "analysis_types": ["account_safety", "content_compliance", "verified_followers"],
+                "features": ["basic_analysis", "detailed_reports", "export_data"],
+                "concurrent_requests": 3,
+                "priority": "normal"
+            },
+            SubscriptionPlan.ENTERPRISE: {
+                "monthly_requests": 5000,
+                "analysis_types": ["account_safety", "content_compliance", "verified_followers", "advanced_analytics"],
+                "features": ["basic_analysis", "detailed_reports", "export_data", "api_access", "custom_alerts"],
+                "concurrent_requests": 10,
+                "priority": "high"
+            }
+        }
+        return limits.get(self.subscription_plan, limits[SubscriptionPlan.FREE])
+    
+    def can_access_bot_feature(self, feature: str) -> bool:
+        """
+        Check if user can access a specific bot feature based on subscription.
+        """
+        if not self.is_subscription_active():
+            return feature in self.get_bot_feature_limits()["features"]
+        
+        allowed_features = self.get_bot_feature_limits()["features"]
+        return feature in allowed_features
+    
+    def can_perform_bot_analysis(self, analysis_type: str) -> bool:
+        """
+        Check if user can perform a specific type of bot analysis.
+        """
+        if not self.is_subscription_active():
+            return False
+        
+        allowed_types = self.get_bot_feature_limits()["analysis_types"]
+        return analysis_type in allowed_types
+    
+    def get_monthly_bot_limit(self) -> int:
+        """
+        Get monthly bot request limit based on subscription plan.
+        """
+        return self.get_bot_feature_limits()["monthly_requests"]
     
     def to_dict(self, include_sensitive: bool = False) -> dict:
         """

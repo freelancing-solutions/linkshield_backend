@@ -41,94 +41,123 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Subscription plans configuration
+# Bot-specific subscription plans configuration with enhanced limits
 SUBSCRIPTION_PLANS = {
     "free": {
-        "name": "Free",
         "display_name": "Free Plan",
-        "description": "Basic link checking with limited features",
+        "description": "Basic link checking for personal use",
         "monthly_price": Decimal("0.00"),
         "yearly_price": Decimal("0.00"),
-        "daily_check_limit": 50,
-        "monthly_check_limit": 1000,
-        "api_rate_limit": 10,
+        "daily_check_limit": 10,
+        "monthly_check_limit": 100,
+        "api_rate_limit": 10,  # requests per hour
         "max_projects": 1,
         "max_team_members_per_project": 1,
         "max_alerts_per_project": 3,
-        "monitoring_frequency_minutes": 1440,  # 24 hours
+        "monitoring_frequency_minutes": 60,
         "scan_depth_limit": 2,
-        "max_links_per_scan": 50,
+        "max_links_per_scan": 10,
         "ai_analysis_enabled": False,
         "bulk_checking_enabled": False,
-        "api_access_enabled": False,
+        "api_access_enabled": False,  # No bot access for free users
         "priority_support": False,
         "custom_branding": False,
-        "trial_days": 0
+        "trial_days": 0,
+        # Bot-specific limits
+        "bot_access_enabled": False,
+        "bot_monthly_requests": 0,
+        "bot_platforms_allowed": 0,
+        "bot_analysis_types": [],
+        "bot_features": [],
+        "bot_concurrent_requests": 0,
+        "bot_priority": "none"
     },
     "basic": {
-        "name": "basic",
         "display_name": "Basic Plan",
-        "description": "Enhanced link checking with more features",
+        "description": "Enhanced features for small teams",
         "monthly_price": Decimal("9.99"),
         "yearly_price": Decimal("99.99"),
-        "daily_check_limit": 200,
-        "monthly_check_limit": 5000,
-        "api_rate_limit": 30,
+        "daily_check_limit": 100,
+        "monthly_check_limit": 1000,
+        "api_rate_limit": 50,
         "max_projects": 3,
-        "max_team_members_per_project": 3,
+        "max_team_members_per_project": 5,
         "max_alerts_per_project": 10,
-        "monitoring_frequency_minutes": 720,  # 12 hours
-        "scan_depth_limit": 3,
-        "max_links_per_scan": 100,
+        "monitoring_frequency_minutes": 30,
+        "scan_depth_limit": 5,
+        "max_links_per_scan": 50,
         "ai_analysis_enabled": True,
         "bulk_checking_enabled": True,
         "api_access_enabled": True,
         "priority_support": False,
         "custom_branding": False,
-        "trial_days": 7
+        "trial_days": 14,
+        # Bot-specific limits
+        "bot_access_enabled": True,
+        "bot_monthly_requests": 100,
+        "bot_platforms_allowed": 1,
+        "bot_analysis_types": ["account_safety"],
+        "bot_features": ["basic_analysis"],
+        "bot_concurrent_requests": 1,
+        "bot_priority": "low"
     },
     "pro": {
-        "name": "pro",
         "display_name": "Pro Plan",
-        "description": "Professional link checking with advanced features",
+        "description": "Advanced features for growing businesses",
         "monthly_price": Decimal("29.99"),
         "yearly_price": Decimal("299.99"),
         "daily_check_limit": 500,
-        "monthly_check_limit": 15000,
-        "api_rate_limit": 100,
+        "monthly_check_limit": 5000,
+        "api_rate_limit": 200,
         "max_projects": 10,
-        "max_team_members_per_project": 10,
+        "max_team_members_per_project": 15,
         "max_alerts_per_project": 25,
-        "monitoring_frequency_minutes": 360,  # 6 hours
-        "scan_depth_limit": 5,
-        "max_links_per_scan": 250,
+        "monitoring_frequency_minutes": 15,
+        "scan_depth_limit": 10,
+        "max_links_per_scan": 200,
         "ai_analysis_enabled": True,
         "bulk_checking_enabled": True,
         "api_access_enabled": True,
         "priority_support": True,
         "custom_branding": True,
-        "trial_days": 14
+        "trial_days": 14,
+        # Bot-specific limits
+        "bot_access_enabled": True,
+        "bot_monthly_requests": 500,
+        "bot_platforms_allowed": 3,
+        "bot_analysis_types": ["account_safety", "content_compliance", "verified_followers"],
+        "bot_features": ["basic_analysis", "detailed_reports", "export_data"],
+        "bot_concurrent_requests": 3,
+        "bot_priority": "normal"
     },
     "enterprise": {
-        "name": "enterprise",
         "display_name": "Enterprise Plan",
-        "description": "Enterprise-grade link checking with unlimited features",
+        "description": "Full-featured solution for large organizations",
         "monthly_price": Decimal("99.99"),
         "yearly_price": Decimal("999.99"),
-        "daily_check_limit": -1,  # Unlimited
-        "monthly_check_limit": -1,  # Unlimited
-        "api_rate_limit": 500,
-        "max_projects": -1,  # Unlimited
-        "max_team_members_per_project": -1,  # Unlimited
-        "max_alerts_per_project": -1,  # Unlimited
-        "monitoring_frequency_minutes": 60,  # 1 hour
-        "scan_depth_limit": 10,
-        "max_links_per_scan": 1000,
+        "daily_check_limit": -1,  # unlimited
+        "monthly_check_limit": -1,  # unlimited
+        "api_rate_limit": 1000,
+        "max_projects": -1,  # unlimited
+        "max_team_members_per_project": -1,  # unlimited
+        "max_alerts_per_project": -1,  # unlimited
+        "monitoring_frequency_minutes": 5,
+        "scan_depth_limit": -1,  # unlimited
+        "max_links_per_scan": -1,  # unlimited
         "ai_analysis_enabled": True,
         "bulk_checking_enabled": True,
         "api_access_enabled": True,
         "priority_support": True,
         "custom_branding": True,
-        "trial_days": 30
+        "trial_days": 30,
+        # Bot-specific limits
+        "bot_access_enabled": True,
+        "bot_monthly_requests": 5000,
+        "bot_platforms_allowed": 10,
+        "bot_analysis_types": ["account_safety", "content_compliance", "verified_followers", "advanced_analytics"],
+        "bot_features": ["basic_analysis", "detailed_reports", "export_data", "api_access", "custom_alerts"],
+        "bot_concurrent_requests": 10,
+        "bot_priority": "high"
     }
 }
 

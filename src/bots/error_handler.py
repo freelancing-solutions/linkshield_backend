@@ -8,6 +8,7 @@ and response formatting with appropriate fallbacks and user guidance.
 
 import logging
 import traceback
+import functools
 from typing import Dict, Any, Optional, List, Union
 from enum import Enum
 from datetime import datetime
@@ -772,6 +773,44 @@ class BotErrorHandler:
             }
         }
     
+    async def handle_error(
+        self,
+        category: ErrorCategory,
+        severity: ErrorSeverity,
+        platform: Union[str, PlatformType],
+        original_error: Exception,
+        user_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Generic error handling method for direct error logging.
+        
+        Args:
+            category: Error category for classification
+            severity: Error severity level
+            platform: Platform where error occurred
+            original_error: Original exception that occurred
+            user_id: User ID associated with the error
+            context: Additional context information
+        """
+        try:
+            # Create structured bot error
+            bot_error = BotError(
+                message=f"Error in {category.value}: {str(original_error)}",
+                category=category,
+                severity=severity,
+                platform=platform,
+                user_id=user_id,
+                original_error=original_error,
+                context=context or {}
+            )
+            
+            # Log the error
+            await self._log_error(bot_error)
+            
+        except Exception as e:
+            logger.error(f"Error in generic error handler: {e}")
+
     async def health_check(self) -> Dict[str, Any]:
         """Perform health check on error handling system."""
         try:
@@ -803,4 +842,73 @@ class BotErrorHandler:
 
 
 # Global error handler instance
-bot_error_handler = BotErrorHandler()
+_bot_error_handler_instance = BotErrorHandler()
+
+
+def bot_error_handler(category: ErrorCategory, severity: ErrorSeverity):
+    """
+    Decorator for handling bot errors with centralized error management.
+    
+    Args:
+        category: Error category for classification
+        severity: Error severity level
+        
+    Returns:
+        Decorated function with error handling
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as error:
+                # Extract context from function arguments
+                context = {}
+                if args:
+                    # Try to extract common context from first argument
+                    first_arg = args[0]
+                    if hasattr(first_arg, '__dict__'):
+                        context.update({
+                            'class_name': first_arg.__class__.__name__,
+                            'method_name': func.__name__
+                        })
+                
+                # Create structured bot error
+                bot_error = BotError(
+                    message=f"Error in {func.__name__}: {str(error)}",
+                    category=category,
+                    severity=severity,
+                    original_error=error,
+                    context=context
+                )
+                
+                # Log the error using the global handler
+                await _bot_error_handler_instance._log_error(bot_error)
+                
+                # For critical errors, re-raise to ensure proper handling
+                if severity == ErrorSeverity.CRITICAL:
+                    raise error
+                
+                # Return appropriate error response based on function signature
+                if 'BotResponse' in str(func.__annotations__.get('return', '')):
+                    return BotResponse.error_response(
+                        error_message=_bot_error_handler_instance._get_user_message(bot_error),
+                        response_type=ResponseType.ERROR,
+                        data={
+                            "error_id": bot_error.error_id,
+                            "category": category.value,
+                            "severity": severity.value
+                        }
+                    )
+                elif 'FormattedResponse' in str(func.__annotations__.get('return', '')):
+                    return _bot_error_handler_instance._create_emergency_fallback_response("unknown")
+                else:
+                    # For other return types, re-raise the error
+                    raise error
+                    
+        return wrapper
+    return decorator
+
+
+# Expose the instance for direct method calls
+bot_error_handler_instance = _bot_error_handler_instance

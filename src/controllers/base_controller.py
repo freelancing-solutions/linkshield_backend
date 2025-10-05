@@ -14,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import text
 from pydantic import ValidationError
 
-from src.config.database import get_db
+from src.config.database import get_db, get_db_session
 from src.config.settings import get_settings
 from src.services.security_service import SecurityService
 from src.authentication.auth_service import AuthService
@@ -68,7 +68,7 @@ class BaseController(WebhookController):
         )
 
         # Use the existing get_db dependency
-        async for session in get_db():
+        async for session in get_db_session():
             try:
                 # Validate session connection - only in DEBUG mode
                 if self.settings.DEBUG:
