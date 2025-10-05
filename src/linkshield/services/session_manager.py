@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 from linkshield.models.user import User, UserSession, UserRole
 from linkshield.models.admin import SessionLimitsConfig
 from linkshield.config.settings import get_settings
-from linkshield.database.connection import get_db_session
+from linkshield.config.database import get_db_session
 from linkshield.security.device_fingerprinting import DeviceFingerprintingService
 from linkshield.security.geolocation_service import GeolocationService
 from linkshield.services.notification_service import NotificationService
