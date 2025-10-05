@@ -41,6 +41,14 @@ class RateLimitScope(str, Enum):
     TEAM_INVITATION = "team_invitation"
     ALERT_CREATION = "alert_creation"
     ALERT_MODIFICATION = "alert_modification"
+    # Authentication-specific scopes for progressive rate limiting
+    AUTH_LOGIN = "auth_login"
+    AUTH_LOGIN_FAILED = "auth_login_failed"
+    AUTH_REGISTRATION = "auth_registration"
+    AUTH_PASSWORD_RESET = "auth_password_reset"
+    AUTH_EMAIL_VERIFICATION = "auth_email_verification"
+    AUTH_RESEND_VERIFICATION = "auth_resend_verification"
+    AUTH_CHANGE_PASSWORD = "auth_change_password"
     # Extension-specific scopes
     EXTENSION_URL_CHECK = "extension_url_check"
     EXTENSION_BULK_URL_CHECK = "extension_bulk_url_check"
@@ -71,6 +79,14 @@ DEFAULT_RATE_LIMITS = {
     RateLimitScope.TEAM_INVITATION: RateLimitConfig(limit=20, window=3600),
     RateLimitScope.ALERT_CREATION: RateLimitConfig(limit=100, window=3600),
     RateLimitScope.ALERT_MODIFICATION: RateLimitConfig(limit=200, window=3600),
+    # Authentication rate limits with progressive restrictions
+    RateLimitScope.AUTH_LOGIN: RateLimitConfig(limit=10, window=900, strategy=RateLimitStrategy.SLIDING_WINDOW),  # 10 attempts per 15 min
+    RateLimitScope.AUTH_LOGIN_FAILED: RateLimitConfig(limit=5, window=900, strategy=RateLimitStrategy.FIXED_WINDOW),  # 5 failed attempts per 15 min
+    RateLimitScope.AUTH_REGISTRATION: RateLimitConfig(limit=5, window=3600, strategy=RateLimitStrategy.SLIDING_WINDOW),  # 5 registrations per hour
+    RateLimitScope.AUTH_PASSWORD_RESET: RateLimitConfig(limit=3, window=3600, strategy=RateLimitStrategy.SLIDING_WINDOW),  # 3 password resets per hour
+    RateLimitScope.AUTH_EMAIL_VERIFICATION: RateLimitConfig(limit=5, window=3600, strategy=RateLimitStrategy.SLIDING_WINDOW),  # 5 verifications per hour
+    RateLimitScope.AUTH_RESEND_VERIFICATION: RateLimitConfig(limit=3, window=3600, strategy=RateLimitStrategy.SLIDING_WINDOW),  # 3 resends per hour
+    RateLimitScope.AUTH_CHANGE_PASSWORD: RateLimitConfig(limit=5, window=3600, strategy=RateLimitStrategy.SLIDING_WINDOW),  # 5 password changes per hour
     # Extension quotas (per 60s window). Multiplied by subscription tier via SUBSCRIPTION_MULTIPLIERS
     RateLimitScope.EXTENSION_URL_CHECK: RateLimitConfig(limit=12, window=60, strategy=RateLimitStrategy.SLIDING_WINDOW),
     RateLimitScope.EXTENSION_BULK_URL_CHECK: RateLimitConfig(limit=6, window=60, strategy=RateLimitStrategy.SLIDING_WINDOW),
@@ -542,8 +558,9 @@ def rate_limit(scope: str):
                 logger.warning(f"No request object found for rate limiting in {func.__name__}")
                 return await func(*args, **kwargs)
             
-            # Get client identifier (IP address)
-            client_ip = request.client.host if request.client else "unknown"
+            # Get client identifier (IP address) using secure IP detection
+            from linkshield.utils.ip_utils import get_client_ip
+            client_ip = get_client_ip(request)
             
             # Get user information if available
             user_id = None

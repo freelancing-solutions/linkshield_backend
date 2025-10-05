@@ -57,9 +57,10 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         # Update session activity for concurrent session tracking
     session_manager = SessionManager()
     
-    # Extract device fingerprint and IP for enhanced validation
+    # Extract device fingerprint and IP for enhanced validation using secure IP detection
+    from linkshield.utils.ip_utils import get_client_ip
     fingerprint_data = None
-    ip_address = request.client.host if hasattr(request, 'client') and request.client else None
+    ip_address = get_client_ip(request) if request else None
     
     # Try to extract device fingerprint from headers
     if hasattr(request, 'headers'):

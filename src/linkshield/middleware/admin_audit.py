@@ -22,6 +22,7 @@ from linkshield.config.database import get_db_session
 from linkshield.models.admin import AdminAction, ActionType
 from linkshield.models.user import User, UserRole
 from linkshield.services.security_service import SecurityService
+from linkshield.utils.ip_utils import get_client_ip
 
 
 class AdminAuditMiddleware(BaseHTTPMiddleware):
@@ -210,7 +211,7 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
                 "path": request.url.path,
                 "query_params": dict(request.query_params),
                 "headers": self._sanitize_headers(dict(request.headers)),
-                "client_ip": request.client.host if request.client else None,
+                "client_ip": get_client_ip(request),
                 "user_agent": request.headers.get("user-agent"),
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
@@ -410,7 +411,7 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
                             "full_name": user_info.get("full_name")
                         }
                     },
-                    ip_address=request.client.host if request.client else None,
+                    ip_address=get_client_ip(request),
                     user_agent=request.headers.get("user-agent"),
                     success=error_info is None,
                     created_at=datetime.now(timezone.utc)

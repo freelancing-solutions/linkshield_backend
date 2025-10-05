@@ -24,6 +24,7 @@ from linkshield.controllers.user_controller import (
 from linkshield.models.user import User
 from linkshield.services.depends import get_security_service, get_auth_service, get_email_service
 from linkshield.services.security_service import SecurityService
+from linkshield.services.advanced_rate_limiter import rate_limit, RateLimitScope
 
 # ------------------------------------------------------------------
 # Router
@@ -113,6 +114,7 @@ class CreateAPIKeyRequest(BaseModel):
 # ------------------------------------------------------------------
 
 @router.post("/register", response_model=UserResponse, summary="Register new user")
+@rate_limit(scope=RateLimitScope.AUTH_REGISTRATION)
 async def register_user(
     request: UserRegistrationRequest,
     background_tasks: BackgroundTasks,
@@ -120,7 +122,7 @@ async def register_user(
     controller: UserController = Depends(get_user_controller),
 ) -> UserResponse:
     """
-    Register a new user account.
+    Register a new user account with progressive rate limiting.
 
     **Request body** – `UserRegistrationRequest`
     - `email`: valid e-mail address (unique)
@@ -136,7 +138,7 @@ async def register_user(
     - Generates e-mail verification token
     - Queues verification e-mail (background task)
 
-    **Rate-limit**: 5 registrations / hour / IP
+    **Rate-limit**: 5 registrations / hour / IP (progressive restriction)
 
     **Errors**:
     - 400  – validation or terms not accepted
@@ -147,35 +149,56 @@ async def register_user(
 
 
 @router.post("/login", response_model=LoginResponse, summary="User login")
-async def login_user(
-    request: UserLoginRequest,
-    req: Request,
-    controller: UserController = Depends(get_user_controller),
+@rate_limit(scope=RateLimitScope.AUTH_LOGIN)
+async def login(
+    request_model: UserLoginRequest,
+    request: Request,
+    user_controller: UserController = Depends(get_user_controller),
 ) -> LoginResponse:
     """
-    Authenticate user and obtain an access token.
-
-    **Request body** – `UserLoginRequest`
-    - `email`: registered e-mail
-    - `password`: account password
-    - `remember_me`: extend session to 30 d (default 1 d)
-    - `device_info`: optional dict for audit
-
-    **Response** – `LoginResponse`
-    - `access_token`: JWT signed by server
-    - `token_type`: always "bearer"
-    - `expires_in`: seconds until expiry
-    - `user`: serialized user profile
-    - `session_id`: UUID of new session
-
-    **Rate-limit**: 10 login attempts / 15 min / IP
-
-    **Errors**:
-    - 401 – bad credentials
-    - 423 – account locked (too many failures)
-    - 429 – rate-limit exceeded
+    User login endpoint with progressive rate limiting and failed login tracking.
+    
+    Progressive rate limiting:
+    - 10 login attempts / 15 min / IP (sliding window)
+    - Failed login attempts trigger additional rate limiting
+    - Account lockout after 5 failed attempts
+    
+    Returns:
+        LoginResponse: Access token and user information
+        
+    Raises:
+        HTTPException: 401 for invalid credentials, 423 for locked account, 429 for rate limit exceeded
     """
-    return await controller.login_user(request_model=request, req=req)
+    try:
+        return await user_controller.login_user(request_model=request_model, req=request)
+    except HTTPException as e:
+        # If login failed due to invalid credentials, apply failed login rate limiting
+        if e.status_code == 401:
+            # Apply additional rate limiting for failed login attempts
+            from linkshield.services.advanced_rate_limiter import get_advanced_rate_limiter
+            rate_limiter = get_advanced_rate_limiter()
+            
+            # Get client IP for failed login tracking
+            client_ip = request.client.host if request.client else "unknown"
+            
+            # Check failed login rate limit
+            failed_login_result = await rate_limiter.check_rate_limit(
+                scope=RateLimitScope.AUTH_LOGIN_FAILED,
+                identifier=client_ip,
+                user_id=None,  # No user ID for failed login
+                subscription_plan="free"  # Default plan for failed attempts
+            )
+            
+            if not failed_login_result.allowed:
+                # If failed login rate limit exceeded, return 429 instead of 401
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many failed login attempts. Please try again later.",
+                    headers={"Retry-After": str(failed_login_result.retry_after)}
+                )
+        
+        # Re-raise the original exception
+        raise e
 
 
 @router.post("/logout", summary="User logout")
@@ -228,13 +251,14 @@ async def update_user_profile(
 
 
 @router.post("/change-password", summary="Change user password")
+@rate_limit(scope=RateLimitScope.AUTH_CHANGE_PASSWORD)
 async def change_password(
     request: PasswordChangeRequest,
     user: User = Depends(get_current_user),
     controller: UserController = Depends(get_user_controller),
 ) -> None:
     """
-    Change password while authenticated.
+    Change password while authenticated with progressive rate limiting.
 
     **Request body** – `PasswordChangeRequest`
     - `current_password`: must match stored hash
@@ -244,13 +268,17 @@ async def change_password(
     - Hashes new password
     - Invalidates **all** existing sessions (forces re-login)
 
+    **Rate-limit**: 5 password changes / hour / user (progressive restriction)
+
     **Errors**:
     - 400 – current password wrong / new password weak or identical
+    - 429 – rate-limit exceeded
     """
     await controller.change_password(request_model=request, user=user)
 
 
 @router.post("/forgot-password", summary="Request password reset")
+@rate_limit(scope=RateLimitScope.AUTH_PASSWORD_RESET)
 async def forgot_password(
     request: ForgotPasswordRequest,
     req: Request,
@@ -258,7 +286,7 @@ async def forgot_password(
     controller: UserController = Depends(get_user_controller),
 ) -> None:
     """
-    Request a password-reset e-mail.
+    Request a password-reset e-mail with progressive rate limiting.
 
     **Request body** – `ForgotPasswordRequest`
     - `email`: address to receive reset link
@@ -268,7 +296,10 @@ async def forgot_password(
     - If account exists & active → generates single-use token (1 h expiry)
     - Queues reset e-mail as background task
 
-    **Rate-limit**: 3 requests / hour / IP
+    **Rate-limit**: 3 password reset requests / hour / IP (progressive restriction)
+
+    **Errors**:
+    - 429 – rate-limit exceeded
     """
     await controller.forgot_password(request_model=request, req=req, background_tasks=background_tasks)
 
@@ -290,6 +321,8 @@ async def reset_password(
     - Invalidates **all** sessions
     - Marks token used
 
+    **Note**: Rate limiting handled by token validation (single-use tokens)
+
     **Errors**:
     - 400 – invalid, expired, or already-used token
     """
@@ -297,32 +330,37 @@ async def reset_password(
 
 
 @router.post("/verify-email", summary="Verify email address")
+@rate_limit(scope=RateLimitScope.AUTH_EMAIL_VERIFICATION)
 async def verify_email(
     request: EmailVerificationRequest,
     controller: UserController = Depends(get_user_controller),
 ) -> UserResponse:
     """
-    Verify e-mail address using token received in inbox.
+    Verify e-mail address using token received in inbox with progressive rate limiting.
 
     **Request body** – `EmailVerificationRequest`
     - `token`: 24-hour valid token
 
     **Response** – updated `UserResponse` (`is_verified=true`)
 
+    **Rate-limit**: 5 email verifications / hour / IP (progressive restriction)
+
     **Errors**:
     - 400 – invalid, expired, or already-used token
+    - 429 – rate-limit exceeded
     """
     return await controller.verify_email(request_model=request)
 
 
 @router.post("/resend-verification", summary="Resend email verification")
+@rate_limit(scope=RateLimitScope.AUTH_RESEND_VERIFICATION)
 async def resend_verification(
     request: ResendVerificationRequest,
     background_tasks: BackgroundTasks,
     controller: UserController = Depends(get_user_controller),
 ) -> None:
     """
-    Re-send verification e-mail for an unverified account.
+    Re-send verification e-mail for an unverified account with progressive rate limiting.
 
     **Request body** – `ResendVerificationRequest`
     - `email`: address to re-send to
@@ -331,7 +369,10 @@ async def resend_verification(
     - Returns 204 regardless of existence or verification state
     - If unverified account exists → new token generated & e-mail queued
 
-    **Rate-limit**: silently enforced per IP
+    **Rate-limit**: 3 resend verification requests / hour / IP (progressive restriction)
+
+    **Errors**:
+    - 429 – rate-limit exceeded
     """
     await controller.resend_verification(request_model=request, background_tasks=background_tasks)
 

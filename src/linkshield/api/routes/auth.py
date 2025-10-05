@@ -46,8 +46,9 @@ async def logout(
     try:
         auth_service = AuthService()
         
-        # Get client information for audit trail
-        client_ip = request.client.host
+        # Get client information for audit trail using secure IP detection
+        from linkshield.utils.ip_utils import get_client_ip
+        client_ip = get_client_ip(request)
         user_agent = request.headers.get("user-agent", "")
         
         # Logout user (blacklist token)

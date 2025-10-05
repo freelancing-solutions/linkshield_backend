@@ -97,5 +97,8 @@ transformers
 asyncpg
 psutil
 
+# Geolocation Services
+geopy
+
 # Payment Processing
 paddle-python-sdk

@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     CSP_REPORT_ONLY: bool = Field(default=False, env="LINKSHIELD_CSP_REPORT_ONLY")
     CSP_REPORT_URI: Optional[str] = Field(default=None, env="LINKSHIELD_CSP_REPORT_URI")
     CSP_SCRIPT_SRC: str = Field(default="'self'", env="LINKSHIELD_CSP_SCRIPT_SRC")
-    CSP_STYLE_SRC: str = Field(default="'self' 'unsafe-inline'", env="LINKSHIELD_CSP_STYLE_SRC")
+    CSP_STYLE_SRC: str = Field(default="'self'", env="LINKSHIELD_CSP_STYLE_SRC")
     CSP_IMG_SRC: str = Field(default="'self' data: https:", env="LINKSHIELD_CSP_IMG_SRC")
     
     # Compliance and Regulatory Settings
