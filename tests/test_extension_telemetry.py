@@ -9,10 +9,10 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timezone
 
-from src.social_protection.services.extension_data_processor import ExtensionDataProcessor
-from src.social_protection.types import PlatformType, RiskLevel
-from src.models.social_protection import ContentType
-from src.social_protection import metrics
+from linkshield.social_protection.services.extension_data_processor import ExtensionDataProcessor
+from linkshield.social_protection.types import PlatformType, RiskLevel
+from linkshield.models.social_protection import ContentType
+from linkshield.social_protection import metrics
 
 
 @pytest.fixture

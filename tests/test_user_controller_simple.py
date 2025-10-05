@@ -19,7 +19,7 @@ class TestUserControllerBasics:
         import sys
         sys.modules['src.controllers.user_controller'] = Mock()
         
-        from src.social_protection.controllers.user_controller import UserController
+        from linkshield.social_protection.controllers.user_controller import UserController
         
         # Create mock services
         mock_services = {
@@ -54,7 +54,7 @@ class TestUserControllerBasics:
         import sys
         sys.modules['src.controllers.user_controller'] = Mock()
         
-        from src.social_protection.controllers.user_controller import UserController
+        from linkshield.social_protection.controllers.user_controller import UserController
         
         mock_services = {
             "security_service": Mock(),
@@ -90,7 +90,7 @@ class TestUserControllerBasics:
         import sys
         sys.modules['src.controllers.user_controller'] = Mock()
         
-        from src.social_protection.controllers.user_controller import UserController
+        from linkshield.social_protection.controllers.user_controller import UserController
         
         mock_services = {
             "security_service": Mock(),
@@ -138,7 +138,7 @@ class TestUserControllerErrorHandling:
         import sys
         sys.modules['src.controllers.user_controller'] = Mock()
         
-        from src.social_protection.controllers.user_controller import UserController
+        from linkshield.social_protection.controllers.user_controller import UserController
         
         mock_services = {
             "security_service": Mock(),

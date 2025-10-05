@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi.testclient import TestClient
 
-from src.app import app
-from src.models.user import User
-from src.social_protection.data_models import (
+from linkshield.app import app
+from linkshield.models.user import User
+from linkshield.social_protection.data_models import (
     ProfileScanRequest,
     ContentRiskAssessment,
     ExtensionDataRequest,
@@ -36,7 +36,7 @@ class TestSocialProtectionPerformance:
     @pytest.fixture
     def client(self):
         """Create test client."""
-        return TestClient(app)
+        return TestClient(create_app())
 
     @pytest.fixture
     def mock_user_token(self):

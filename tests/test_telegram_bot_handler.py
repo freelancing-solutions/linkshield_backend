@@ -11,8 +11,8 @@ from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime
 from typing import Dict, Any
 
-from src.bots.handlers.telegram_bot_handler import TelegramBotHandler
-from src.bots.models import (
+from linkshield.bots.handlers.telegram_bot_handler import TelegramBotHandler
+from linkshield.bots.models import (
     BotCommand, BotResponse, CommandType, ResponseType, 
     DeliveryMethod, FormattedResponse
 )

@@ -15,7 +15,7 @@ import redis.asyncio as redis
 from fastapi import Request, HTTPException
 from fastapi.testclient import TestClient
 
-from src.security.rate_limiting import (
+from linkshield.security.rate_limiting import (
     RateLimitService,
     RateLimitConfig,
     RateLimitRule,
@@ -27,7 +27,7 @@ from src.security.rate_limiting import (
     SlidingWindowLimiter,
     FixedWindowLimiter
 )
-from src.middleware.rate_limit_middleware import RateLimitMiddleware
+from linkshield.middleware.rate_limit_middleware import RateLimitMiddleware
 
 
 class TestRateLimitService:

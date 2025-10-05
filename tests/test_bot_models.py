@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from typing import Dict, Any
 
 # Import directly from models to avoid gateway import issues
-import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 

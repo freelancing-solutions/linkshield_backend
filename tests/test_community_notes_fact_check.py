@@ -5,11 +5,11 @@ Tests for Community Notes Analyzer fact-check lookup functionality.
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
-from src.social_protection.content_analyzer.community_notes_analyzer import (
+from linkshield.social_protection.content_analyzer.community_notes_analyzer import (
     CommunityNotesAnalyzer,
     CommunityNotesResult
 )
-from src.services.ai_service import AIService
+from linkshield.services.ai_service import AIService
 
 
 @pytest.fixture

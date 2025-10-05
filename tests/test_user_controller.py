@@ -21,17 +21,17 @@ from fastapi import HTTPException
 import sys
 sys.modules['src.controllers.user_controller'] = Mock()
 
-from src.social_protection.controllers.user_controller import UserController
-from src.models.user import User
-from src.social_protection.types import PlatformType, RiskLevel
-from src.social_protection.content_analyzer.content_risk_analyzer import ContentRiskResult
-from src.social_protection.content_analyzer.link_penalty_detector import LinkPenaltyResult
-from src.social_protection.content_analyzer.spam_pattern_detector import SpamPatternResult
-from src.social_protection.content_analyzer.community_notes_analyzer import CommunityNotesResult
-from src.social_protection.algorithm_health.visibility_scorer import VisibilityAnalysisResult
-from src.social_protection.algorithm_health.engagement_analyzer import EngagementAnalysisResult, EngagementQuality
-from src.social_protection.algorithm_health.penalty_detector import PenaltyDetectionResult
-from src.social_protection.algorithm_health.shadow_ban_detector import ShadowBanDetectionResult
+from linkshield.social_protection.controllers.user_controller import UserController
+from linkshield.models.user import User
+from linkshield.social_protection.types import PlatformType, RiskLevel
+from linkshield.social_protection.content_analyzer.content_risk_analyzer import ContentRiskResult
+from linkshield.social_protection.content_analyzer.link_penalty_detector import LinkPenaltyResult
+from linkshield.social_protection.content_analyzer.spam_pattern_detector import SpamPatternResult
+from linkshield.social_protection.content_analyzer.community_notes_analyzer import CommunityNotesResult
+from linkshield.social_protection.algorithm_health.visibility_scorer import VisibilityAnalysisResult
+from linkshield.social_protection.algorithm_health.engagement_analyzer import EngagementAnalysisResult, EngagementQuality
+from linkshield.social_protection.algorithm_health.penalty_detector import PenaltyDetectionResult
+from linkshield.social_protection.algorithm_health.shadow_ban_detector import ShadowBanDetectionResult
 
 
 @pytest.fixture

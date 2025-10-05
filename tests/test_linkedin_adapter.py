@@ -10,13 +10,13 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime
 from typing import Dict, Any
 
-from src.social_protection.platform_adapters.linkedin_adapter import (
+from linkshield.social_protection.platform_adapters.linkedin_adapter import (
     LinkedInProtectionAdapter,
     LinkedInRiskFactor,
     LinkedInContentType
 )
-from src.social_protection.types import PlatformType, RiskLevel
-from src.social_protection.exceptions import PlatformAdapterError
+from linkshield.social_protection.types import PlatformType, RiskLevel
+from linkshield.social_protection.exceptions import PlatformAdapterError
 
 
 @pytest.fixture

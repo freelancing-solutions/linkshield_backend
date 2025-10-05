@@ -16,7 +16,7 @@ import json
 from uuid import uuid4
 from fastapi import Request, HTTPException
 
-from src.authentication.api_key_manager import (
+from linkshield.authentication.api_key_manager import (
     APIKeyManager,
     APIKeyData,
     APIKeyConfig,
@@ -26,8 +26,8 @@ from src.authentication.api_key_manager import (
     APIKeyRotationService,
     APIKeyVersionManager
 )
-from src.models.user import APIKey, User
-from src.security.api_key_security import (
+from linkshield.models.user import APIKey, User
+from linkshield.security.api_key_security import (
     APIKeySecurityService,
     APIKeyValidator,
     APIKeyMonitor,

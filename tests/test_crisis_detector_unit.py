@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from src.config.database import Base
-from src.models.social_protection import CrisisAlertORM, CrisisStateORM
+from linkshield.config.database import Base
+from linkshield.models.social_protection import CrisisAlertORM, CrisisStateORM
 
 
 # Test database setup

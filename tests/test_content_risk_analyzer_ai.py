@@ -4,8 +4,8 @@ Tests for ContentRiskAnalyzer AI integration.
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
-from src.social_protection.content_analyzer.content_risk_analyzer import ContentRiskAnalyzer
-from src.services.ai_service import AIService
+from linkshield.social_protection.content_analyzer.content_risk_analyzer import ContentRiskAnalyzer
+from linkshield.services.ai_service import AIService
 
 
 @pytest.fixture

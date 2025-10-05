@@ -13,11 +13,11 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timezone
 
-from src.social_protection.content_analyzer.content_risk_analyzer import (
+from linkshield.social_protection.content_analyzer.content_risk_analyzer import (
     ContentRiskAnalyzer,
     ContentRiskResult
 )
-from src.services.ai_service import AIService
+from linkshield.services.ai_service import AIService
 
 
 @pytest.fixture

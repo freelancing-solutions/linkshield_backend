@@ -16,22 +16,22 @@ from datetime import datetime
 from typing import Dict, Any
 
 # Import the adapter
-from src.social_protection.platform_adapters.telegram_adapter import (
+from linkshield.social_protection.platform_adapters.telegram_adapter import (
     TelegramProtectionAdapter,
     TelegramRiskFactor,
     TELEGRAM_AVAILABLE
 )
-from src.social_protection.types import PlatformType, RiskLevel
-from src.social_protection.data_models.social_profile_models import (
+from linkshield.social_protection.types import PlatformType, RiskLevel
+from linkshield.social_protection.data_models.social_profile_models import (
     ProfileScanRequest,
     ProfileScanResult
 )
-from src.social_protection.data_models.content_risk_models import (
+from linkshield.social_protection.data_models.content_risk_models import (
     ContentAnalysisRequest,
     ContentAnalysisResult,
     ContentType
 )
-from src.social_protection.exceptions import PlatformAdapterError
+from linkshield.social_protection.exceptions import PlatformAdapterError
 
 
 @pytest.fixture

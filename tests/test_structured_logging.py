@@ -8,7 +8,7 @@ consistent context across all log messages.
 
 import pytest
 from uuid import uuid4
-from src.social_protection.logging_utils import get_logger, StructuredLogger
+from linkshield.social_protection.logging_utils import get_logger, StructuredLogger
 
 
 class TestStructuredLogger:

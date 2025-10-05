@@ -8,9 +8,9 @@ import pytest
 import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 
-from src.bots.registration import BotRegistrationManager, BotConfigurationManager
-from src.bots.lifecycle import BotLifecycleManager, BotStatus
-from src.config.settings import settings
+from linkshield.bots.registration import BotRegistrationManager, BotConfigurationManager
+from linkshield.bots.lifecycle import BotLifecycleManager, BotStatus
+from linkshield.config.settings import settings
 
 
 class TestBotRegistrationBasic:
@@ -244,7 +244,7 @@ class TestBotRegistrationIntegration:
     @pytest.mark.asyncio
     async def test_full_initialization_workflow(self):
         """Test the complete initialization workflow."""
-        from src.bots.startup import initialize_bot_service
+        from linkshield.bots.startup import initialize_bot_service
         
         # Mock all external dependencies
         with patch('src.bots.startup.bot_configuration_manager') as mock_config, \
@@ -275,7 +275,7 @@ class TestBotRegistrationIntegration:
     @pytest.mark.asyncio
     async def test_initialization_with_failures(self):
         """Test initialization workflow with component failures."""
-        from src.bots.startup import initialize_bot_service
+        from linkshield.bots.startup import initialize_bot_service
         
         # Mock configuration manager failure
         with patch('src.bots.startup.bot_configuration_manager') as mock_config:
@@ -290,7 +290,7 @@ class TestBotRegistrationIntegration:
     @pytest.mark.asyncio
     async def test_health_check_functionality(self):
         """Test health check functionality."""
-        from src.bots.startup import check_bot_service_health
+        from linkshield.bots.startup import check_bot_service_health
         
         # Mock dependencies
         with patch('src.bots.startup.bot_lifecycle_manager') as mock_lifecycle, \

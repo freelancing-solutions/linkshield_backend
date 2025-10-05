@@ -11,20 +11,20 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException, status
 
-from src.controllers.dashboard_controller import DashboardController
-from src.controllers.dashboard_models import (
+from linkshield.controllers.dashboard_controller import DashboardController
+from linkshield.controllers.dashboard_models import (
     SocialProtectionOverviewResponse,
     ProtectionHealthResponse,
 )
-from src.models.user import User
-from src.models.social_protection import (
+from linkshield.models.user import User
+from linkshield.models.social_protection import (
     SocialProfileScan,
     ContentRiskAssessment,
     RiskLevel,
 )
-from src.services.security_service import SecurityService
-from src.authentication.auth_service import AuthService
-from src.services.email_service import EmailService
+from linkshield.services.security_service import SecurityService
+from linkshield.authentication.auth_service import AuthService
+from linkshield.services.email_service import EmailService
 
 
 class TestSocialProtectionController:

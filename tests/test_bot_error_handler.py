@@ -12,11 +12,11 @@ from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime
 from typing import Dict, Any
 
-from src.bots.error_handler import (
+from linkshield.bots.error_handler import (
     BotErrorHandler, BotError, ErrorCategory, ErrorSeverity,
     bot_error_handler
 )
-from src.bots.models import (
+from linkshield.bots.models import (
     BotCommand, BotResponse, FormattedResponse,
     CommandType, ResponseType, DeliveryMethod, PlatformType
 )

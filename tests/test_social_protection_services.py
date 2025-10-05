@@ -17,19 +17,19 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.social_protection.services.social_scan_service import (
+from linkshield.social_protection.services.social_scan_service import (
     SocialScanService,
     SocialScanServiceError,
     ScanNotFoundError,
     InvalidScanStateError
 )
-from src.social_protection.services.extension_data_processor import (
+from linkshield.social_protection.services.extension_data_processor import (
     ExtensionDataProcessor,
     ExtensionDataProcessorError,
     ValidationError,
     ProcessingError
 )
-from src.models.social_protection import (
+from linkshield.models.social_protection import (
     SocialProfileScan,
     ContentRiskAssessment,
     PlatformType,
@@ -38,7 +38,7 @@ from src.models.social_protection import (
     ContentType,
     AssessmentType
 )
-from src.social_protection.data_models import (
+from linkshield.social_protection.data_models import (
     ExtensionRequest,
     ExtensionResponse,
     RealTimeAssessment,
@@ -48,7 +48,7 @@ from src.social_protection.data_models import (
     ComprehensiveAssessment,
     AssessmentHistory
 )
-from src.services.ai_service import AIService
+from linkshield.services.ai_service import AIService
 
 
 class TestSocialScanService:

@@ -18,12 +18,12 @@ from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from src.social_protection.services.extension_data_processor import (
+from linkshield.social_protection.services.extension_data_processor import (
     ExtensionDataProcessor,
     ValidationError,
     ProcessingError
 )
-from src.social_protection.data_models import (
+from linkshield.social_protection.data_models import (
     ExtensionScanPayload,
     ExtensionResponse,
     RealTimeAssessment,
@@ -31,8 +31,8 @@ from src.social_protection.data_models import (
     BatchExtensionRequest,
     BatchExtensionResponse
 )
-from src.social_protection.types import PlatformType, RiskLevel
-from src.models.social_protection import ContentType, AssessmentType
+from linkshield.social_protection.types import PlatformType, RiskLevel
+from linkshield.models.social_protection import ContentType, AssessmentType
 
 
 @pytest.fixture

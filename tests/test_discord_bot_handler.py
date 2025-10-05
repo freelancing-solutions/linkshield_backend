@@ -10,8 +10,8 @@ from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime
 import json
 
-from src.bots.handlers.discord_bot_handler import DiscordBotHandler
-from src.bots.models import (
+from linkshield.bots.handlers.discord_bot_handler import DiscordBotHandler
+from linkshield.bots.models import (
     BotCommand, BotResponse, CommandType, ResponseType, 
     DeliveryMethod, FormattedResponse
 )

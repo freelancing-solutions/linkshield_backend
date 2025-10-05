@@ -10,9 +10,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 
-from src.bots.gateway import QuickAccessBotGateway
-from src.bots.models import BotCommand, BotResponse, CommandType, Platform
-from src.models.user import User
+from linkshield.bots.gateway import QuickAccessBotGateway
+from linkshield.bots.models import BotCommand, BotResponse, CommandType, Platform
+from linkshield.models.user import User
 
 
 class TestQuickAccessBotGateway:

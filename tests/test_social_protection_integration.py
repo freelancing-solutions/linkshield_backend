@@ -14,9 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 from fastapi import status
 
-from app import app
-from src.models.user import User
-from src.models.social_protection import (
+from linkshield.main import create_app
+from linkshield.models.user import User
+from linkshield.models.social_protection import (
     SocialProfileScan,
     ContentRiskAssessment,
     RiskLevel,
@@ -33,7 +33,7 @@ class TestSocialProtectionIntegration:
     @pytest.fixture
     def client(self):
         """Create test client."""
-        return TestClient(app)
+        return TestClient(create_app())
 
     @pytest.fixture
     def mock_user_token(self):

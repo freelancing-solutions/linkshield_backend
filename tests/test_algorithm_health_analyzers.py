@@ -9,14 +9,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any
 from unittest.mock import Mock, AsyncMock, patch
 
-from src.social_protection.algorithm_health.visibility_scorer import (
+from linkshield.social_protection.algorithm_health.visibility_scorer import (
     VisibilityScorer,
     VisibilityTrend,
     VisibilityFactor,
     VisibilityMetrics,
     VisibilityAnalysis
 )
-from src.social_protection.algorithm_health.engagement_analyzer import (
+from linkshield.social_protection.algorithm_health.engagement_analyzer import (
     EngagementAnalyzer,
     EngagementType,
     EngagementQuality,
@@ -24,7 +24,7 @@ from src.social_protection.algorithm_health.engagement_analyzer import (
     EngagementMetrics,
     EngagementAnalysis
 )
-from src.social_protection.algorithm_health.penalty_detector import (
+from linkshield.social_protection.algorithm_health.penalty_detector import (
     PenaltyDetector,
     PenaltyType,
     PenaltySeverity,
@@ -32,14 +32,14 @@ from src.social_protection.algorithm_health.penalty_detector import (
     PenaltyIndicator,
     PenaltyAnalysis
 )
-from src.social_protection.algorithm_health.shadow_ban_detector import (
+from linkshield.social_protection.algorithm_health.shadow_ban_detector import (
     ShadowBanDetector,
     ShadowBanType,
     ShadowBanSeverity,
     ShadowBanTest,
     ShadowBanAnalysis
 )
-from src.social_protection.types import PlatformType, RiskLevel
+from linkshield.social_protection.types import PlatformType, RiskLevel
 
 
 # Test Fixtures

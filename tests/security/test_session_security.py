@@ -16,7 +16,7 @@ import json
 from uuid import uuid4
 from fastapi import Request, Response, HTTPException
 
-from src.authentication.session_manager import (
+from linkshield.authentication.session_manager import (
     SessionManager,
     SessionData,
     SessionConfig,
@@ -26,8 +26,8 @@ from src.authentication.session_manager import (
     SessionErrorType,
     ConcurrentSessionManager
 )
-from src.models.user import UserSession, User
-from src.security.session_security import (
+from linkshield.models.user import UserSession, User
+from linkshield.security.session_security import (
     SessionSecurityService,
     SessionRiskAnalyzer,
     SessionAnomalyDetector,

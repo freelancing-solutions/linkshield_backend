@@ -6,7 +6,6 @@ Tests crisis detection logic including signal calculation, severity mapping,
 hysteresis logic, AI integration, and alert persistence.
 """
 
-import sys
 import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,8 +16,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # Import database and models first to avoid circular imports
-from src.config.database import Base
-from src.models.social_protection import CrisisAlertORM, CrisisStateORM
+from linkshield.config.database import Base
+from linkshield.models.social_protection import CrisisAlertORM, CrisisStateORM
 
 # Import crisis detector components directly
 import importlib

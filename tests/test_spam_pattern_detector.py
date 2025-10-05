@@ -9,11 +9,11 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timezone
 
-from src.social_protection.content_analyzer.spam_pattern_detector import (
+from linkshield.social_protection.content_analyzer.spam_pattern_detector import (
     SpamPatternDetector,
     SpamPatternResult
 )
-from src.services.ai_service import AIService
+from linkshield.services.ai_service import AIService
 
 
 @pytest.fixture

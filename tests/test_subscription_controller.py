@@ -13,10 +13,10 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, AsyncMock
 import uuid
 
-from src.controllers.subscription_controller import SubscriptionController
-from src.services.subscription_service import SubscriptionService
-from src.models.subscription import UserSubscription
-from src.models.user import User
+from linkshield.controllers.subscription_controller import SubscriptionController
+from linkshield.services.subscription_service import SubscriptionService
+from linkshield.models.subscription import UserSubscription
+from linkshield.models.user import User
 
 
 class TestSubscriptionController:

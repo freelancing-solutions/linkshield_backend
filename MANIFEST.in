@@ -1,0 +1,43 @@
+# Include package data files
+include README.md
+include LICENSE
+include requirements.txt
+include requirements-dev.txt
+include requirements-test.txt
+include requirements-security.txt
+include requirements-performance.txt
+include requirements-monitoring.txt
+
+# Include configuration files
+recursive-include src/linkshield/config *.yaml *.yml *.json *.toml
+recursive-include src/linkshield/alembic *.py *.mako *.ini
+
+# Include static files and templates
+recursive-include src/linkshield/static *
+recursive-include src/linkshield/templates *
+
+# Include documentation
+recursive-include docs *
+recursive-include .kiro *
+
+# Include test files
+recursive-include tests *
+
+# Include scripts
+recursive-include scripts *
+
+# Exclude compiled Python files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude .pytest_cache
+global-exclude *.egg-info
+
+# Exclude development files
+exclude .env*
+exclude .vscode
+exclude .idea
+exclude *.log
+exclude .coverage
+exclude htmlcov

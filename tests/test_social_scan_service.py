@@ -13,14 +13,14 @@ from datetime import datetime, timezone, timedelta
 from uuid import uuid4, UUID
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
-from src.social_protection.services.social_scan_service import (
+from linkshield.social_protection.services.social_scan_service import (
     SocialScanService,
     SocialScanServiceError,
     ScanNotFoundError,
     InvalidScanStateError
 )
-from src.social_protection.exceptions import DatabaseError, TimeoutError as SPTimeoutError
-from src.models.social_protection import (
+from linkshield.social_protection.exceptions import DatabaseError, TimeoutError as SPTimeoutError
+from linkshield.models.social_protection import (
     SocialProfileScan,
     ContentRiskAssessment,
     PlatformType,

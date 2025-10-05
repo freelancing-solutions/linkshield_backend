@@ -17,7 +17,7 @@ import hashlib
 from fastapi import Request, Response, HTTPException
 from fastapi.testclient import TestClient
 
-from src.security.csrf_protection import (
+from linkshield.security.csrf_protection import (
     CSRFProtectionService,
     CSRFToken,
     CSRFConfig,
@@ -25,7 +25,7 @@ from src.security.csrf_protection import (
     CSRFError,
     CSRFErrorType
 )
-from src.middleware.csrf_middleware import CSRFMiddleware
+from linkshield.middleware.csrf_middleware import CSRFMiddleware
 
 
 class TestCSRFProtectionService:

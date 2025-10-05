@@ -2,10 +2,10 @@
 import pytest
 from starlette.testclient import TestClient
 
-from app import app
-from src.routes.extension import router as extension_router
-from src.services.advanced_rate_limiter import get_rate_limiter
-from src.services.depends import get_url_analysis_service, get_extension_data_processor
+from linkshield.main import create_app
+from linkshield.routes.extension import router as extension_router
+from linkshield.services.advanced_rate_limiter import get_rate_limiter
+from linkshield.services.depends import get_url_analysis_service, get_extension_data_processor
 
 
 class DummyAnalysis:
@@ -83,7 +83,7 @@ def reset_rate_limit_keys():
 
 def test_quick_url_check_rate_limit_headers_and_exceed():
     reset_rate_limit_keys()
-    client = TestClient(app)
+    client = TestClient(create_app())
 
     payload = {"url": "https://example.com"}
 
@@ -103,7 +103,7 @@ def test_quick_url_check_rate_limit_headers_and_exceed():
 
 def test_bulk_requires_auth_and_is_rate_limited():
     reset_rate_limit_keys()
-    client = TestClient(app)
+    client = TestClient(create_app())
 
     # Without auth should be 401
     r = client.post(
@@ -113,7 +113,7 @@ def test_bulk_requires_auth_and_is_rate_limited():
     assert r.status_code == 401
 
     # Override get_current_user to return a dummy user
-    from src.authentication.dependencies import get_current_user
+    from linkshield.authentication.dependencies import get_current_user
     app.dependency_overrides[get_current_user] = lambda: DummyUser()
 
     # With auth should succeed
@@ -139,7 +139,7 @@ def test_bulk_requires_auth_and_is_rate_limited():
 
 def test_content_requires_auth_and_is_rate_limited():
     reset_rate_limit_keys()
-    client = TestClient(app)
+    client = TestClient(create_app())
 
     # Without auth should be 401
     r = client.post(
@@ -149,7 +149,7 @@ def test_content_requires_auth_and_is_rate_limited():
     assert r.status_code == 401
 
     # Override get_current_user to return a dummy user
-    from src.authentication.dependencies import get_current_user
+    from linkshield.authentication.dependencies import get_current_user
     app.dependency_overrides[get_current_user] = lambda: DummyUser()
 
     # With auth should succeed

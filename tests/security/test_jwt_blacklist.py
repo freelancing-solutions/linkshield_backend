@@ -14,7 +14,7 @@ from uuid import uuid4
 import json
 import redis.asyncio as redis
 
-from src.security.jwt_blacklist import (
+from linkshield.security.jwt_blacklist import (
     JWTBlacklistService,
     BlacklistEntry,
     BlacklistReason,

@@ -17,17 +17,17 @@ from datetime import datetime, timedelta
 from typing import Dict, Any
 
 # Import the adapter
-from src.social_protection.platform_adapters.discord_adapter import (
+from linkshield.social_protection.platform_adapters.discord_adapter import (
     DiscordProtectionAdapter,
     DiscordRiskFactor
 )
-from src.social_protection.types import PlatformType, RiskLevel
-from src.social_protection.data_models import (
+from linkshield.social_protection.types import PlatformType, RiskLevel
+from linkshield.social_protection.data_models import (
     ProfileScanRequest,
     ContentAnalysisRequest,
     ContentType
 )
-from src.social_protection.exceptions import PlatformAdapterError
+from linkshield.social_protection.exceptions import PlatformAdapterError
 
 
 @pytest.fixture

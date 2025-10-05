@@ -15,20 +15,19 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import Mock, AsyncMock, patch
 import json
-import sys
 import os
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from src.models.analysis_results import (
+from linkshield.models.analysis_results import (
     BrokenLinkStatus, BrokenLinkDetail, BrokenLinkScanResult, 
     AnalysisResults, ProviderScanResult
 )
-from src.models.url_check import ThreatLevel
-from src.models.url_check import ScanType
-from src.services.url_analysis_service import URLAnalysisService
-from src.controllers.url_check_controller import URLCheckController
+from linkshield.models.url_check import ThreatLevel
+from linkshield.models.url_check import ScanType
+from linkshield.services.url_analysis_service import URLAnalysisService
+from linkshield.controllers.url_check_controller import URLCheckController
 
 
 class TestBrokenLinkModels:

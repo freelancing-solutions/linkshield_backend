@@ -15,10 +15,10 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime
 from typing import Dict, Any
 
-from src.bots.registration import BotRegistrationManager, BotConfigurationManager
-from src.bots.lifecycle import BotLifecycleManager, BotStatus
-from src.routes.bot_webhooks import router
-from src.config.settings import settings
+from linkshield.bots.registration import BotRegistrationManager, BotConfigurationManager
+from linkshield.bots.lifecycle import BotLifecycleManager, BotStatus
+from linkshield.routes.bot_webhooks import router
+from linkshield.config.settings import settings
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
@@ -60,7 +60,7 @@ class TestBotRegistrationIntegration:
     @pytest.fixture
     def client(self, app):
         """Create test client."""
-        return TestClient(app)
+        return TestClient(create_app())
     
     @pytest.mark.asyncio
     async def test_registration_manager_initialization(self, registration_manager):
@@ -327,7 +327,7 @@ class TestWebhookIntegration:
     @pytest.fixture
     def client(self, app):
         """Create test client."""
-        return TestClient(app)
+        return TestClient(create_app())
     
     def test_discord_webhook_ping(self, client):
         """Test Discord webhook PING interaction."""

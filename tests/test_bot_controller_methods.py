@@ -16,10 +16,10 @@ from fastapi import HTTPException, status
 # Mock the circular import before importing BotController
 sys.modules['src.controllers.user_controller'] = Mock()
 
-from src.social_protection.controllers.bot_controller import BotController
-from src.social_protection.types import PlatformType, RiskLevel
-from src.models.user import User
-from src.social_protection.data_models import ContentRiskAssessment
+from linkshield.social_protection.controllers.bot_controller import BotController
+from linkshield.social_protection.types import PlatformType, RiskLevel
+from linkshield.models.user import User
+from linkshield.social_protection.data_models import ContentRiskAssessment
 
 
 class TestBotControllerAnalysisMethods:
@@ -438,7 +438,7 @@ class TestQuickContentAnalysis(TestBotControllerAnalysisMethods):
     @pytest.mark.asyncio
     async def test_quick_content_analysis_quick_scan(self, bot_controller, sample_user, mock_services):
         """Test quick scan analysis type."""
-        from src.social_protection.controllers.bot_controller import BotAnalysisType, BotResponseFormat
+        from linkshield.social_protection.controllers.bot_controller import BotAnalysisType, BotResponseFormat
         
         # Setup mock
         mock_risk_result = Mock()
@@ -467,7 +467,7 @@ class TestQuickContentAnalysis(TestBotControllerAnalysisMethods):
     @pytest.mark.asyncio
     async def test_quick_content_analysis_spam_detection(self, bot_controller, sample_user, mock_services):
         """Test spam detection analysis type."""
-        from src.social_protection.controllers.bot_controller import BotAnalysisType, BotResponseFormat
+        from linkshield.social_protection.controllers.bot_controller import BotAnalysisType, BotResponseFormat
         
         # Setup mock
         mock_spam_result = Mock()
@@ -496,7 +496,7 @@ class TestQuickContentAnalysis(TestBotControllerAnalysisMethods):
     @pytest.mark.asyncio
     async def test_quick_content_analysis_with_cache(self, bot_controller, sample_user, mock_services):
         """Test caching functionality in quick analysis."""
-        from src.social_protection.controllers.bot_controller import BotAnalysisType, BotResponseFormat
+        from linkshield.social_protection.controllers.bot_controller import BotAnalysisType, BotResponseFormat
         
         # Setup mock
         mock_risk_result = Mock()
@@ -529,7 +529,7 @@ class TestQuickContentAnalysis(TestBotControllerAnalysisMethods):
     @pytest.mark.asyncio
     async def test_quick_content_analysis_rate_limit(self, bot_controller, sample_user):
         """Test rate limiting for quick analysis."""
-        from src.social_protection.controllers.bot_controller import BotAnalysisType
+        from linkshield.social_protection.controllers.bot_controller import BotAnalysisType
         
         # Setup rate limit to fail
         bot_controller.check_rate_limit = AsyncMock(return_value=False)
@@ -548,7 +548,7 @@ class TestQuickContentAnalysis(TestBotControllerAnalysisMethods):
     @pytest.mark.asyncio
     async def test_quick_content_analysis_empty_content(self, bot_controller, sample_user):
         """Test validation for empty content."""
-        from src.social_protection.controllers.bot_controller import BotAnalysisType
+        from linkshield.social_protection.controllers.bot_controller import BotAnalysisType
         
         with pytest.raises(HTTPException) as exc_info:
             await bot_controller.quick_content_analysis(
@@ -563,7 +563,7 @@ class TestQuickContentAnalysis(TestBotControllerAnalysisMethods):
     @pytest.mark.asyncio
     async def test_quick_content_analysis_content_risk_type(self, bot_controller, sample_user, mock_services):
         """Test content risk analysis type."""
-        from src.social_protection.controllers.bot_controller import BotAnalysisType
+        from linkshield.social_protection.controllers.bot_controller import BotAnalysisType
         
         # Setup mock
         mock_risk_result = Mock()
@@ -638,7 +638,7 @@ class TestHealthCheck(TestBotControllerAnalysisMethods):
     @pytest.mark.asyncio
     async def test_health_check_cache_metrics(self, bot_controller, sample_user, mock_services):
         """Test that health check includes cache metrics."""
-        from src.social_protection.controllers.bot_controller import BotAnalysisType
+        from linkshield.social_protection.controllers.bot_controller import BotAnalysisType
         
         # Setup mock
         mock_risk_result = Mock()
