@@ -154,6 +154,21 @@ class WebhookSignatureVerifier:
                 logger.warning("Discord signature or timestamp missing")
                 return False
             
+            # Validate timestamp to prevent replay attacks (Discord recommends 5 minute window)
+            try:
+                timestamp_int = int(timestamp)
+                current_time = int(datetime.utcnow().timestamp())
+                time_diff = abs(current_time - timestamp_int)
+                
+                # Reject requests older than 5 minutes (300 seconds)
+                if time_diff > 300:
+                    logger.warning(f"Discord webhook timestamp too old: {time_diff} seconds")
+                    return False
+                    
+            except ValueError:
+                logger.error("Invalid Discord timestamp format")
+                return False
+            
             # Create message to verify (timestamp + payload)
             message = timestamp.encode() + payload
             
@@ -179,7 +194,7 @@ class WebhookSignatureVerifier:
                 return False
             
         except Exception as e:
-            logger.error(f"Error verifying Discord Ed25519 signature: {e}")
+            logger.error(f"Error verifying Discord signature: {e}")
             return False
 
 

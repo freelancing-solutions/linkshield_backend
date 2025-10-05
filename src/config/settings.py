@@ -63,11 +63,44 @@ class Settings(BaseSettings):
     )
     JWT_SECRET_KEY: str = Field(
         default="your-jwt-secret-key-change-in-production",
-        env="LINKSHIELD_JWT_SECRET_KEY"
+        env="LINKSHIELD_JWT_SECRET_KEY",
+        description="JWT secret key (legacy - use JWT_KEY_MANAGER for production)"
     )
     JWT_ALGORITHM: str = Field(default="HS256", env="LINKSHIELD_JWT_ALGORITHM")
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30, env="LINKSHIELD_JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, env="LINKSHIELD_JWT_REFRESH_TOKEN_EXPIRE_DAYS")
+    
+    # JWT Key Management Configuration
+    JWT_KEY_ROTATION_ENABLED: bool = Field(
+        default=True,
+        env="LINKSHIELD_JWT_KEY_ROTATION_ENABLED",
+        description="Enable automatic JWT key rotation"
+    )
+    JWT_KEY_ROTATION_INTERVAL_HOURS: int = Field(
+        default=168,  # 7 days
+        env="LINKSHIELD_JWT_KEY_ROTATION_INTERVAL_HOURS",
+        description="Interval for automatic key rotation in hours"
+    )
+    JWT_KEY_GRACE_PERIOD_HOURS: int = Field(
+        default=72,  # 3 days
+        env="LINKSHIELD_JWT_KEY_GRACE_PERIOD_HOURS",
+        description="Grace period for old keys to remain valid after rotation"
+    )
+    JWT_MAX_VERIFICATION_KEYS: int = Field(
+        default=5,
+        env="LINKSHIELD_JWT_MAX_VERIFICATION_KEYS",
+        description="Maximum number of verification keys to keep"
+    )
+    JWT_KEY_CLEANUP_INTERVAL_HOURS: int = Field(
+        default=24,
+        env="LINKSHIELD_JWT_KEY_CLEANUP_INTERVAL_HOURS",
+        description="Interval for cleaning up expired keys in hours"
+    )
+    JWT_KEY_MANAGER_REDIS_PREFIX: str = Field(
+        default="jwt_keys:",
+        env="LINKSHIELD_JWT_KEY_MANAGER_REDIS_PREFIX",
+        description="Redis key prefix for JWT key storage"
+    )
     PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = Field(default=1, env="LINKSHIELD_PASSWORD_RESET_TOKEN_EXPIRE_HOURS")
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = Field(default=24, env="LINKSHIELD_EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS")
     

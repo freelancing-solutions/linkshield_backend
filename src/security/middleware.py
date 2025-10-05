@@ -139,7 +139,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         # Referrer policy
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         
-        # Enhanced Content Security Policy with nonce support
+        # Enhanced Content Security Policy with nonce support and violation reporting
         if settings.ENVIRONMENT == "production":
             # Strict CSP with nonce-based script and style loading
             csp_policy = (
@@ -153,21 +153,23 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 f"base-uri 'self'; "
                 f"form-action 'self'; "
                 f"frame-ancestors 'none'; "
-                f"upgrade-insecure-requests;"
+                f"upgrade-insecure-requests; "
+                f"report-uri /api/security/csp-report;"
             )
         else:
-            # Development CSP - slightly more permissive but still secure
+            # Development CSP - secure with nonce-based loading only
             csp_policy = (
                 f"default-src 'self'; "
                 f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval'; "
-                f"style-src 'self' 'nonce-{nonce}' 'unsafe-inline'; "
+                f"style-src 'self' 'nonce-{nonce}'; "
                 f"img-src 'self' data: https: http://localhost:*; "
                 f"font-src 'self' data:; "
                 f"connect-src 'self' http://localhost:* ws://localhost:*; "
                 f"object-src 'none'; "
                 f"base-uri 'self'; "
                 f"form-action 'self'; "
-                f"frame-ancestors 'none';"
+                f"frame-ancestors 'none'; "
+                f"report-uri /api/security/csp-report;"
             )
         
         response.headers["Content-Security-Policy"] = csp_policy

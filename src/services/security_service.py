@@ -169,24 +169,117 @@ class SecurityService:
     
     def create_jwt_token(self, user_id: str, session_id: str, expires_hours: int = 24) -> str:
         """
-        Create JWT token for user session.
-        """
-        payload = {
-            "user_id": str(user_id),
-            "session_id": str(session_id),
-            "iat": datetime.now(timezone.utc),
-            "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours),
-            "iss": "linkshield-api",
-            "aud": "linkshield-client"
-        }
-        
-        return jwt.encode(payload, self.settings.JWT_SECRET_KEY, algorithm="HS256")
-    
-    def verify_jwt_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """
-        Verify and decode JWT token.
+        Create JWT token for user session with key rotation support.
         """
         try:
+            # Try to use the new key manager for enhanced security
+            from src.security.jwt_key_manager import get_jwt_key_manager
+            import asyncio
+            
+            # Get current event loop or create new one
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Use key manager if available
+            key_manager = get_jwt_key_manager()
+            signing_key = loop.run_until_complete(key_manager.get_current_signing_key())
+            
+            payload = {
+                "user_id": str(user_id),
+                "session_id": str(session_id),
+                "key_id": signing_key.key_id,  # Include key ID for verification
+                "iat": datetime.now(timezone.utc),
+                "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours),
+                "iss": "linkshield-api",
+                "aud": "linkshield-client"
+            }
+            
+            token = jwt.encode(payload, signing_key.key_value, algorithm=signing_key.algorithm)
+            
+            # Update key usage statistics
+            loop.run_until_complete(key_manager.update_key_usage(signing_key.key_id))
+            
+            return token
+            
+        except Exception:
+            # Fallback to legacy key if key manager fails
+            payload = {
+                "user_id": str(user_id),
+                "session_id": str(session_id),
+                "iat": datetime.now(timezone.utc),
+                "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours),
+                "iss": "linkshield-api",
+                "aud": "linkshield-client"
+            }
+            
+            return jwt.encode(payload, self.settings.JWT_SECRET_KEY, algorithm="HS256")
+
+    def verify_jwt_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """
+        Verify and decode JWT token with key rotation support.
+        """
+        try:
+            # Try to use the new key manager for enhanced security
+            from src.security.jwt_key_manager import get_jwt_key_manager
+            import asyncio
+            
+            # Get current event loop or create new one
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # First, try to decode without verification to get key_id
+            unverified_payload = jwt.decode(token, options={"verify_signature": False})
+            key_id = unverified_payload.get("key_id")
+            
+            if key_id:
+                # Token has key_id, use key manager for verification
+                key_manager = get_jwt_key_manager()
+                verification_keys = loop.run_until_complete(key_manager.get_verification_keys())
+                
+                # Try each verification key
+                for jwt_key in verification_keys:
+                    if jwt_key.key_id == key_id:
+                        try:
+                            payload = jwt.decode(
+                                token,
+                                jwt_key.key_value,
+                                algorithms=[jwt_key.algorithm],
+                                audience="linkshield-client",
+                                issuer="linkshield-api"
+                            )
+                            
+                            # Update key usage statistics
+                            loop.run_until_complete(key_manager.update_key_usage(jwt_key.key_id))
+                            return payload
+                            
+                        except jwt.InvalidTokenError:
+                            continue
+                
+                # If no matching key found, try all verification keys
+                for jwt_key in verification_keys:
+                    try:
+                        payload = jwt.decode(
+                            token,
+                            jwt_key.key_value,
+                            algorithms=[jwt_key.algorithm],
+                            audience="linkshield-client",
+                            issuer="linkshield-api"
+                        )
+                        
+                        # Update key usage statistics
+                        loop.run_until_complete(key_manager.update_key_usage(jwt_key.key_id))
+                        return payload
+                        
+                    except jwt.InvalidTokenError:
+                        continue
+            
+            # Fallback to legacy key verification for tokens without key_id
             payload = jwt.decode(
                 token, 
                 self.settings.JWT_SECRET_KEY, 
@@ -195,10 +288,26 @@ class SecurityService:
                 issuer="linkshield-api"
             )
             return payload
+            
         except jwt.ExpiredSignatureError:
             raise AuthenticationError("Token has expired")
         except jwt.InvalidTokenError:
             raise AuthenticationError("Invalid token")
+        except Exception:
+            # Fallback to legacy key if key manager fails
+            try:
+                payload = jwt.decode(
+                    token, 
+                    self.settings.JWT_SECRET_KEY, 
+                    algorithms=["HS256"],
+                    audience="linkshield-client",
+                    issuer="linkshield-api"
+                )
+                return payload
+            except jwt.ExpiredSignatureError:
+                raise AuthenticationError("Token has expired")
+            except jwt.InvalidTokenError:
+                raise AuthenticationError("Invalid token")
     
     def encrypt_sensitive_data(self, data: str) -> str:
         """

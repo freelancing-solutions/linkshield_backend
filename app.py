@@ -46,6 +46,7 @@ from src.routes.subscription_routes import router as subscription_router
 from src.routes.extension import router as extension_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.csrf import router as csrf_router
+from src.api.routes.security import router as security_router
 # from src.routes.tasks import router as tasks_router
 
 # New Social Protection Routes (specialized controllers)
@@ -193,6 +194,7 @@ app.include_router(subscription_router)
 app.include_router(extension_router)
 app.include_router(auth_router)               # JWT authentication endpoints
 app.include_router(csrf_router)               # CSRF protection endpoints
+app.include_router(security_router)           # Security endpoints (CSP reporting)
 # app.include_router(tasks_router)
 
 # New Social Protection Routes (specialized controllers)
