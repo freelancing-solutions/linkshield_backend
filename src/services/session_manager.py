@@ -22,6 +22,7 @@ from src.config.settings import get_settings
 from src.database.connection import get_db_session
 from src.security.device_fingerprinting import DeviceFingerprintingService
 from src.security.geolocation_service import GeolocationService
+from src.services.notification_service import NotificationService
 
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class SessionManager:
     
     def __init__(self, db_session: Optional[AsyncSession] = None):
         """
-        Initialize session manager.
+        Initialize session manager with security services.
         
         Args:
             db_session: Optional database session. If not provided, will create new sessions as needed.
@@ -54,6 +55,8 @@ class SessionManager:
         self.db_session = db_session
         self.settings = get_settings()
         self.notification_service = NotificationService()
+        self.device_fingerprinting = DeviceFingerprintingService()
+        self.geolocation_service = GeolocationService()
         
         # Role-based session limits (can be overridden by settings)
         self.role_session_limits = {
@@ -538,9 +541,9 @@ class SessionManager:
         session: UserSession, 
         current_fingerprint: Dict, 
         current_ip: str
-    ) -> tuple[bool, List[str]]:
+    ) -> Tuple[bool, List[str]]:
         """
-        Detect potential session hijacking based on device fingerprint and IP changes.
+        Enhanced session hijacking detection using device fingerprinting and geolocation.
         
         Args:
             session: Current session object
@@ -552,31 +555,70 @@ class SessionManager:
         """
         indicators = []
         
-        # Check IP address changes
-        if session.ip_address and session.ip_address != current_ip:
-            # Allow IP changes within same subnet or known mobile ranges
-            if not self._is_acceptable_ip_change(session.ip_address, current_ip):
-                indicators.append(f"Suspicious IP change: {session.ip_address} -> {current_ip}")
-        
-        # Check device fingerprint if available
-        if hasattr(session, 'device_fingerprint') and session.device_fingerprint:
-            try:
+        try:
+            # Device fingerprint analysis
+            if hasattr(session, 'device_fingerprint') and session.device_fingerprint:
                 stored_fingerprint = json.loads(session.device_fingerprint)
-                fingerprint_score = self._calculate_fingerprint_similarity(stored_fingerprint, current_fingerprint)
                 
-                if fingerprint_score < 0.7:  # Less than 70% similarity
-                    indicators.append(f"Device fingerprint mismatch (similarity: {fingerprint_score:.2f})")
-            except (json.JSONDecodeError, KeyError):
-                logger.warning(f"Invalid fingerprint data for session {session.id}")
-        
-        # Check for rapid location changes (if geolocation data available)
-        if 'geolocation' in current_fingerprint and hasattr(session, 'last_location'):
-            if self._detect_impossible_travel(session, current_fingerprint['geolocation']):
-                indicators.append("Impossible travel detected")
-        
-        hijacking_detected = len(indicators) >= 2  # Require multiple indicators
-        
-        return hijacking_detected, indicators
+                # Use device fingerprinting service for comparison
+                hijacking_result = await self.device_fingerprinting.detect_session_hijacking(
+                    stored_fingerprint, current_fingerprint, current_ip
+                )
+                
+                if hijacking_result.is_hijacked:
+                    indicators.extend(hijacking_result.indicators)
+            
+            # Geolocation analysis
+            if current_ip and current_ip != session.ip_address:
+                current_location = await self.geolocation_service.get_location_from_ip(current_ip)
+                
+                if current_location and hasattr(session, 'geolocation_data') and session.geolocation_data:
+                    try:
+                        stored_location_data = json.loads(session.geolocation_data)
+                        
+                        # Check for impossible travel
+                        if all(key in stored_location_data for key in ['latitude', 'longitude', 'timestamp']):
+                            from src.security.geolocation_service import LocationData
+                            from datetime import datetime
+                            
+                            stored_location = LocationData(
+                                latitude=stored_location_data['latitude'],
+                                longitude=stored_location_data['longitude'],
+                                country=stored_location_data.get('country'),
+                                city=stored_location_data.get('city')
+                            )
+                            
+                            # Calculate time difference
+                            stored_time = datetime.fromisoformat(stored_location_data['timestamp'].replace('Z', '+00:00'))
+                            time_diff = datetime.now(timezone.utc) - stored_time
+                            
+                            # Analyze travel pattern
+                            travel_analysis = self.geolocation_service.analyze_travel_pattern(
+                                stored_location, current_location, time_diff
+                            )
+                            
+                            if travel_analysis.is_impossible:
+                                indicators.append(f"Impossible travel detected: {travel_analysis.max_possible_speed_kmh:.0f} km/h required")
+                            
+                            if travel_analysis.risk_score > 0.7:
+                                indicators.append(f"High-risk location change (score: {travel_analysis.risk_score:.2f})")
+                                
+                    except (json.JSONDecodeError, KeyError, ValueError) as e:
+                        logger.warning(f"Error parsing stored location data: {e}")
+            
+            # IP-based checks
+            if current_ip != session.ip_address:
+                if not self._is_acceptable_ip_change(session.ip_address, current_ip):
+                    indicators.append(f"Suspicious IP change: {session.ip_address} -> {current_ip}")
+            
+            # Determine if hijacking is detected (require multiple indicators for high confidence)
+            hijacking_detected = len(indicators) >= 2 or any("impossible travel" in indicator.lower() for indicator in indicators)
+            
+            return hijacking_detected, indicators
+            
+        except Exception as e:
+            logger.error(f"Error in hijacking detection: {e}")
+            return False, [f"Detection error: {str(e)}"]
     
     def _is_acceptable_ip_change(self, old_ip: str, new_ip: str) -> bool:
         """
