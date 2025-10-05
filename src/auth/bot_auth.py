@@ -15,7 +15,10 @@ from datetime import datetime, timedelta
 import secrets
 
 from fastapi import HTTPException, Request
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.exceptions import InvalidSignature
 from ..config.settings import settings
+from .service_token_storage import ServiceTokenStorage, TokenNotFoundError, TokenExpiredError, ServiceTokenStorageError, RedisConnectionError
 
 logger = logging.getLogger(__name__)
 
@@ -130,41 +133,53 @@ class WebhookSignatureVerifier:
         
         Args:
             payload: Raw request payload
-            signature: X-Signature-Ed25519 header value
+            signature: X-Signature-Ed25519 header value (hex-encoded)
             timestamp: X-Signature-Timestamp header value
-            public_key: Discord application public key
+            public_key: Discord application public key (hex-encoded)
             
         Returns:
             True if signature is valid, False otherwise
         """
         try:
-            # For this implementation, we'll use HMAC as a fallback
-            # In production, you should use Ed25519 verification
-            webhook_secret = settings.BOT_WEBHOOK_SECRET
-            if not webhook_secret:
-                logger.error("Discord webhook secret not configured")
+            # Get Discord public key from settings or parameter
+            if not public_key:
+                public_key = settings.DISCORD_PUBLIC_KEY
+            
+            if not public_key:
+                logger.error("Discord public key not configured")
+                return False
+            
+            # Validate signature and timestamp format
+            if not signature or not timestamp:
+                logger.warning("Discord signature or timestamp missing")
                 return False
             
             # Create message to verify (timestamp + payload)
             message = timestamp.encode() + payload
             
-            # Calculate expected signature using HMAC-SHA256 as fallback
-            expected_signature = hmac.new(
-                webhook_secret.encode('utf-8'),
-                message,
-                hashlib.sha256
-            ).hexdigest()
-            
-            # Compare signatures
-            is_valid = hmac.compare_digest(signature, expected_signature)
-            
-            if not is_valid:
-                logger.warning("Discord webhook signature verification failed")
-            
-            return is_valid
+            try:
+                # Convert hex-encoded public key to Ed25519PublicKey object
+                public_key_bytes = bytes.fromhex(public_key)
+                ed25519_public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+                
+                # Convert hex-encoded signature to bytes
+                signature_bytes = bytes.fromhex(signature)
+                
+                # Verify Ed25519 signature
+                ed25519_public_key.verify(signature_bytes, message)
+                
+                logger.debug("Discord Ed25519 signature verification successful")
+                return True
+                
+            except ValueError as e:
+                logger.error(f"Invalid Discord public key or signature format: {e}")
+                return False
+            except InvalidSignature:
+                logger.warning("Discord Ed25519 signature verification failed")
+                return False
             
         except Exception as e:
-            logger.error(f"Error verifying Discord signature: {e}")
+            logger.error(f"Error verifying Discord Ed25519 signature: {e}")
             return False
 
 
@@ -179,7 +194,7 @@ class BotAuthenticator:
     def __init__(self):
         """Initialize the bot authenticator."""
         self.signature_verifier = WebhookSignatureVerifier()
-        self._service_tokens = {}  # Cache for service tokens
+        self.service_token_storage = ServiceTokenStorage()  # Redis-based storage
     
     async def authenticate_webhook_request(self, request: Request, platform: str) -> Tuple[bool, Dict[str, Any]]:
         """
@@ -329,95 +344,100 @@ class BotAuthenticator:
             logger.error(f"Error in Discord webhook authentication: {e}")
             return False, {"error": "authentication_error", "details": str(e)}
     
-    def generate_service_token(self, service_name: str, expires_hours: int = 24) -> str:
+    async def generate_service_token(self, service_name: str, permissions: List[str], 
+                                   expires_in: int = 3600, max_uses: Optional[int] = None) -> str:
         """
-        Generate a service token for bot operations.
+        Generate a service token with Redis persistence and fallback support.
         
         Args:
             service_name: Name of the service requesting the token
-            expires_hours: Token expiration time in hours
+            permissions: List of permissions for this token
+            expires_in: Token expiration time in seconds (default: 1 hour)
+            max_uses: Maximum number of times token can be used (optional)
             
         Returns:
-            Generated service token
+            Generated service token string
+            
+        Raises:
+            ServiceTokenStorageError: If token generation fails
         """
         try:
-            # Generate random token
-            token_data = {
-                "service": service_name,
-                "issued_at": datetime.utcnow().isoformat(),
-                "expires_at": (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(),
-                "nonce": secrets.token_hex(16)
-            }
+            # Generate token using Redis-based storage
+            token = await self.service_token_storage.store_token(
+                service_name=service_name,
+                permissions=permissions,
+                expires_in=expires_in,
+                max_uses=max_uses
+            )
             
-            # Create token string
-            token_string = base64.b64encode(json.dumps(token_data).encode()).decode()
+            logger.info(f"Generated service token for {service_name} with permissions: {permissions}")
+            return token
             
-            # Store in cache
-            self._service_tokens[token_string] = token_data
-            
-            logger.info(f"Generated service token for {service_name}")
-            return token_string
-            
+        except (ServiceTokenStorageError, RedisConnectionError) as e:
+            logger.error(f"Failed to generate service token for {service_name}: {e}")
+            raise ServiceTokenStorageError(f"Token generation failed: {e}")
         except Exception as e:
-            logger.error(f"Error generating service token: {e}")
-            raise BotAuthenticationError(f"Failed to generate service token: {e}")
+            logger.error(f"Unexpected error generating service token for {service_name}: {e}")
+            raise ServiceTokenStorageError(f"Unexpected token generation error: {e}")
     
-    def validate_service_token(self, token: str) -> Tuple[bool, Dict[str, Any]]:
+    async def validate_service_token(self, token: str) -> Tuple[bool, Dict[str, Any]]:
         """
-        Validate a service token.
+        Validate a service token with Redis persistence and fallback support.
         
         Args:
             token: Service token to validate
             
         Returns:
-            Tuple of (is_valid, token_data)
+            Tuple of (is_valid, token_data or error_info)
         """
         try:
-            # Check cache first
-            if token in self._service_tokens:
-                token_data = self._service_tokens[token]
-            else:
-                # Decode token
-                try:
-                    token_data = json.loads(base64.b64decode(token).decode())
-                except:
-                    return False, {"error": "invalid_token_format"}
+            # Retrieve and validate token using Redis-based storage
+            token_data = await self.service_token_storage.get_token(token)
             
-            # Check expiration
-            expires_at = datetime.fromisoformat(token_data["expires_at"])
-            if datetime.utcnow() > expires_at:
-                # Remove expired token from cache
-                if token in self._service_tokens:
-                    del self._service_tokens[token]
-                return False, {"error": "token_expired"}
+            # Update token usage
+            await self.service_token_storage.update_token_usage(token)
             
+            logger.info(f"Validated service token for service: {token_data.get('service_name', 'unknown')}")
             return True, token_data
             
+        except TokenNotFoundError:
+            logger.warning(f"Service token not found: {token[:8]}...")
+            return False, {"error": "invalid_token", "details": "Token not found"}
+        except TokenExpiredError:
+            logger.warning(f"Service token expired: {token[:8]}...")
+            return False, {"error": "token_expired", "details": "Token has expired"}
+        except (ServiceTokenStorageError, RedisConnectionError) as e:
+            logger.error(f"Service token validation error: {e}")
+            return False, {"error": "validation_error", "details": "Token validation failed"}
         except Exception as e:
-            logger.error(f"Error validating service token: {e}")
-            return False, {"error": "validation_failed", "details": str(e)}
+            logger.error(f"Unexpected error validating service token: {e}")
+            return False, {"error": "validation_error", "details": "Unexpected validation error"}
     
-    def revoke_service_token(self, token: str) -> bool:
+    async def revoke_service_token(self, token: str) -> bool:
         """
-        Revoke a service token.
+        Revoke a service token with Redis persistence and fallback support.
         
         Args:
             token: Service token to revoke
             
         Returns:
-            True if token was revoked, False otherwise
+            True if token was revoked successfully, False otherwise
         """
         try:
-            if token in self._service_tokens:
-                del self._service_tokens[token]
-                logger.info("Service token revoked")
-                return True
-            else:
-                logger.warning("Attempted to revoke non-existent token")
-                return False
-                
+            # Revoke token using Redis-based storage
+            await self.service_token_storage.revoke_token(token)
+            
+            logger.info(f"Revoked service token: {token[:8]}...")
+            return True
+            
+        except TokenNotFoundError:
+            logger.warning(f"Attempted to revoke non-existent service token: {token[:8]}...")
+            return False
+        except (ServiceTokenStorageError, RedisConnectionError) as e:
+            logger.error(f"Failed to revoke service token: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Error revoking service token: {e}")
+            logger.error(f"Unexpected error revoking service token: {e}")
             return False
     
     async def authenticate_api_request(self, api_key: str, platform: str) -> Tuple[bool, Dict[str, Any]]:
@@ -464,25 +484,30 @@ class BotAuthenticator:
             logger.error(f"Error authenticating API request: {e}")
             return False, {"error": "authentication_failed", "details": str(e)}
     
-    def cleanup_expired_tokens(self):
-        """Clean up expired service tokens from cache."""
+    async def cleanup_expired_tokens(self) -> int:
+        """
+        Clean up expired service tokens with Redis persistence and fallback support.
+        
+        Returns:
+            Number of tokens cleaned up
+        """
         try:
-            current_time = datetime.utcnow()
-            expired_tokens = []
+            # Clean up expired tokens using Redis-based storage
+            cleaned_count = await self.service_token_storage.cleanup_expired_tokens()
             
-            for token, token_data in self._service_tokens.items():
-                expires_at = datetime.fromisoformat(token_data["expires_at"])
-                if current_time > expires_at:
-                    expired_tokens.append(token)
-            
-            for token in expired_tokens:
-                del self._service_tokens[token]
-            
-            if expired_tokens:
-                logger.info(f"Cleaned up {len(expired_tokens)} expired service tokens")
+            if cleaned_count > 0:
+                logger.info(f"Cleaned up {cleaned_count} expired service tokens")
+            else:
+                logger.debug("No expired service tokens to clean up")
                 
+            return cleaned_count
+            
+        except (ServiceTokenStorageError, RedisConnectionError) as e:
+            logger.error(f"Failed to cleanup expired service tokens: {e}")
+            return 0
         except Exception as e:
-            logger.error(f"Error cleaning up expired tokens: {e}")
+            logger.error(f"Unexpected error during service token cleanup: {e}")
+            return 0
 
 
 # Global bot authenticator instance

@@ -28,6 +28,7 @@ from src.config.settings import get_settings
 from src.config.database import init_db, close_db
 from src.security.middleware import SecurityMiddleware
 from src.middleware.admin_audit import AdminAuditMiddleware
+from src.middleware.csrf_middleware import CSRFMiddleware
 
 # Routers
 from src.routes.health import router as health_router
@@ -43,6 +44,8 @@ from src.routes.bot_webhooks import router as bot_webhooks_router
 from src.routes.bot_auth import router as bot_auth_router
 from src.routes.subscription_routes import router as subscription_router
 from src.routes.extension import router as extension_router
+from src.api.routes.auth import router as auth_router
+from src.api.routes.csrf import router as csrf_router
 # from src.routes.tasks import router as tasks_router
 
 # New Social Protection Routes (specialized controllers)
@@ -131,6 +134,20 @@ app = FastAPI(
 app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(SecurityMiddleware)
 
+# Add CSRF protection middleware
+app.add_middleware(
+    CSRFMiddleware,
+    exempt_paths=[
+        "/api/webhooks/",  # Webhook endpoints don't need CSRF protection
+        "/api/bot/",       # Bot API endpoints use different auth
+        "/api/health",     # Health check endpoint
+        "/docs",           # API documentation
+        "/redoc",          # API documentation
+        "/openapi.json"    # OpenAPI schema
+    ],
+    require_auth=True
+)
+
 if settings.ENVIRONMENT == "development":
     app.add_middleware(
         CORSMiddleware,
@@ -174,6 +191,8 @@ app.include_router(bot_webhooks_router)
 app.include_router(bot_auth_router)
 app.include_router(subscription_router)
 app.include_router(extension_router)
+app.include_router(auth_router)               # JWT authentication endpoints
+app.include_router(csrf_router)               # CSRF protection endpoints
 # app.include_router(tasks_router)
 
 # New Social Protection Routes (specialized controllers)

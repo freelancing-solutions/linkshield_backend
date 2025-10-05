@@ -465,15 +465,19 @@ class BotRegistrationManager:
     
     def _verify_discord_signature(self, payload: bytes, signature: str, 
                                 timestamp: Optional[str], secret: str) -> bool:
-        """Verify Discord webhook signature."""
+        """Verify Discord webhook signature using Ed25519."""
         try:
             if not timestamp:
                 return False
             
-            # Discord uses Ed25519 signature verification
-            # This is a simplified implementation - in production, use nacl library
-            expected_signature = f"v1={signature}"
-            return hmac.compare_digest(signature, expected_signature)
+            # Use the centralized Discord signature verification
+            from ..auth.bot_auth import WebhookSignatureVerifier
+            return WebhookSignatureVerifier.verify_discord_signature(
+                payload=payload,
+                signature=signature,
+                timestamp=timestamp,
+                public_key=secret  # This should be the Discord public key, not a secret
+            )
             
         except Exception as e:
             logger.error(f"Discord signature verification error: {e}")

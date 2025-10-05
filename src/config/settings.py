@@ -205,6 +205,7 @@ class Settings(BaseSettings):
     TWITTER_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_TWITTER_WEBHOOK_SECRET")
     TELEGRAM_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_TELEGRAM_WEBHOOK_SECRET")
     DISCORD_WEBHOOK_SECRET: Optional[str] = Field(default=None, env="LINKSHIELD_DISCORD_WEBHOOK_SECRET")
+    DISCORD_PUBLIC_KEY: Optional[str] = Field(default=None, env="LINKSHIELD_DISCORD_PUBLIC_KEY")
     
     # Bot feature flags
     BOT_ENABLE_TWITTER: bool = Field(default=True, env="LINKSHIELD_BOT_ENABLE_TWITTER")

@@ -18,6 +18,7 @@ from email_validator import validate_email, EmailNotValidError
 
 from src.config.settings import get_settings
 from src.services.security_service import SecurityService
+from src.security.jwt_blacklist import get_jwt_blacklist_service, JWTBlacklistError
 
 
 class AuthenticationError(Exception):
@@ -164,7 +165,7 @@ class AuthService:
         expires_delta: Optional[timedelta] = None
     ) -> str:
         """
-        Create JWT access token.
+        Create JWT access token with unique JTI for blacklist support.
         
         Args:
             user_id: User ID
@@ -179,7 +180,11 @@ class AuthService:
         else:
             expire = datetime.now(timezone.utc) + self.session_duration
         
+        # Generate unique JWT ID for blacklist support
+        jti = str(uuid.uuid4())
+        
         payload = {
+            "jti": jti,  # JWT ID for blacklist tracking
             "session_id": str(session_id),
             "user_id": str(user_id),
             "exp": expire,
@@ -188,22 +193,31 @@ class AuthService:
         
         return jwt.encode(payload, self.settings.SECRET_KEY, algorithm="HS256")
     
-    def verify_jwt_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def verify_jwt_token(self, token: str) -> Optional[Dict[str, Any]]:
         """
-        Verify and decode JWT token.
+        Verify and decode JWT token with blacklist validation.
         
         Args:
             token: JWT token string
             
         Returns:
-            Decoded token payload or None if invalid
+            Decoded token payload or None if invalid/blacklisted
         """
         try:
+            # First check if token is blacklisted
+            blacklist_service = get_jwt_blacklist_service()
+            if await blacklist_service.is_token_blacklisted(token):
+                return None
+            
+            # Verify JWT signature and expiration
             payload = jwt.decode(token, self.settings.SECRET_KEY, algorithms=["HS256"])
             return payload
         except jwt.ExpiredSignatureError:
             return None
         except jwt.InvalidTokenError:
+            return None
+        except Exception:
+            # On any other error (Redis connection, etc.), fail securely
             return None
     
     def generate_secure_token(self, length: int = 32) -> str:
@@ -266,3 +280,78 @@ class AuthService:
             Lockout expiration datetime
         """
         return datetime.now(timezone.utc) + self.lockout_duration
+    
+    async def logout_user(
+        self, 
+        token: str, 
+        reason: str = "user_logout",
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> bool:
+        """
+        Logout user by blacklisting their JWT token.
+        
+        Args:
+            token: JWT token to revoke
+            reason: Reason for logout
+            ip_address: IP address of the request
+            user_agent: User agent of the request
+            
+        Returns:
+            True if logout successful, False otherwise
+        """
+        try:
+            blacklist_service = get_jwt_blacklist_service()
+            await blacklist_service.blacklist_token(
+                token=token,
+                reason=reason,
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+            return True
+        except JWTBlacklistError:
+            return False
+        except Exception:
+            # Log error in production
+            return False
+    
+    async def revoke_user_tokens(
+        self,
+        user_id: str,
+        reason: str = "security_incident",
+        admin_id: Optional[str] = None
+    ) -> int:
+        """
+        Revoke all tokens for a specific user.
+        
+        Args:
+            user_id: User ID whose tokens to revoke
+            reason: Reason for revocation
+            admin_id: ID of admin performing the action
+            
+        Returns:
+            Number of tokens revoked
+        """
+        try:
+            blacklist_service = get_jwt_blacklist_service()
+            return await blacklist_service.blacklist_user_tokens(
+                user_id=user_id,
+                reason=reason,
+                admin_id=admin_id
+            )
+        except Exception:
+            # Log error in production
+            return 0
+    
+    async def is_token_valid(self, token: str) -> bool:
+        """
+        Check if token is valid (not expired, not blacklisted).
+        
+        Args:
+            token: JWT token to validate
+            
+        Returns:
+            True if token is valid, False otherwise
+        """
+        payload = await self.verify_jwt_token(token)
+        return payload is not None

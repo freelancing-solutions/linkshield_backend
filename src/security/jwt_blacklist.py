@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""
+JWT Token Blacklist Service
+
+Handles JWT token revocation and blacklist management using Redis for distributed storage.
+Provides secure token invalidation capabilities for logout, security incidents, and administrative actions.
+"""
+
+import json
+import uuid
+from datetime import datetime, timezone, timedelta
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass, asdict
+
+import jwt
+import redis.asyncio as redis
+from redis.asyncio import Redis
+
+from src.config.settings import get_settings
+
+
+@dataclass
+class BlacklistEntry:
+    """
+    Represents a blacklisted JWT token entry.
+    """
+    jti: str  # JWT ID (unique token identifier)
+    user_id: str
+    session_id: str
+    revoked_at: datetime
+    reason: str
+    admin_id: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+
+
+class JWTBlacklistError(Exception):
+    """Base exception for JWT blacklist operations."""
+    pass
+
+
+class TokenAlreadyBlacklistedError(JWTBlacklistError):
+    """Raised when attempting to blacklist an already blacklisted token."""
+    pass
+
+
+class JWTBlacklistService:
+    """
+    JWT Token Blacklist Service
+    
+    Manages JWT token revocation using Redis as a distributed blacklist store.
+    Provides methods for token revocation, validation, and cleanup.
+    """
+    
+    def __init__(self, redis_client: Optional[Redis] = None):
+        """
+        Initialize JWT blacklist service.
+        
+        Args:
+            redis_client: Optional Redis client instance
+        """
+        self.settings = get_settings()
+        self.redis = redis_client
+        self.key_prefix = "jwt_blacklist:"
+        self.user_tokens_prefix = "user_tokens:"
+        
+    async def _get_redis(self) -> Redis:
+        """
+        Get Redis client instance.
+        
+        Returns:
+            Redis client
+        """
+        if not self.redis:
+            self.redis = redis.from_url(
+                self.settings.REDIS_URL,
+                encoding="utf-8",
+                decode_responses=True
+            )
+        return self.redis
+    
+    def _extract_token_claims(self, token: str) -> Dict[str, Any]:
+        """
+        Extract claims from JWT token without verification.
+        
+        Args:
+            token: JWT token string
+            
+        Returns:
+            Token claims dictionary
+            
+        Raises:
+            JWTBlacklistError: If token format is invalid
+        """
+        try:
+            # Decode without verification to extract claims
+            # We only need the claims for blacklist operations
+            return jwt.decode(token, options={"verify_signature": False})
+        except jwt.InvalidTokenError as e:
+            raise JWTBlacklistError(f"Invalid token format: {str(e)}")
+    
+    def _generate_jti(self, token_claims: Dict[str, Any]) -> str:
+        """
+        Generate or extract JWT ID (jti) from token claims.
+        
+        Args:
+            token_claims: JWT token claims
+            
+        Returns:
+            JWT ID string
+        """
+        # Use existing jti if present, otherwise generate from user_id + session_id + iat
+        if "jti" in token_claims:
+            return token_claims["jti"]
+        
+        # Generate deterministic jti from token components
+        user_id = token_claims.get("user_id", "")
+        session_id = token_claims.get("session_id", "")
+        iat = token_claims.get("iat", 0)
+        
+        jti_source = f"{user_id}:{session_id}:{iat}"
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, jti_source))
+    
+    def _calculate_ttl(self, token_claims: Dict[str, Any]) -> int:
+        """
+        Calculate TTL for blacklist entry based on token expiration.
+        
+        Args:
+            token_claims: JWT token claims
+            
+        Returns:
+            TTL in seconds
+        """
+        exp = token_claims.get("exp")
+        if not exp:
+            # Default TTL if no expiration in token
+            return 86400  # 24 hours
+        
+        exp_datetime = datetime.fromtimestamp(exp, tz=timezone.utc)
+        current_time = datetime.now(timezone.utc)
+        
+        if exp_datetime <= current_time:
+            # Token already expired, short TTL for cleanup
+            return 300  # 5 minutes
+        
+        ttl_seconds = int((exp_datetime - current_time).total_seconds())
+        return max(ttl_seconds, 60)  # Minimum 1 minute TTL
+    
+    async def blacklist_token(
+        self,
+        token: str,
+        reason: str = "user_logout",
+        admin_id: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> BlacklistEntry:
+        """
+        Add JWT token to blacklist.
+        
+        Args:
+            token: JWT token to blacklist
+            reason: Reason for blacklisting
+            admin_id: ID of admin who revoked the token (if applicable)
+            ip_address: IP address of the request
+            user_agent: User agent of the request
+            
+        Returns:
+            BlacklistEntry object
+            
+        Raises:
+            JWTBlacklistError: If token is invalid or already blacklisted
+        """
+        redis_client = await self._get_redis()
+        
+        # Extract token claims
+        token_claims = self._extract_token_claims(token)
+        jti = self._generate_jti(token_claims)
+        
+        # Check if token is already blacklisted
+        blacklist_key = f"{self.key_prefix}{jti}"
+        if await redis_client.exists(blacklist_key):
+            raise TokenAlreadyBlacklistedError(f"Token {jti} is already blacklisted")
+        
+        # Create blacklist entry
+        entry = BlacklistEntry(
+            jti=jti,
+            user_id=token_claims.get("user_id", ""),
+            session_id=token_claims.get("session_id", ""),
+            revoked_at=datetime.now(timezone.utc),
+            reason=reason,
+            admin_id=admin_id,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+        
+        # Calculate TTL based on token expiration
+        ttl = self._calculate_ttl(token_claims)
+        
+        # Store in Redis with TTL
+        entry_data = asdict(entry)
+        # Convert datetime to ISO string for JSON serialization
+        entry_data["revoked_at"] = entry.revoked_at.isoformat()
+        
+        await redis_client.setex(
+            blacklist_key,
+            ttl,
+            json.dumps(entry_data)
+        )
+        
+        # Also track by user for bulk operations
+        user_tokens_key = f"{self.user_tokens_prefix}{entry.user_id}"
+        await redis_client.sadd(user_tokens_key, jti)
+        await redis_client.expire(user_tokens_key, ttl)
+        
+        return entry
+    
+    async def is_token_blacklisted(self, token: str) -> bool:
+        """
+        Check if JWT token is blacklisted.
+        
+        Args:
+            token: JWT token to check
+            
+        Returns:
+            True if token is blacklisted, False otherwise
+        """
+        try:
+            redis_client = await self._get_redis()
+            
+            # Extract token claims
+            token_claims = self._extract_token_claims(token)
+            jti = self._generate_jti(token_claims)
+            
+            # Check blacklist
+            blacklist_key = f"{self.key_prefix}{jti}"
+            return await redis_client.exists(blacklist_key) > 0
+            
+        except JWTBlacklistError:
+            # If token is malformed, consider it invalid/blacklisted
+            return True
+        except Exception:
+            # On Redis errors, fail open (don't block valid tokens)
+            # Log this error in production
+            return False
+    
+    async def get_blacklist_entry(self, token: str) -> Optional[BlacklistEntry]:
+        """
+        Get blacklist entry for a token.
+        
+        Args:
+            token: JWT token
+            
+        Returns:
+            BlacklistEntry if found, None otherwise
+        """
+        try:
+            redis_client = await self._get_redis()
+            
+            # Extract token claims
+            token_claims = self._extract_token_claims(token)
+            jti = self._generate_jti(token_claims)
+            
+            # Get blacklist entry
+            blacklist_key = f"{self.key_prefix}{jti}"
+            entry_data = await redis_client.get(blacklist_key)
+            
+            if not entry_data:
+                return None
+            
+            # Parse entry data
+            entry_dict = json.loads(entry_data)
+            # Convert ISO string back to datetime
+            entry_dict["revoked_at"] = datetime.fromisoformat(entry_dict["revoked_at"])
+            
+            return BlacklistEntry(**entry_dict)
+            
+        except (JWTBlacklistError, json.JSONDecodeError, TypeError):
+            return None
+    
+    async def blacklist_user_tokens(
+        self,
+        user_id: str,
+        reason: str = "security_incident",
+        admin_id: Optional[str] = None
+    ) -> int:
+        """
+        Blacklist all tokens for a specific user.
+        
+        Args:
+            user_id: User ID whose tokens to blacklist
+            reason: Reason for blacklisting
+            admin_id: ID of admin performing the action
+            
+        Returns:
+            Number of tokens blacklisted
+        """
+        redis_client = await self._get_redis()
+        
+        # Get all tokens for user
+        user_tokens_key = f"{self.user_tokens_prefix}{user_id}"
+        token_jtis = await redis_client.smembers(user_tokens_key)
+        
+        blacklisted_count = 0
+        
+        for jti in token_jtis:
+            blacklist_key = f"{self.key_prefix}{jti}"
+            
+            # Check if already blacklisted
+            if await redis_client.exists(blacklist_key):
+                continue
+            
+            # Create blacklist entry for this jti
+            entry = BlacklistEntry(
+                jti=jti,
+                user_id=user_id,
+                session_id="",  # Unknown for bulk operations
+                revoked_at=datetime.now(timezone.utc),
+                reason=reason,
+                admin_id=admin_id
+            )
+            
+            entry_data = asdict(entry)
+            entry_data["revoked_at"] = entry.revoked_at.isoformat()
+            
+            # Use default TTL for bulk operations
+            await redis_client.setex(
+                blacklist_key,
+                86400,  # 24 hours default
+                json.dumps(entry_data)
+            )
+            
+            blacklisted_count += 1
+        
+        return blacklisted_count
+    
+    async def cleanup_expired_entries(self) -> int:
+        """
+        Clean up expired blacklist entries.
+        
+        This is typically handled automatically by Redis TTL,
+        but this method can be used for manual cleanup or monitoring.
+        
+        Returns:
+            Number of entries cleaned up
+        """
+        redis_client = await self._get_redis()
+        
+        # Get all blacklist keys
+        pattern = f"{self.key_prefix}*"
+        keys = await redis_client.keys(pattern)
+        
+        cleaned_count = 0
+        
+        for key in keys:
+            # Check if key still exists (TTL might have expired)
+            if not await redis_client.exists(key):
+                cleaned_count += 1
+        
+        return cleaned_count
+    
+    async def get_blacklist_stats(self) -> Dict[str, int]:
+        """
+        Get blacklist statistics.
+        
+        Returns:
+            Dictionary with blacklist statistics
+        """
+        redis_client = await self._get_redis()
+        
+        # Count blacklisted tokens
+        pattern = f"{self.key_prefix}*"
+        blacklist_keys = await redis_client.keys(pattern)
+        
+        # Count user token sets
+        user_pattern = f"{self.user_tokens_prefix}*"
+        user_keys = await redis_client.keys(user_pattern)
+        
+        return {
+            "total_blacklisted_tokens": len(blacklist_keys),
+            "users_with_blacklisted_tokens": len(user_keys)
+        }
+    
+    async def close(self):
+        """Close Redis connection."""
+        if self.redis:
+            await self.redis.close()
+
+
+# Global instance for dependency injection
+_jwt_blacklist_service: Optional[JWTBlacklistService] = None
+
+
+def get_jwt_blacklist_service() -> JWTBlacklistService:
+    """
+    Get JWT blacklist service instance.
+    
+    Returns:
+        JWTBlacklistService instance
+    """
+    global _jwt_blacklist_service
+    if _jwt_blacklist_service is None:
+        _jwt_blacklist_service = JWTBlacklistService()
+    return _jwt_blacklist_service

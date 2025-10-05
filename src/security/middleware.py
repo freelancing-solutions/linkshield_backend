@@ -8,6 +8,8 @@ and other security-related functionality.
 
 import time
 import re
+import secrets
+import base64
 from typing import Callable, Optional
 
 from fastapi import Request, Response
@@ -26,11 +28,24 @@ settings = get_settings()
 class SecurityMiddleware(BaseHTTPMiddleware):
     """
     Security middleware that adds security headers and handles security-related functionality.
+    Includes nonce-based CSP for enhanced security.
     """
     
     def __init__(self, app: ASGIApp):
         super().__init__(app)
         self.start_time = time.time()
+    
+    def _generate_nonce(self) -> str:
+        """
+        Generate a cryptographically secure nonce for CSP.
+        
+        Returns:
+            Base64-encoded nonce string
+        """
+        # Generate 16 bytes of random data
+        nonce_bytes = secrets.token_bytes(16)
+        # Encode as base64 for use in CSP header
+        return base64.b64encode(nonce_bytes).decode('ascii')
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """
@@ -38,6 +53,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         """
         # Record request start time
         start_time = time.time()
+        
+        # Generate nonce for this request
+        nonce = self._generate_nonce()
+        
+        # Store nonce in request state for use in templates/responses
+        request.state.csp_nonce = nonce
         
         # Log incoming request in debug mode
         if settings.DEBUG:
@@ -82,8 +103,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 }
             )
         
-        # Add security headers
-        self._add_security_headers(response)
+        # Add security headers with nonce
+        self._add_security_headers(response, nonce)
         
         # Add performance headers
         process_time = time.time() - start_time
@@ -98,9 +119,13 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         
         return response
     
-    def _add_security_headers(self, response: Response) -> None:
+    def _add_security_headers(self, response: Response, nonce: str) -> None:
         """
-        Add security headers to response.
+        Add security headers to response with nonce-based CSP.
+        
+        Args:
+            response: FastAPI response object
+            nonce: Cryptographically secure nonce for CSP
         """
         # Prevent clickjacking
         response.headers["X-Frame-Options"] = "DENY"
@@ -114,17 +139,42 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         # Referrer policy
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         
-        # Content Security Policy (basic)
+        # Enhanced Content Security Policy with nonce support
         if settings.ENVIRONMENT == "production":
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline'; "
-                "style-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data: https:; "
-                "font-src 'self'; "
-                "connect-src 'self'; "
-                "frame-ancestors 'none';"
+            # Strict CSP with nonce-based script and style loading
+            csp_policy = (
+                f"default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}'; "
+                f"style-src 'self' 'nonce-{nonce}'; "
+                f"img-src 'self' data: https:; "
+                f"font-src 'self' data:; "
+                f"connect-src 'self'; "
+                f"object-src 'none'; "
+                f"base-uri 'self'; "
+                f"form-action 'self'; "
+                f"frame-ancestors 'none'; "
+                f"upgrade-insecure-requests;"
             )
+        else:
+            # Development CSP - slightly more permissive but still secure
+            csp_policy = (
+                f"default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval'; "
+                f"style-src 'self' 'nonce-{nonce}' 'unsafe-inline'; "
+                f"img-src 'self' data: https: http://localhost:*; "
+                f"font-src 'self' data:; "
+                f"connect-src 'self' http://localhost:* ws://localhost:*; "
+                f"object-src 'none'; "
+                f"base-uri 'self'; "
+                f"form-action 'self'; "
+                f"frame-ancestors 'none';"
+            )
+        
+        response.headers["Content-Security-Policy"] = csp_policy
+        
+        # Also set CSP Report-Only for monitoring (optional)
+        if settings.ENVIRONMENT == "production":
+            response.headers["Content-Security-Policy-Report-Only"] = csp_policy
         
         # Strict Transport Security (HTTPS only)
         if settings.ENVIRONMENT == "production":
@@ -132,10 +182,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 "max-age=31536000; includeSubDomains; preload"
             )
         
-        # Permissions Policy
+        # Enhanced Permissions Policy
         response.headers["Permissions-Policy"] = (
             "geolocation=(), microphone=(), camera=(), "
-            "payment=(), usb=(), magnetometer=(), gyroscope=()"
+            "payment=(), usb=(), magnetometer=(), gyroscope=(), "
+            "fullscreen=(self), display-capture=(), "
+            "web-share=(), clipboard-read=(), clipboard-write=()"
         )
         
         # Server identification
@@ -143,6 +195,9 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         
         # API version
         response.headers["X-API-Version"] = settings.APP_VERSION
+        
+        # Add nonce to response headers for client-side access
+        response.headers["X-CSP-Nonce"] = nonce
     
     def _is_suspicious_request(self, request: Request) -> bool:
         """

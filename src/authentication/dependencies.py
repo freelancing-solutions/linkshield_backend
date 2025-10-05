@@ -23,19 +23,25 @@ security = HTTPBearer(auto_error=False)
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: AsyncSession = Depends(get_db_session)) -> User:
     """
-    Get current authenticated user.
+    Get current authenticated user with JWT blacklist validation.
     """
     try:
-        # Initialize services without database session
-        security_service = SecurityService()
+        if not credentials:
+            raise HTTPException(status_code=401, detail="No credentials provided")
         
-        # Verify JWT token
-        token_data = security_service.verify_jwt_token(credentials.credentials)
+        # Initialize authentication service
+        auth_service = AuthService()
+        
+        # Verify JWT token (includes blacklist check)
+        token_data = await auth_service.verify_jwt_token(credentials.credentials)
+        if not token_data:
+            raise HTTPException(status_code=401, detail="Invalid or revoked token")
+        
         user_id = token_data.get("user_id")
         session_id = token_data.get("session_id")
         
         if not user_id or not session_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            raise HTTPException(status_code=401, detail="Invalid token payload")
         
         # Validate session using database operations directly
         is_valid, session = await _validate_user_session_in_db(db, session_id, user_id)
@@ -49,8 +55,54 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         
         return user
     
+    except HTTPException:
+        raise
     except Exception as e:
+        # Log the error in production for debugging
         raise HTTPException(status_code=401, detail="Authentication failed")
+
+async def get_current_user_optional(request: Request) -> Optional[User]:
+    """
+    Get current user from request without raising exceptions.
+    Used by middleware that needs optional user information.
+    
+    Args:
+        request: FastAPI request object
+        
+    Returns:
+        Optional[User]: Authenticated user or None
+    """
+    try:
+        # Extract authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return None
+        
+        token = auth_header.split(" ")[1]
+        
+        # Get database session (this is a simplified approach)
+        # In practice, you might need to handle this differently
+        from src.config.database import get_db_session
+        
+        # Create a mock credentials object
+        class MockCredentials:
+            def __init__(self, token: str):
+                self.credentials = token
+        
+        credentials = MockCredentials(token)
+        
+        # Use existing get_optional_user logic
+        db_gen = get_db_session()
+        db = await db_gen.__anext__()
+        
+        try:
+            user = await get_optional_user(credentials, db)
+            return user
+        finally:
+            await db_gen.aclose()
+    
+    except Exception:
+        return None
 
 async def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
