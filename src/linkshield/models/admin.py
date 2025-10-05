@@ -184,6 +184,29 @@ class SystemHealth(Base):
     )
 
 
+class SessionLimitsConfig(Base):
+    """
+    Session limits configuration model.
+    Configurable session limits per user role.
+    """
+    __tablename__ = "session_limits_config"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    
+    # Configuration details
+    role = Column(String(50), nullable=False, unique=True, index=True)
+    max_concurrent_sessions = Column(Integer, nullable=False, default=5)
+    
+    # Metadata
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    
+    # Relationships
+    creator = relationship("User", foreign_keys=[created_by])
+
+
 class AdminSession(Base):
     """
     Admin session tracking model.
