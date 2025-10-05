@@ -8,17 +8,20 @@ automatic termination of oldest sessions, and session conflict notification.
 
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from uuid import UUID
+import json
 
 from sqlalchemy import select, update, delete, and_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.user import User, UserSession, UserRole
+from src.models.admin import SessionLimitsConfig
 from src.config.settings import get_settings
-from src.config.database import get_db_session
-from src.services.notification_service import NotificationService
+from src.database.connection import get_db_session
+from src.security.device_fingerprinting import DeviceFingerprintingService
+from src.security.geolocation_service import GeolocationService
 
 
 logger = logging.getLogger(__name__)
@@ -458,6 +461,225 @@ class SessionManager:
             )
         except Exception as e:
             logger.error(f"Failed to send session termination notification to user {user.id}: {e}")
+    
+    async def update_session_activity(
+        self, 
+        session_id: str, 
+        fingerprint_data: Optional[Dict] = None,
+        ip_address: Optional[str] = None
+    ) -> bool:
+        """
+        Update session activity timestamp and detect potential hijacking.
+        
+        Args:
+            session_id: Session ID to update
+            fingerprint_data: Current device fingerprint data
+            ip_address: Current IP address
+            
+        Returns:
+            True if session was updated successfully
+        """
+        try:
+            async with self.get_db_session() as db:
+                # Get current session data for hijacking detection
+                current_session = await db.execute(
+                    select(UserSession)
+                    .where(UserSession.session_token == session_id)
+                )
+                session = current_session.scalar_one_or_none()
+                
+                if not session:
+                    logger.warning(f"Session {session_id} not found for activity update")
+                    return False
+                
+                # Detect potential session hijacking
+                hijacking_detected = False
+                hijacking_indicators = []
+                
+                if fingerprint_data and ip_address:
+                    hijacking_detected, hijacking_indicators = await self._detect_session_hijacking(
+                        session, fingerprint_data, ip_address
+                    )
+                
+                # Update session activity
+                update_data = {
+                    'last_accessed_at': datetime.now(timezone.utc)
+                }
+                
+                # Update IP if provided and different
+                if ip_address and ip_address != session.ip_address:
+                    update_data['ip_address'] = ip_address
+                
+                # Handle hijacking if detected
+                if hijacking_detected:
+                    await self._handle_hijacking_detection(session_id, session.user_id, hijacking_indicators)
+                    return False  # Don't update if hijacking detected
+                
+                result = await db.execute(
+                    update(UserSession)
+                    .where(UserSession.session_token == session_id)
+                    .values(**update_data)
+                )
+                
+                if result.rowcount > 0:
+                    await db.commit()
+                    logger.debug(f"Updated activity for session {session_id}")
+                    return True
+                else:
+                    logger.warning(f"Failed to update session {session_id}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Error updating session activity for {session_id}: {e}")
+            return False
+    
+    async def _detect_session_hijacking(
+        self, 
+        session: UserSession, 
+        current_fingerprint: Dict, 
+        current_ip: str
+    ) -> tuple[bool, List[str]]:
+        """
+        Detect potential session hijacking based on device fingerprint and IP changes.
+        
+        Args:
+            session: Current session object
+            current_fingerprint: Current device fingerprint
+            current_ip: Current IP address
+            
+        Returns:
+            Tuple of (hijacking_detected, list_of_indicators)
+        """
+        indicators = []
+        
+        # Check IP address changes
+        if session.ip_address and session.ip_address != current_ip:
+            # Allow IP changes within same subnet or known mobile ranges
+            if not self._is_acceptable_ip_change(session.ip_address, current_ip):
+                indicators.append(f"Suspicious IP change: {session.ip_address} -> {current_ip}")
+        
+        # Check device fingerprint if available
+        if hasattr(session, 'device_fingerprint') and session.device_fingerprint:
+            try:
+                stored_fingerprint = json.loads(session.device_fingerprint)
+                fingerprint_score = self._calculate_fingerprint_similarity(stored_fingerprint, current_fingerprint)
+                
+                if fingerprint_score < 0.7:  # Less than 70% similarity
+                    indicators.append(f"Device fingerprint mismatch (similarity: {fingerprint_score:.2f})")
+            except (json.JSONDecodeError, KeyError):
+                logger.warning(f"Invalid fingerprint data for session {session.id}")
+        
+        # Check for rapid location changes (if geolocation data available)
+        if 'geolocation' in current_fingerprint and hasattr(session, 'last_location'):
+            if self._detect_impossible_travel(session, current_fingerprint['geolocation']):
+                indicators.append("Impossible travel detected")
+        
+        hijacking_detected = len(indicators) >= 2  # Require multiple indicators
+        
+        return hijacking_detected, indicators
+    
+    def _is_acceptable_ip_change(self, old_ip: str, new_ip: str) -> bool:
+        """
+        Check if IP address change is acceptable (same subnet, mobile carrier, etc.).
+        """
+        try:
+            import ipaddress
+            
+            old_addr = ipaddress.ip_address(old_ip)
+            new_addr = ipaddress.ip_address(new_ip)
+            
+            # Same IP
+            if old_addr == new_addr:
+                return True
+            
+            # Check if in same /24 subnet (common for home networks)
+            old_network = ipaddress.ip_network(f"{old_ip}/24", strict=False)
+            if new_addr in old_network:
+                return True
+            
+            # Additional checks for mobile carriers, VPNs, etc. could be added here
+            
+            return False
+        except Exception:
+            return False
+    
+    def _calculate_fingerprint_similarity(self, fp1: Dict, fp2: Dict) -> float:
+        """
+        Calculate similarity score between two device fingerprints.
+        """
+        if not fp1 or not fp2:
+            return 0.0
+        
+        # Weight different fingerprint components
+        weights = {
+            'user_agent': 0.3,
+            'screen_resolution': 0.2,
+            'timezone': 0.15,
+            'language': 0.1,
+            'platform': 0.15,
+            'canvas_fingerprint': 0.1
+        }
+        
+        total_score = 0.0
+        total_weight = 0.0
+        
+        for key, weight in weights.items():
+            if key in fp1 and key in fp2:
+                if fp1[key] == fp2[key]:
+                    total_score += weight
+                total_weight += weight
+        
+        return total_score / total_weight if total_weight > 0 else 0.0
+    
+    def _detect_impossible_travel(self, session: UserSession, current_location: Dict) -> bool:
+        """
+        Detect impossible travel based on time and distance between locations.
+        """
+        # This would require geolocation data and distance calculation
+        # Simplified implementation - would need actual geolocation service
+        return False
+    
+    async def _handle_hijacking_detection(
+        self, 
+        session_id: str, 
+        user_id: UUID, 
+        indicators: List[str]
+    ) -> None:
+        """
+        Handle detected session hijacking attempt.
+        """
+        try:
+            # Terminate the suspicious session
+            await self.terminate_session(UUID(session_id.replace('-', '')[:32].ljust(32, '0')))
+            
+            # Log security event
+            logger.warning(
+                f"Session hijacking detected for user {user_id}, session {session_id}. "
+                f"Indicators: {', '.join(indicators)}"
+            )
+            
+            # Get user for notification
+            async with self.get_db_session() as db:
+                user_result = await db.execute(
+                    select(User).where(User.id == user_id)
+                )
+                user = user_result.scalar_one_or_none()
+                
+                if user:
+                    # Send security alert
+                    await self.notification_service.send_security_notification(
+                        user=user,
+                        title="Security Alert: Suspicious Session Activity",
+                        message=(
+                            f"Suspicious activity detected on your account. "
+                            f"Session has been terminated for security. "
+                            f"If this was not you, please change your password immediately."
+                        ),
+                        notification_type="hijacking_detection"
+                    )
+        
+        except Exception as e:
+            logger.error(f"Error handling hijacking detection: {e}")
     
     async def _notify_new_session(self, user: User, session: UserSession) -> None:
         """

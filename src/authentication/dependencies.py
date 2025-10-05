@@ -54,9 +54,31 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         if not user or not user.is_active:
             raise HTTPException(status_code=401, detail="User not found or inactive")
         
-        # Update session activity for concurrent session management
-        session_manager = SessionManager(db)
-        await session_manager.update_session_activity(session_id)
+        # Update session activity for concurrent session tracking
+    session_manager = SessionManager()
+    
+    # Extract device fingerprint and IP for enhanced validation
+    fingerprint_data = None
+    ip_address = request.client.host if hasattr(request, 'client') and request.client else None
+    
+    # Try to extract device fingerprint from headers
+    if hasattr(request, 'headers'):
+        user_agent = request.headers.get('user-agent')
+        accept_language = request.headers.get('accept-language')
+        
+        if user_agent:
+            fingerprint_data = {
+                'user_agent': user_agent,
+                'language': accept_language,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+    
+    # Update session activity with enhanced validation
+    await session_manager.update_session_activity(
+        session_id=session_id,
+        fingerprint_data=fingerprint_data,
+        ip_address=ip_address
+    )
         
         return user
     
@@ -185,7 +207,7 @@ async def _validate_user_session_in_db(db: AsyncSession, session_id: str, user_i
     """
     from sqlalchemy import select
     from src.models.user import UserSession
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timezone
     
     # Get session from database
     result = await db.execute(
