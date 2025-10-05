@@ -62,7 +62,7 @@
 
 ### Phase 3: Bot Authentication Security (REQ-005, REQ-006)
 
-- [ ] **Task 3.1**: Fix Discord Ed25519 Webhook Verification
+- [x] **Task 3.1**: Fix Discord Ed25519 Webhook Verification
   - **Requirements**: REQ-005
   - **Description**: Replace HMAC fallback with proper Ed25519 signature verification
   - **Files to Create/Modify**:
@@ -74,7 +74,7 @@
     - Comprehensive error handling
     - Security event logging for failures
 
-- [ ] **Task 3.2**: Implement Persistent Service Token Storage
+- [x] **Task 3.2**: Implement Persistent Service Token Storage
   - **Requirements**: REQ-006
   - **Description**: Replace in-memory token storage with Redis-based persistence
   - **Files to Create/Modify**:

@@ -25,8 +25,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/bot-auth", tags=["Bot Authentication"])
 
-# In-memory store for auth tokens (in production, use Redis)
-_auth_tokens: Dict[str, Dict[str, Any]] = {}
+# Import Redis-based service token storage
+from src.auth.service_token_storage import ServiceTokenStorage, TokenNotFoundError, TokenExpiredError, ServiceTokenStorageError
+
+# Initialize Redis-based token storage
+service_token_storage = ServiceTokenStorage()
 
 # ------------------------------------------------------------------
 # Request/Response Models
@@ -112,20 +115,42 @@ async def generate_auth_token(
         if request.platform not in ["twitter", "telegram", "discord"]:
             raise HTTPException(status_code=400, detail="Invalid platform")
         
-        # Generate secure token
-        auth_token = secrets.token_urlsafe(32)
+        # Generate unique token ID
+        token_id = secrets.token_urlsafe(32)
         
-        # Set expiration (10 minutes)
+        # Calculate expiration time
         expires_at = datetime.utcnow() + timedelta(minutes=10)
         
-        # Store token data
-        _auth_tokens[auth_token] = {
-            "platform": request.platform,
-            "platform_user_id": request.platform_user_id,
-            "created_at": datetime.utcnow(),
-            "expires_at": expires_at,
+        # Prepare token data
+        token_data = {
+            "service_name": f"bot_auth_{request.platform}",
+            "permissions": ["bot_auth", "account_linking"],
+            "max_uses": 1,
+            "issued_at": datetime.utcnow().isoformat(),
+            "expires_at": expires_at.isoformat(),
             "status": "pending"
         }
+        
+        # Store token using Redis-based storage
+        token_entry = await service_token_storage.store_token(
+            token_id=token_id,
+            service_name=f"bot_auth_{request.platform}",
+            token_data=token_data,
+            expires_at=expires_at,
+            created_by=None
+        )
+        
+        auth_token = token_id
+        
+        # Update token with additional metadata
+        await service_token_storage.update_token_metadata(
+            token_id=auth_token,
+            metadata={
+                "platform": request.platform,
+                "platform_user_id": request.platform_user_id,
+                "status": "pending"
+            }
+        )
         
         # Generate auth URL
         auth_url = f"{settings.FRONTEND_URL}/bot-auth?token={auth_token}"
@@ -151,24 +176,14 @@ async def check_auth_status(auth_token: str):
     Used by bot platforms to poll for authentication completion.
     """
     try:
-        # Check if token exists
-        if auth_token not in _auth_tokens:
+        # Check if token exists using Redis-based storage
+        is_valid, token_data = await service_token_storage.get_token(auth_token)
+        
+        if not is_valid:
             raise HTTPException(status_code=404, detail="Auth token not found")
         
-        token_data = _auth_tokens[auth_token]
-        
-        # Check if token expired
-        if datetime.utcnow() > token_data["expires_at"]:
-            # Clean up expired token
-            del _auth_tokens[auth_token]
-            return AuthStatusResponse(
-                status="expired",
-                linked=False,
-                message="Authentication token has expired"
-            )
-        
         # Return current status
-        status = token_data["status"]
+        status = token_data.get("metadata", {}).get("status", "pending")
         linked = status == "completed"
         
         if status == "pending":
@@ -184,8 +199,14 @@ async def check_auth_status(auth_token: str):
             message=message
         )
         
-    except HTTPException:
-        raise
+    except TokenNotFoundError:
+        raise HTTPException(status_code=404, detail="Auth token not found")
+    except TokenExpiredError:
+        return AuthStatusResponse(
+            status="expired",
+            linked=False,
+            message="Authentication token has expired"
+        )
     except Exception as e:
         logger.error(f"Error checking auth status: {e}")
         raise HTTPException(status_code=500, detail="Failed to check auth status")
@@ -205,20 +226,16 @@ async def link_platform_account(
     the authentication flow.
     """
     try:
-        # Validate auth token
-        if auth_token not in _auth_tokens:
+        # Validate auth token using Redis-based storage
+        is_valid, token_data = await service_token_storage.get_token(auth_token)
+        
+        if not is_valid:
             raise HTTPException(status_code=404, detail="Invalid or expired auth token")
         
-        token_data = _auth_tokens[auth_token]
-        
-        # Check if token expired
-        if datetime.utcnow() > token_data["expires_at"]:
-            del _auth_tokens[auth_token]
-            raise HTTPException(status_code=400, detail="Auth token has expired")
-        
         # Verify token matches request
-        if (token_data["platform"] != request.platform or 
-            token_data["platform_user_id"] != request.platform_user_id):
+        metadata = token_data.get("metadata", {})
+        if (metadata.get("platform") != request.platform or 
+            metadata.get("platform_user_id") != request.platform_user_id):
             raise HTTPException(status_code=400, detail="Token data mismatch")
         
         # Check if user can add more platforms
@@ -248,10 +265,16 @@ async def link_platform_account(
         if not success:
             raise HTTPException(status_code=400, detail=error_message)
         
-        # Update token status
-        token_data["status"] = "completed"
-        token_data["completed_at"] = datetime.utcnow()
-        token_data["user_id"] = str(current_user.id)
+        # Update token status using Redis-based storage
+        updated_metadata = metadata.copy()
+        updated_metadata.update({
+            "status": "completed",
+            "completed_at": datetime.utcnow().isoformat(),
+            "user_id": str(current_user.id)
+        })
+        
+        # Update token metadata in Redis
+        await service_token_storage.update_token_metadata(auth_token, updated_metadata)
         
         logger.info(f"Successfully linked {request.platform} account {request.platform_user_id} to user {current_user.id}")
         
@@ -399,19 +422,15 @@ async def cleanup_expired_tokens():
     """
     Background task to clean up expired auth tokens.
     Should be called periodically.
+    
+    Note: With Redis-based storage, expired tokens are automatically cleaned up
+    by Redis TTL, but this function can be used for additional cleanup if needed.
     """
     try:
-        current_time = datetime.utcnow()
-        expired_tokens = [
-            token for token, data in _auth_tokens.items()
-            if current_time > data["expires_at"]
-        ]
-        
-        for token in expired_tokens:
-            del _auth_tokens[token]
-        
-        if expired_tokens:
-            logger.info(f"Cleaned up {len(expired_tokens)} expired auth tokens")
+        # With Redis-based storage, cleanup is handled automatically by TTL
+        # This function is kept for compatibility but may not be necessary
+        await service_token_storage.cleanup_expired_tokens()
+        logger.info("Expired token cleanup completed")
             
     except Exception as e:
         logger.error(f"Error cleaning up expired tokens: {e}")

@@ -377,16 +377,31 @@ class BotAuthenticator:
             ServiceTokenStorageError: If token generation fails
         """
         try:
-            # Generate token using Redis-based storage
-            token = await self.service_token_storage.store_token(
+            # Generate unique token ID
+            token_id = secrets.token_urlsafe(32)
+            
+            # Calculate expiration time
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            
+            # Prepare token data
+            token_data = {
+                "permissions": permissions,
+                "max_uses": max_uses,
+                "issued_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": expires_at.isoformat()
+            }
+            
+            # Store token using Redis-based storage
+            token_entry = await self.service_token_storage.store_token(
+                token_id=token_id,
                 service_name=service_name,
-                permissions=permissions,
-                expires_in=expires_in,
-                max_uses=max_uses
+                token_data=token_data,
+                expires_at=expires_at,
+                created_by=None
             )
             
             logger.info(f"Generated service token for {service_name} with permissions: {permissions}")
-            return token
+            return token_id
             
         except (ServiceTokenStorageError, RedisConnectionError) as e:
             logger.error(f"Failed to generate service token for {service_name}: {e}")

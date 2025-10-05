@@ -336,6 +336,48 @@ class ServiceTokenStorage:
             self._fallback_storage[token_id]["last_used"] = datetime.now(timezone.utc).isoformat()
             self.logger.info(f"Token {token_id} usage updated in fallback storage")
     
+    async def update_token_metadata(self, token_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update token metadata with fallback support.
+        
+        Args:
+            token_id: Token identifier
+            metadata: New metadata to merge with existing token data
+        """
+        try:
+            # Try Redis first if available
+            if self._redis_available:
+                redis_client = await self._get_redis()
+                token_key = self._get_token_key(token_id)
+                
+                # Get current token data
+                token_data = await redis_client.get(token_key)
+                if token_data:
+                    entry_data = json.loads(token_data)
+                    
+                    # Update token_data with new metadata
+                    if "token_data" not in entry_data:
+                        entry_data["token_data"] = {}
+                    entry_data["token_data"].update(metadata)
+                    
+                    # Update with same TTL
+                    ttl = await redis_client.ttl(token_key)
+                    if ttl > 0:
+                        await redis_client.setex(token_key, ttl, json.dumps(entry_data))
+                        self.logger.info(f"Token {token_id} metadata updated in Redis")
+                        return
+                    
+        except (RedisError, ConnectionError, TimeoutError) as e:
+            self.logger.error(f"Redis update_token_metadata error: {e}, updating fallback storage")
+            self._redis_available = False
+            
+        # Update fallback storage
+        if token_id in self._fallback_storage:
+            if "token_data" not in self._fallback_storage[token_id]:
+                self._fallback_storage[token_id]["token_data"] = {}
+            self._fallback_storage[token_id]["token_data"].update(metadata)
+            self.logger.info(f"Token {token_id} metadata updated in fallback storage")
+    
     async def revoke_token(self, token_id: str) -> bool:
         """
         Revoke service token with fallback support.

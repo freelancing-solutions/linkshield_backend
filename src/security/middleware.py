@@ -283,7 +283,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# class RateLimitMiddleware(BaseHTTPMiddleware):
+class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     Advanced rate limiting middleware using AdvancedRateLimiter service.
     Lazy-loads the rate limiter to avoid Pydantic ForwardRef errors.

@@ -26,7 +26,7 @@ from src.services.advanced_rate_limiter import get_rate_limiter
 # Config and database
 from src.config.settings import get_settings
 from src.config.database import init_db, close_db
-from src.security.middleware import SecurityMiddleware
+from src.security.middleware import SecurityMiddleware, RateLimitMiddleware
 from src.middleware.admin_audit import AdminAuditMiddleware
 from src.middleware.csrf_middleware import CSRFMiddleware
 
@@ -134,6 +134,10 @@ app = FastAPI(
 
 app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(SecurityMiddleware)
+
+# Add rate limiting middleware for authentication endpoints
+if settings.RATE_LIMIT_ENABLED:
+    app.add_middleware(RateLimitMiddleware)
 
 # Add CSRF protection middleware
 app.add_middleware(
