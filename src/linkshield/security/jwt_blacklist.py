@@ -23,6 +23,7 @@ from linkshield.config.settings import get_settings
 class BlacklistReason(Enum):
     """Enumeration of reasons for token blacklisting."""
     LOGOUT = "logout"
+    USER_LOGOUT = "user_logout"  # Alias for LOGOUT
     SECURITY_INCIDENT = "security_incident"
     ADMIN_REVOCATION = "admin_revocation"
     PASSWORD_CHANGE = "password_change"
@@ -34,7 +35,10 @@ class BlacklistReason(Enum):
 class TokenRevocationRequest:
     """Request model for token revocation."""
     token: str
-    reason: BlacklistReason
+    jti: str
+    user_id: str
+    reason: str  # String reason that will be validated
+    expires_at: datetime
     admin_id: Optional[str] = None
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
@@ -66,12 +70,48 @@ class BlacklistEntry:
     """
     jti: str  # JWT ID (unique token identifier)
     user_id: str
-    session_id: str
+    reason: BlacklistReason
     revoked_at: datetime
-    reason: str
+    expires_at: datetime
+    session_id: Optional[str] = None
     admin_id: Optional[str] = None
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
+
+    def is_expired(self) -> bool:
+        """Check if the blacklist entry has expired."""
+        return datetime.now(timezone.utc) > self.expires_at
+
+    def to_json(self) -> str:
+        """Convert the entry to JSON string."""
+        data = {
+            'jti': self.jti,
+            'user_id': self.user_id,
+            'reason': self.reason.value if isinstance(self.reason, BlacklistReason) else self.reason,
+            'revoked_at': self.revoked_at.isoformat(),
+            'expires_at': self.expires_at.isoformat(),
+            'session_id': self.session_id,
+            'admin_id': self.admin_id,
+            'ip_address': self.ip_address,
+            'user_agent': self.user_agent
+        }
+        return json.dumps(data)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> 'BlacklistEntry':
+        """Create a BlacklistEntry from JSON string."""
+        data = json.loads(json_str)
+        return cls(
+            jti=data['jti'],
+            user_id=data['user_id'],
+            reason=BlacklistReason(data['reason']) if isinstance(data['reason'], str) else data['reason'],
+            revoked_at=datetime.fromisoformat(data['revoked_at']),
+            expires_at=datetime.fromisoformat(data['expires_at']),
+            session_id=data.get('session_id'),
+            admin_id=data.get('admin_id'),
+            ip_address=data.get('ip_address'),
+            user_agent=data.get('user_agent')
+        )
 
 
 class JWTBlacklistError(Exception):

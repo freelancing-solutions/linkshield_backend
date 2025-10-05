@@ -15,12 +15,21 @@ __description__ = "Secure URL shortening service with comprehensive security fea
 # Import main components with error handling
 try:
     from .config.settings import Settings
-    from .main import create_app
 except ImportError as e:
     # Handle missing dependencies gracefully during development
     print(f"Warning: Some dependencies may be missing: {e}")
     Settings = None
-    create_app = None
+
+# Lazy import for create_app to avoid circular imports
+def __getattr__(name):
+    if name == "create_app":
+        try:
+            from .main import create_app
+            return create_app
+        except ImportError as e:
+            print(f"Warning: Could not import create_app: {e}")
+            return None
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 # Package metadata
 __all__ = [
