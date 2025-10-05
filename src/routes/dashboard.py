@@ -472,25 +472,7 @@ async def get_alert_statistics(
     )
 
 
-@router.patch(
-    "/alerts/{alert_id}/resolve",
-    response_model=AlertResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Resolve alert",
-    description="Mark an alert as resolved",
-)
-async def resolve_alert(
-    alert_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
-    controller: DashboardController = Depends(get_dashboard_controller),
-) -> AlertResponse:
-    """Mark an alert as resolved."""
-    # This is a placeholder implementation
-    # In a real implementation, this would update the alert status
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Alert resolution not yet implemented"
-    )
+
 
 
 # ------------------------------------------------------------------

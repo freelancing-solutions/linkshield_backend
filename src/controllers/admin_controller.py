@@ -55,7 +55,7 @@ class AdminController(BaseController):
         self.admin_service = admin_service
     
     # Dashboard Statistics Methods
-    def _create_http_exception(self,status_code : int, detail: str):
+    def _create_http_exception(self, status_code: int, detail: str):
         """
 
         :return:

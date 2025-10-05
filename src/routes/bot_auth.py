@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from src.authentication.dependencies import get_current_user
 from src.config.settings import settings
-from src.database.connection import get_db
+from src.config.database import get_db
 from src.models.user import User
 from src.models.bot import BotUser, BotPlatform
 from src.services.bot_subscription_validator import BotSubscriptionValidator

@@ -966,7 +966,7 @@ class URLCheckController(BaseController):
         except Exception as e:
             self.logger.error(f"Failed to update domain reputation: {str(e)}")
 
-    async def _get_domain_reputation_data(self, domain: str| None) -> Optional[URLReputation]:
+    async def _get_domain_reputation_data(self, domain: str | None) -> Optional[URLReputation]:
         """Get domain reputation data for analysis.
         
         Args:

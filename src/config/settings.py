@@ -650,7 +650,7 @@ class Settings(BaseSettings):
     SECURITY_EVENT_FORENSIC_DATA_COLLECTION: bool = Field(default=True, env="LINKSHIELD_SECURITY_EVENT_FORENSIC_DATA_COLLECTION")
     SECURITY_EVENT_BACKUP_TRIGGER_ENABLED: bool = Field(default=False, env="LINKSHIELD_SECURITY_EVENT_BACKUP_TRIGGER_ENABLED")
 
-    @validator("REDIS_SSL_CERT_REQS")
+    @field_validator("REDIS_SSL_CERT_REQS")
     def validate_redis_ssl_cert_reqs(cls, v):
         """Validate Redis SSL certificate requirements."""
         allowed_values = ["none", "optional", "required"]
@@ -658,21 +658,21 @@ class Settings(BaseSettings):
             raise ValueError(f"REDIS_SSL_CERT_REQS must be one of: {allowed_values}")
         return v.lower()
     
-    @validator("DISTRIBUTED_RATE_LIMIT_BURST_MULTIPLIER")
+    @field_validator("DISTRIBUTED_RATE_LIMIT_BURST_MULTIPLIER")
     def validate_burst_multiplier(cls, v):
         """Validate burst multiplier is positive."""
         if v <= 0:
             raise ValueError("DISTRIBUTED_RATE_LIMIT_BURST_MULTIPLIER must be positive")
         return v
     
-    @validator("SSRF_TIMEOUT", "SSRF_MAX_REDIRECTS")
+    @field_validator("SSRF_TIMEOUT", "SSRF_MAX_REDIRECTS")
     def validate_positive_integers(cls, v):
         """Validate positive integer values."""
         if v <= 0:
             raise ValueError("Value must be positive")
         return v
     
-    @validator("ERROR_MESSAGES_LOG_LEVEL")
+    @field_validator("ERROR_MESSAGES_LOG_LEVEL")
     def validate_error_log_level(cls, v):
         """Validate error message log level."""
         allowed_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -680,7 +680,7 @@ class Settings(BaseSettings):
             raise ValueError(f"ERROR_MESSAGES_LOG_LEVEL must be one of: {allowed_levels}")
         return v.upper()
 
-    @validator("ENVIRONMENT")
+    @field_validator("ENVIRONMENT")
     def validate_environment(cls, v):
         """Validate environment setting."""
         allowed_environments = ["development", "staging", "production"]
@@ -688,7 +688,7 @@ class Settings(BaseSettings):
             raise ValueError(f"Environment must be one of: {allowed_environments}")
         return v
     
-    @validator("LOG_LEVEL")
+    @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v):
         """Validate log level setting."""
         allowed_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -696,14 +696,14 @@ class Settings(BaseSettings):
             raise ValueError(f"Log level must be one of: {allowed_levels}")
         return v.upper()
     
-    @validator("DATABASE_URL", "TEST_DATABASE_URL")
+    @field_validator("DATABASE_URL", "TEST_DATABASE_URL")
     def validate_database_url(cls, v):
         """Validate database URL format."""
         if not v.startswith(("postgresql://", "postgresql+asyncpg://")):
             raise ValueError("Database URL must be a PostgreSQL connection string")
         return v
     
-    @validator("REDIS_URL")
+    @field_validator("REDIS_URL")
     def validate_redis_url(cls, v):
         """Validate Redis URL format."""
         if not v.startswith("redis://"):

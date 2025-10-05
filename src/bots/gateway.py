@@ -15,7 +15,7 @@ from ..services.quick_analysis_service import QuickAnalysisService
 from ..models.bot import BotInteraction, BotUser
 from ..config.database import get_db_session
 from .models import BotCommand, BotResponse, CommandType
-from ..social_protection.controllers.bot_controller import BotController
+from ..controllers.depends import get_social_bot_controller
 from .error_handler import bot_error_handler, ErrorCategory, ErrorSeverity
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class QuickAccessBotGateway:
         self.quick_analysis_service = QuickAnalysisService()
         self.platform_handlers: Dict[str, Any] = {}
         self.rate_limiter: Dict[str, List[datetime]] = {}
-        self.bot_controller = BotController()
+        self.bot_controller = None  # Will be initialized in initialize() method
         self.is_initialized = False
         
     async def initialize(self):
@@ -43,6 +43,9 @@ class QuickAccessBotGateway:
             return
         
         try:
+            # Initialize bot controller with dependency injection
+            self.bot_controller = await get_social_bot_controller()
+            
             # Initialize platform handlers
             await self._initialize_platform_handlers()
             
@@ -147,6 +150,10 @@ class QuickAccessBotGateway:
                     data={}
                 )
             
+            # Ensure bot controller is initialized
+            if not self.bot_controller:
+                raise RuntimeError("Bot controller not initialized")
+            
             # Call BotController method for account analysis
             result = await self.bot_controller.analyze_account_safety(
                 user=command.user,
@@ -191,6 +198,10 @@ class QuickAccessBotGateway:
                     data={}
                 )
             
+            # Ensure bot controller is initialized
+            if not self.bot_controller:
+                raise RuntimeError("Bot controller not initialized")
+            
             # Call BotController method for compliance check
             result = await self.bot_controller.check_content_compliance(
                 user=command.user,
@@ -234,6 +245,10 @@ class QuickAccessBotGateway:
                     error_code="MISSING_ACCOUNT",
                     data={}
                 )
+            
+            # Ensure bot controller is initialized
+            if not self.bot_controller:
+                raise RuntimeError("Bot controller not initialized")
             
             # Call BotController method for follower analysis
             result = await self.bot_controller.analyze_verified_followers(

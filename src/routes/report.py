@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks
 from fastapi.security import HTTPBearer
-from pydantic import BaseModel,  Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from src.config.settings import get_settings
 from src.models.report import (
@@ -51,7 +51,7 @@ class ReportCreateRequest(BaseModel):
     tags: Optional[List[str]] = Field(None, max_items=20, description="Report tags")
     is_anonymous: bool = Field(default=False, description="Submit anonymously")
     
-    @validator('url')
+    @field_validator('url')
     def validate_url(cls, v):
         if not v or not v.strip():
             raise ValueError("URL cannot be empty")
@@ -62,7 +62,7 @@ class ReportCreateRequest(BaseModel):
         
         return v
     
-    @validator('tags')
+    @field_validator('tags')
     def validate_tags(cls, v):
         if v:
             # Clean and validate tags
@@ -85,7 +85,7 @@ class ReportUpdateRequest(BaseModel):
     severity: Optional[int] = Field(None, ge=1, le=10)
     tags: Optional[List[str]] = Field(None, max_items=20)
     
-    @validator('tags')
+    @field_validator('tags')
     def validate_tags(cls, v):
         if v:
             cleaned_tags = []

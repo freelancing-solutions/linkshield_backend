@@ -18,7 +18,7 @@ from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks, status, HTTPException
 from fastapi.security import HTTPBearer
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from src.config.settings import get_settings
 from src.models.user import User
@@ -248,7 +248,7 @@ class BatchAnalysisRequest(BaseModel):
     analysis_types: List[str] = Field(..., description="Types of analysis to perform")
     priority: str = Field("normal", description="Analysis priority level")
     
-    @validator('analysis_types')
+    @field_validator('analysis_types')
     def validate_analysis_types(cls, v):
         valid_types = ["visibility", "engagement", "penalty", "shadow_ban"]
         for analysis_type in v:

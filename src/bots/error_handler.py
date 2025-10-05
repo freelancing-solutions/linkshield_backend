@@ -29,6 +29,7 @@ class ErrorCategory(Enum):
     PLATFORM_API = "platform_api"
     BOT_CONTROLLER = "bot_controller"
     RESPONSE_FORMATTING = "response_formatting"
+    WEBHOOK_PROCESSING = "webhook_processing"
     RATE_LIMITING = "rate_limiting"
     AUTHENTICATION = "authentication"
     VALIDATION = "validation"

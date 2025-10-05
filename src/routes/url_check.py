@@ -158,7 +158,7 @@ async def check_url(
     request: URLCheckRequest,
     background_tasks: BackgroundTasks,
     controller: URLCheckController = Depends(get_url_check_controller),
-    user: Optional[User] = Depends(get_optional_user) ):
+    user: Optional[User] = Depends(get_optional_user):
     """
     Analyze a URL for security threats, malware, phishing, and other risks.
 
@@ -204,8 +204,12 @@ async def check_url(
     )
 
 @router.post("/bulk-check", response_model=List[URLCheckResponse], summary="Analyze multiple URLs")
-async def bulk_check_urls(request: BulkURLCheckRequest, background_tasks: BackgroundTasks,
-    controller: URLCheckController = Depends(get_url_check_controller), user: User = Depends(get_current_user)):
+async def bulk_check_urls(
+    request: BulkURLCheckRequest, 
+    background_tasks: BackgroundTasks,
+    controller: URLCheckController = Depends(get_url_check_controller), 
+    user: User = Depends(get_current_user)
+):
     """
     Analyze multiple URLs in a single request.
 
